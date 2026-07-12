@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pipa-core", "src-tauri"]
+members = ["crates/pipa-core", "crates/pipa-store", "src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]
