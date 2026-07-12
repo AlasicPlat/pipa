@@ -34,7 +34,7 @@ queryId: string,
 /**
  * Rows affected by a statement that does not return rows.
  */
-affectedRows: bigint, } | { "type": "canceled", 
+affectedRows: number, } | { "type": "canceled", 
 /**
  * Identifier of the query producing this event.
  */

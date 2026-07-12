@@ -93,6 +93,7 @@ pub enum QueryEvent {
         #[ts(type = "string")]
         query_id: Uuid,
         /// Rows affected by a statement that does not return rows.
+        #[ts(type = "number")]
         affected_rows: u64,
     },
     /// Query execution was canceled.
@@ -195,5 +196,13 @@ mod tests {
 
         assert_eq!(declaration.matches("queryId: string").count(), 6);
         assert!(declaration.contains("\"type\": \"completed\""));
+    }
+
+    /// Verifies that JSON numeric affected-row counts are numeric in TypeScript.
+    #[test]
+    fn query_event_typescript_contract_uses_number_for_affected_rows() {
+        let declaration = QueryEvent::decl(&Config::default());
+
+        assert!(declaration.contains("affectedRows: number"));
     }
 }
