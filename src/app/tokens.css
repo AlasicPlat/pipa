@@ -1,0 +1,25 @@
+:root {
+  color-scheme: light dark;
+  --surface-canvas: #f4f5f7;
+  --surface-panel: #ffffff;
+  --surface-muted: #e8eaed;
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --focus-ring: #1a73e8;
+  --space-1: 8px;
+  --accent-mysql: #4479a1;
+  --accent-postgresql: #336791;
+  --accent-mongodb: #47a248;
+  --accent-redis: #dc382d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-canvas: #18191b;
+    --surface-panel: #222326;
+    --surface-muted: #303136;
+    --text-primary: #f1f3f4;
+    --text-secondary: #bdc1c6;
+    --focus-ring: #8ab4f8;
+  }
+}

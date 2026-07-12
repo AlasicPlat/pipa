@@ -1,0 +1,40 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 48px 264px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.activity-rail,
+.connection-panel,
+.workspace {
+  padding: var(--space-1);
+}
+
+.activity-rail {
+  background: var(--surface-muted);
+}
+
+.connection-panel {
+  background: var(--surface-panel);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
