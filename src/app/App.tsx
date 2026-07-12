@@ -1,7 +1,12 @@
 import "./tokens.css";
 import "./app.css";
 
-/** Composes the persistent Pipa desktop workspace without owning feature state. */
+/**
+ * Composes the persistent Pipa desktop workspace without owning feature state.
+ * Parameters: none.
+ * @returns The React element for the persistent Pipa workspace.
+ * Side effects: none.
+ */
 export function App() {
   return (
     <div className="app-shell" role="application" aria-label="Pipa 数据库工作台">
