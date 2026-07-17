@@ -83,6 +83,8 @@ impl DatabaseAdapter for MySqlAdapter {
         // QueryRequest contains the user's complete editor SQL, not interpolated application data.
         let mut rows = raw_sql(AssertSqlSafe(request.sql)).fetch_many(&mut *connection);
         let mut schema_sent = false;
+        let mut current_result_has_rows = false;
+        let mut completed_row_result = false;
         let mut batch = Vec::with_capacity(MAX_BATCH_ROWS);
         let mut affected_rows = 0_u64;
 
@@ -102,8 +104,43 @@ impl DatabaseAdapter for MySqlAdapter {
             match next {
                 Ok(Some(Either::Left(result))) => {
                     affected_rows = affected_rows.saturating_add(result.rows_affected());
+                    // SQLx emits QueryResult after a statement's rows, making this the set boundary.
+                    if current_result_has_rows {
+                        if !batch.is_empty() {
+                            send_event(
+                                &events,
+                                QueryEvent::Batch {
+                                    query_id,
+                                    rows: std::mem::take(&mut batch),
+                                },
+                            )
+                            .await?;
+                        }
+                        current_result_has_rows = false;
+                        completed_row_result = true;
+                    }
                 }
                 Ok(Some(Either::Right(row))) => {
+                    // QueryEvent has one schema, so later row-producing sets cannot be represented.
+                    if completed_row_result {
+                        drop(rows);
+                        send_event(
+                            &events,
+                            QueryEvent::Failed {
+                                query_id,
+                                error: AppError {
+                                    code: AppErrorCode::Query,
+                                    message: "Multiple result sets are not supported".into(),
+                                    technical_details: None,
+                                    retryable: false,
+                                },
+                            },
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    current_result_has_rows = true;
+
                     if !schema_sent {
                         send_event(
                             &events,

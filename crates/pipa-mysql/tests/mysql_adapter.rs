@@ -117,6 +117,45 @@ async fn streams_every_lossless_value_category() {
     );
 }
 
+/// Verifies legal zero date variants survive decoding without Chrono validation.
+#[tokio::test]
+async fn preserves_zero_temporal_values() {
+    let profile = test_profile();
+    let query_id = Uuid::new_v4();
+    let events = run_query(
+        &profile,
+        query_id,
+        "SET SESSION sql_mode = ''; \
+         CREATE TEMPORARY TABLE pipa_zero_temporals (\
+             date_value DATE NOT NULL, \
+             datetime_value DATETIME(6) NOT NULL, \
+             timestamp_value TIMESTAMP(6) NOT NULL\
+         ); \
+         INSERT INTO pipa_zero_temporals VALUES (\
+             '0000-00-00', \
+             '0000-00-00 00:00:00.000000', \
+             '0000-00-00 00:00:00.000000'\
+         ); \
+         SELECT date_value, datetime_value, timestamp_value \
+         FROM pipa_zero_temporals",
+    )
+    .await;
+
+    let QueryEvent::Batch { rows, .. } = &events[2] else {
+        panic!("zero temporal query should emit a batch: {events:?}");
+    };
+    assert!(matches!(
+        rows[0].as_slice(),
+        [
+            CellValue::DateTime(date_value),
+            CellValue::DateTime(datetime_value),
+            CellValue::DateTime(timestamp_value),
+        ] if date_value == "0000-00-00"
+            && datetime_value == "0000-00-00T00:00:00.000000"
+            && timestamp_value == "0000-00-00T00:00:00.000000"
+    ));
+}
+
 /// Verifies result batches never exceed 256 rows and preserve every streamed row.
 #[tokio::test]
 async fn caps_batches_at_256_rows() {
@@ -145,6 +184,39 @@ async fn caps_batches_at_256_rows() {
     assert!(
         matches!(events.last(), Some(QueryEvent::Completed { query_id: id, .. }) if *id == query_id)
     );
+}
+
+/// Verifies a second row-producing result set fails before its rows can mix schemas.
+#[tokio::test]
+async fn rejects_a_second_row_producing_result_set() {
+    let profile = test_profile();
+    let query_id = Uuid::new_v4();
+    let events = run_query(&profile, query_id, "SELECT 1 AS a; SELECT 'x' AS b").await;
+
+    assert_eq!(events.len(), 4, "unexpected event stream: {events:?}");
+    assert!(matches!(
+        &events[1],
+        QueryEvent::Schema { columns, .. }
+            if columns.len() == 1 && columns[0].name == "a"
+    ));
+    assert!(
+        matches!(
+            &events[2],
+            QueryEvent::Batch { rows, .. }
+                if matches!(rows.as_slice(), [row]
+                    if matches!(row.as_slice(), [CellValue::Integer(value)] if value == "1"))
+        ),
+        "later result rows must not share the first schema: {:?}",
+        events[2]
+    );
+    assert!(matches!(
+        &events[3],
+        QueryEvent::Failed { error, .. }
+            if matches!(error.code, AppErrorCode::Query)
+                && error.message == "Multiple result sets are not supported"
+                && error.technical_details.is_none()
+                && !error.retryable
+    ));
 }
 
 /// Verifies cancellation closes the active query with Canceled and emits no later batch.
