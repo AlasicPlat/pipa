@@ -1,0 +1,15 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: pipa_test
+      MYSQL_USER: pipa
+      MYSQL_PASSWORD: pipa_test_password
+      MYSQL_ROOT_PASSWORD: pipa_test_root_password
+    ports:
+      - "33306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-ppipa_test_root_password"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
