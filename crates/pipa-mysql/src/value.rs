@@ -1,8 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use chrono::{NaiveDate, NaiveDateTime};
 use pipa_core::CellValue;
 use sqlx_core::{row::Row, value::ValueRef};
-use sqlx_mysql::{types::MySqlTime, MySqlRow};
+use sqlx_mysql::MySqlRow;
 
 /// Conversion family selected from SQLx's stable MySQL type names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,11 +58,16 @@ fn binary_cell(value: &[u8]) -> CellValue {
 
 /// Converts MySQL text bytes, marking only invalid UTF-8 with replacement characters.
 fn text_cell(value: &[u8]) -> CellValue {
-    let text = match std::str::from_utf8(value) {
-        Ok(text) => text.to_owned(),
-        Err(_) => String::from_utf8_lossy(value).into_owned(),
-    };
-    CellValue::Text(text)
+    CellValue::Text(String::from_utf8_lossy(value).into_owned())
+}
+
+/// Preserves MySQL temporal text while normalizing the date-time separator when present.
+fn temporal_cell(value: &[u8], normalize_date_time_separator: bool) -> CellValue {
+    let mut value = String::from_utf8_lossy(value).into_owned();
+    if normalize_date_time_separator && value.as_bytes().get(10) == Some(&b' ') {
+        value.replace_range(10..11, "T");
+    }
+    CellValue::DateTime(value)
 }
 
 /// Converts one dynamically typed SQLx MySQL cell into Pipa's lossless transport value.
@@ -87,17 +91,10 @@ pub(crate) fn convert_cell(
         ValueKind::Float64 => float_cell(row.try_get_unchecked::<f64, _>(index)?),
         ValueKind::Json => CellValue::Json(row.try_get::<serde_json::Value, _>(index)?),
         ValueKind::Binary => binary_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?),
-        ValueKind::Date => CellValue::DateTime(
-            row.try_get::<NaiveDate, _>(index)?
-                .format("%Y-%m-%d")
-                .to_string(),
-        ),
-        ValueKind::Time => CellValue::DateTime(row.try_get::<MySqlTime, _>(index)?.to_string()),
-        ValueKind::DateTime => CellValue::DateTime(
-            row.try_get::<NaiveDateTime, _>(index)?
-                .format("%Y-%m-%dT%H:%M:%S%.f")
-                .to_string(),
-        ),
+        ValueKind::Date | ValueKind::Time => {
+            temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?, false)
+        }
+        ValueKind::DateTime => temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?, true),
         ValueKind::Text => text_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?),
         ValueKind::Null => CellValue::Null,
     })
@@ -105,7 +102,9 @@ pub(crate) fn convert_cell(
 
 #[cfg(test)]
 mod tests {
-    use super::{binary_cell, classify_type, float_cell, integer_cell, text_cell, ValueKind};
+    use super::{
+        binary_cell, classify_type, float_cell, integer_cell, temporal_cell, text_cell, ValueKind,
+    };
     use pipa_core::CellValue;
 
     /// Verifies signed and unsigned MySQL integer families use lossless integer strings.
@@ -175,6 +174,10 @@ mod tests {
         assert_eq!(classify_type("TIME"), ValueKind::Time);
         assert_eq!(classify_type("DATETIME"), ValueKind::DateTime);
         assert_eq!(classify_type("TIMESTAMP"), ValueKind::DateTime);
+        assert!(matches!(
+            temporal_cell(b"0000-00-00 00:00:00.000000", true),
+            CellValue::DateTime(value) if value == "0000-00-00T00:00:00.000000"
+        ));
     }
 
     /// Verifies text families preserve UTF-8 and mark replacement only after invalid decoding.
