@@ -8,7 +8,7 @@ Pipa 是一款本地优先的多数据库桌面查询工作台。本仓库当前
 
 - macOS，以及 Xcode Command Line Tools。
 - Rust stable 工具链（包含 `cargo`, `rustfmt` 和 `clippy`）。
-- Node.js 22 LTS 或更新的兼容版本，以及 pnpm。
+- Node.js 20.19+（20.x）或 22.12+ 的兼容版本，以及 pnpm。
 - Docker Desktop 或等价的 Docker Engine，且支持 Docker Compose v2 和 `--wait`。
 
 首次安装依赖：
