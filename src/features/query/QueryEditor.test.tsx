@@ -1,6 +1,13 @@
-import { render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
 import { QueryEditor } from "./QueryEditor";
+
+const nativeEventState = vi.hoisted(() => ({
+  handler: null as (() => void) | null,
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+}));
 
 const monacoState = vi.hoisted(() => ({
   actionRegistrations: 0,
@@ -47,6 +54,8 @@ vi.mock("@monaco-editor/react", () => ({
   },
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({ listen: nativeEventState.listen }));
+
 /**
  * Verifies both platform modifiers execute once through document capture and block refresh.
  * Parameters: none.
@@ -55,13 +64,22 @@ vi.mock("@monaco-editor/react", () => ({
  */
 function assertCapturedPlatformShortcutsExecuteOnce(): void {
   const onExecute = vi.fn();
-  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+  const controlEditor = render(
+    <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />,
+  );
   const controlShortcut = new KeyboardEvent("keydown", {
     key: "r",
     ctrlKey: true,
     bubbles: true,
     cancelable: true,
   });
+  document.dispatchEvent(controlShortcut);
+  expect(controlShortcut.defaultPrevented).toBe(true);
+  expect(onExecute).toHaveBeenCalledTimes(1);
+  expect(onExecute).toHaveBeenLastCalledWith("select 1");
+  controlEditor.unmount();
+
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
   const commandShortcut = new KeyboardEvent("keydown", {
     key: "R",
     metaKey: true,
@@ -69,16 +87,75 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
     cancelable: true,
   });
 
-  document.dispatchEvent(controlShortcut);
-  expect(controlShortcut.defaultPrevented).toBe(true);
-  expect(onExecute).toHaveBeenCalledTimes(1);
-  expect(onExecute).toHaveBeenLastCalledWith("select 1");
-
   document.dispatchEvent(commandShortcut);
   expect(commandShortcut.defaultPrevented).toBe(true);
   expect(onExecute).toHaveBeenCalledTimes(2);
   expect(onExecute).toHaveBeenLastCalledWith("select 1");
   expect(monacoState.actionRegistrations).toBe(0);
+}
+
+/**
+ * Verifies the native menu bridge registers, deduplicates a DOM echo, and cleans up.
+ * Parameters: none.
+ * @returns A promise that settles after the asynchronous Tauri listener is registered.
+ * Side effects: resolves the mocked native listener and unmounts the editor.
+ */
+async function assertNativeShortcutRegistrationAndCleanup(): Promise<void> {
+  const onExecute = vi.fn();
+  const view = render(
+    <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />,
+  );
+  await waitFor(() => {
+    expect(nativeEventState.listen).toHaveBeenCalledWith(
+      NATIVE_EXECUTE_QUERY_EVENT,
+      expect.any(Function),
+    );
+    expect(nativeEventState.handler).not.toBeNull();
+  });
+
+  act(() => nativeEventState.handler?.());
+  const echoedDomShortcut = new KeyboardEvent("keydown", {
+    key: "r",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(echoedDomShortcut);
+
+  expect(echoedDomShortcut.defaultPrevented).toBe(true);
+  expect(onExecute).toHaveBeenCalledTimes(1);
+  expect(onExecute).toHaveBeenCalledWith("select 1");
+  view.unmount();
+  expect(nativeEventState.unlisten).toHaveBeenCalledTimes(1);
+}
+
+/**
+ * Verifies a listener that resolves after unmount is immediately disposed.
+ * Parameters: none.
+ * @returns A promise that settles after the delayed registration resolves.
+ * Side effects: controls a deferred native-listener promise and unmounts the editor.
+ */
+async function assertPendingNativeListenerIsDisposed(): Promise<void> {
+  let resolveListener: ((unlisten: () => void) => void) | undefined;
+  nativeEventState.listen.mockImplementationOnce(
+    () =>
+      new Promise<() => void>((resolve) => {
+        resolveListener = resolve;
+      }),
+  );
+  const view = render(
+    <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={vi.fn()} />,
+  );
+  expect(nativeEventState.listen).toHaveBeenCalledTimes(1);
+
+  view.unmount();
+  const lateUnlisten = vi.fn();
+  await act(async () => {
+    resolveListener?.(lateUnlisten);
+    await Promise.resolve();
+  });
+
+  expect(lateUnlisten).toHaveBeenCalledTimes(1);
 }
 
 /**
@@ -139,6 +216,14 @@ function assertCapturedCursorExecution(): void {
 /** Registers query-editor keyboard interaction tests. */
 function registerQueryEditorTests(): void {
   beforeEach(() => {
+    vi.clearAllMocks();
+    nativeEventState.handler = null;
+    nativeEventState.listen.mockImplementation(
+      async (_event: string, handler: () => void): Promise<() => void> => {
+        nativeEventState.handler = handler;
+        return nativeEventState.unlisten;
+      },
+    );
     monacoState.actionRegistrations = 0;
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.selection = {
@@ -150,6 +235,8 @@ function registerQueryEditorTests(): void {
     monacoState.position = { lineNumber: 1, column: 8 };
   });
   it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  it("executes one native shortcut and cleans up its listener", assertNativeShortcutRegistrationAndCleanup);
+  it("disposes a native listener that resolves after unmount", assertPendingNativeListenerIsDisposed);
   it("ignores execute shortcuts with extra modifiers", assertModifiedShortcutsAreIgnored);
   it("executes the cursor statement without a selection", assertCapturedCursorExecution);
 }
