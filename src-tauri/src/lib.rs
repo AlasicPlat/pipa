@@ -1,4 +1,6 @@
+mod bootstrap;
 mod commands;
+mod legacy_keyring;
 mod state;
 
 use tauri::Manager;

@@ -1,41 +1,16 @@
 use crate::{storage_error, LocalStore};
 use chrono::{SecondsFormat, Utc};
-use pipa_core::{AppError, ConnectionProfile, Engine, Environment, TlsMode};
-use rusqlite::{params, types::Type, Error as SqlError};
+use pipa_core::{AppError, AppErrorCode, ConnectionProfile, Engine, Environment, TlsMode};
+use rusqlite::{params, types::Type, Connection, Error as SqlError};
+use secrecy::{ExposeSecret, SecretString};
 use std::io;
+use uuid::Uuid;
 
 impl LocalStore {
     /// Inserts or updates a non-secret connection profile.
     pub fn save_connection(&self, profile: &ConnectionProfile) -> Result<(), AppError> {
-        self.connection()?
-            .execute(
-                "INSERT INTO connections (
-                   id, engine, name, environment, host, port, username, database_name, tls_mode,
-                   updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                 ON CONFLICT(id) DO UPDATE SET
-                   engine = excluded.engine,
-                   name = excluded.name,
-                   environment = excluded.environment,
-                   host = excluded.host,
-                   port = excluded.port,
-                   username = excluded.username,
-                   database_name = excluded.database_name,
-                   tls_mode = excluded.tls_mode,
-                   updated_at = excluded.updated_at",
-                params![
-                    profile.id,
-                    engine_name(profile.engine),
-                    profile.name,
-                    environment_name(profile.environment),
-                    profile.host,
-                    profile.port,
-                    profile.username,
-                    profile.database,
-                    tls_mode_name(profile.tls_mode),
-                    Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
-                ],
-            )
+        let connection = self.connection()?;
+        upsert_connection(&connection, profile)
             .map(|_| ())
             .map_err(|error| {
                 storage_error(
@@ -44,6 +19,86 @@ impl LocalStore {
                     error,
                 )
             })
+    }
+
+    /// Atomically inserts or updates a connection profile and its encrypted credential.
+    pub fn save_connection_with_credential(
+        &self,
+        profile: &ConnectionProfile,
+        password: &SecretString,
+    ) -> Result<(), AppError> {
+        let mut connection = self.connection()?;
+        let result = (|| -> rusqlite::Result<()> {
+            let transaction = connection.transaction()?;
+            upsert_connection(&transaction, profile)?;
+            transaction.execute(
+                "INSERT INTO connection_credentials (connection_id, password)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(connection_id) DO UPDATE SET password = excluded.password",
+                params![profile.id, password.expose_secret()],
+            )?;
+            transaction.commit()
+        })();
+
+        result.map_err(|error| {
+            storage_error(
+                "Could not save database connection",
+                "upsert connection profile and credential transaction",
+                error,
+            )
+        })
+    }
+
+    /// Loads one database credential from the SQLCipher-encrypted main database.
+    pub fn get_connection_credential(&self, connection_id: Uuid) -> Result<SecretString, AppError> {
+        match self.connection()?.query_row(
+            "SELECT password FROM connection_credentials WHERE connection_id = ?1",
+            [connection_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(password) => Ok(SecretString::from(password)),
+            Err(SqlError::QueryReturnedNoRows) => Err(AppError {
+                code: AppErrorCode::NotFound,
+                message: "Database credential was not found".into(),
+                technical_details: None,
+                retryable: false,
+            }),
+            Err(error) => Err(storage_error(
+                "Could not read database credential",
+                "read encrypted connection credential",
+                error,
+            )),
+        }
+    }
+
+    /// Atomically imports legacy credentials for profiles already present in the main database.
+    pub fn import_connection_credentials(
+        &self,
+        credentials: &[(Uuid, SecretString)],
+    ) -> Result<(), AppError> {
+        let mut connection = self.connection()?;
+        let result = (|| -> rusqlite::Result<()> {
+            let transaction = connection.transaction()?;
+            {
+                let mut statement = transaction.prepare(
+                    "INSERT INTO connection_credentials (connection_id, password)
+                     VALUES (?1, ?2)
+                     ON CONFLICT(connection_id) DO UPDATE SET password = excluded.password",
+                )?;
+                for (connection_id, password) in credentials {
+                    statement.execute(params![connection_id, password.expose_secret()])?;
+                }
+            }
+            transaction.commit()
+        })();
+
+        result.map_err(|error| {
+            storage_error(
+                "Could not migrate database credentials",
+                "import encrypted connection credentials",
+                error,
+            )
+        })
     }
 
     /// Lists all saved non-secret connection profiles in deterministic name order.
@@ -91,6 +146,41 @@ impl LocalStore {
 
         Ok(profiles)
     }
+}
+
+/// Inserts or updates one non-secret connection profile on the supplied transaction boundary.
+fn upsert_connection(
+    connection: &Connection,
+    profile: &ConnectionProfile,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "INSERT INTO connections (
+           id, engine, name, environment, host, port, username, database_name, tls_mode,
+           updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(id) DO UPDATE SET
+           engine = excluded.engine,
+           name = excluded.name,
+           environment = excluded.environment,
+           host = excluded.host,
+           port = excluded.port,
+           username = excluded.username,
+           database_name = excluded.database_name,
+           tls_mode = excluded.tls_mode,
+           updated_at = excluded.updated_at",
+        params![
+            profile.id,
+            engine_name(profile.engine),
+            profile.name,
+            environment_name(profile.environment),
+            profile.host,
+            profile.port,
+            profile.username,
+            profile.database,
+            tls_mode_name(profile.tls_mode),
+            Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
+        ],
+    )
 }
 
 /// Returns the stable persistence value for an engine.

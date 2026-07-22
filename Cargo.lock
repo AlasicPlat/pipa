@@ -2840,6 +2840,7 @@ dependencies = [
  "pipa-core",
  "pipa-mysql",
  "pipa-store",
+ "rusqlite",
  "secrecy",
  "serde",
  "serde_json",
@@ -2888,7 +2889,6 @@ name = "pipa-store"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "keyring",
  "pipa-core",
  "rusqlite",
  "secrecy",

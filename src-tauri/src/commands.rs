@@ -5,7 +5,6 @@ use pipa_core::{
     RecordQueryHistoryInput, SaveConnectionInput,
 };
 use pipa_store::{QueryHistoryEntry, WorkspaceTab as StoredWorkspaceTab};
-use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tauri::{ipc::Channel, State};
@@ -65,7 +64,7 @@ pub(crate) fn list_connections(
     list_connections_inner(&state)
 }
 
-/// Saves one MySQL profile while routing its password only to the keyring.
+/// Saves one MySQL profile and password atomically in encrypted local storage.
 #[tauri::command]
 pub(crate) fn save_mysql_connection(
     state: State<'_, AppState>,
@@ -133,44 +132,15 @@ fn list_connections_inner(state: &AppState) -> Result<Vec<ConnectionProfile>, Ap
     state.local_store.list_connections()
 }
 
-/// Persists a non-secret profile and routes its password only to secure storage.
+/// Persists a profile and credential in one SQLCipher transaction.
 fn save_mysql_connection_inner(
     state: &AppState,
     input: SaveConnectionInput,
 ) -> Result<ConnectionProfile, AppError> {
-    persist_mysql_connection(
-        input,
-        |connection_id, password| state.secret_store.set(connection_id, password),
-        |profile| state.local_store.save_connection(profile),
-        |connection_id| state.secret_store.delete(connection_id),
-    )
-}
-
-/// Saves one new connection across keyring and SQLite with compensating secret deletion.
-fn persist_mysql_connection(
-    input: SaveConnectionInput,
-    set_secret: impl FnOnce(Uuid, &SecretString) -> Result<(), AppError>,
-    save_profile: impl FnOnce(&ConnectionProfile) -> Result<(), AppError>,
-    delete_secret: impl FnOnce(Uuid) -> Result<(), AppError>,
-) -> Result<ConnectionProfile, AppError> {
     let SaveConnectionInput { profile, password } = input;
-    let connection_id = profile.id;
-
-    set_secret(connection_id, &password)?;
-    if let Err(profile_error) = save_profile(&profile) {
-        if delete_secret(connection_id).is_err() {
-            return Err(AppError {
-                code: AppErrorCode::Storage,
-                message: "Could not save database connection securely".into(),
-                technical_details: Some(
-                    "credential rollback failed after profile persistence failure".into(),
-                ),
-                retryable: false,
-            });
-        }
-        return Err(profile_error);
-    }
-
+    state
+        .local_store
+        .save_connection_with_credential(&profile, &password)?;
     Ok(profile)
 }
 
@@ -202,7 +172,9 @@ async fn run_query_inner(
             technical_details: None,
             retryable: false,
         })?;
-    let password = state.secret_store.get(request.connection_id)?;
+    let password = state
+        .local_store
+        .get_connection_credential(request.connection_id)?;
     let query_id = request.query_id;
     let cancellation = CancellationToken::new();
     {
@@ -324,91 +296,38 @@ async fn forward_query_events(
 mod tests {
     use super::{
         cancel_query_inner, forward_query_events, list_connections_inner, load_workspace_inner,
-        persist_mysql_connection, record_query_history_inner, run_query_inner,
-        save_mysql_connection_inner, save_workspace_inner, test_mysql_connection_inner,
-        WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
+        record_query_history_inner, run_query_inner, save_mysql_connection_inner,
+        save_workspace_inner, test_mysql_connection_inner, WorkspaceTabPayload,
+        QUERY_EVENT_CHANNEL_CAPACITY,
     };
     use crate::state::AppState;
     use pipa_core::{
-        AppError, AppErrorCode, ConnectionProfile, Engine, Environment, QueryEvent, QueryRequest,
+        AppErrorCode, ConnectionProfile, Engine, Environment, QueryEvent, QueryRequest,
         RecordQueryHistoryInput, SaveConnectionInput, TlsMode,
     };
     use pipa_mysql::MySqlAdapter;
-    use pipa_store::{LocalStore, SecretStore};
+    use pipa_store::LocalStore;
     use secrecy::{ExposeSecret, SecretString};
-    use std::{cell::Cell, cell::RefCell, collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc};
     use tauri::ipc::{Channel, InvokeResponseBody};
     use tempfile::TempDir;
     use tokio::{sync::Mutex, time::timeout};
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    /// In-memory credential storage used to observe command-side secret writes.
-    #[derive(Debug, Default)]
-    struct MemorySecretStore {
-        secrets: std::sync::Mutex<HashMap<Uuid, SecretString>>,
-    }
-
-    impl SecretStore for MemorySecretStore {
-        /// Stores one credential in memory for the duration of a test.
-        fn set(&self, connection_id: Uuid, secret: &SecretString) -> Result<(), AppError> {
-            self.secrets
-                .lock()
-                .map_err(|_| secret_store_lock_error())?
-                .insert(connection_id, secret.clone());
-            Ok(())
-        }
-
-        /// Loads one credential from memory without exposing it in errors.
-        fn get(&self, connection_id: Uuid) -> Result<SecretString, AppError> {
-            self.secrets
-                .lock()
-                .map_err(|_| secret_store_lock_error())?
-                .get(&connection_id)
-                .cloned()
-                .ok_or_else(|| AppError {
-                    code: AppErrorCode::NotFound,
-                    message: "Database credential was not found".into(),
-                    technical_details: None,
-                    retryable: false,
-                })
-        }
-
-        /// Deletes one credential from memory.
-        fn delete(&self, connection_id: Uuid) -> Result<(), AppError> {
-            self.secrets
-                .lock()
-                .map_err(|_| secret_store_lock_error())?
-                .remove(&connection_id);
-            Ok(())
-        }
-    }
-
-    /// Creates a stable storage error when the test secret-store lock is poisoned.
-    fn secret_store_lock_error() -> AppError {
-        AppError {
-            code: AppErrorCode::Storage,
-            message: "Could not access database credentials".into(),
-            technical_details: None,
-            retryable: false,
-        }
-    }
-
     /// Creates isolated command state and keeps its temporary directory alive.
-    fn test_state() -> (TempDir, AppState, Arc<MemorySecretStore>) {
+    fn test_state() -> (TempDir, AppState) {
         let directory = tempfile::tempdir().unwrap();
         let local_store = Arc::new(
             LocalStore::open(directory.path().join("pipa.db"), "test-encryption-key").unwrap(),
         );
-        let memory_secret_store = Arc::new(MemorySecretStore::default());
         let state = AppState {
             local_store,
-            secret_store: memory_secret_store.clone(),
             mysql: Arc::new(MySqlAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         };
 
-        (directory, state, memory_secret_store)
+        (directory, state)
     }
 
     /// Creates a representative secret-bearing connection input.
@@ -429,10 +348,10 @@ mod tests {
         }
     }
 
-    /// Verifies the command persists profile and credential through separate stores.
+    /// Verifies the command persists a profile and credential only in encrypted local storage.
     #[test]
-    fn saving_connection_keeps_password_out_of_profile_and_local_store() {
-        let (directory, state, secret_store) = test_state();
+    fn saving_connection_keeps_password_out_of_profile_and_raw_database() {
+        let (directory, state) = test_state();
         let input = mysql_input("command-only-password");
         let connection_id = input.profile.id;
 
@@ -444,80 +363,56 @@ mod tests {
             serde_json::to_value([&returned]).unwrap()
         );
         assert_eq!(
-            secret_store.get(connection_id).unwrap().expose_secret(),
+            state
+                .local_store
+                .get_connection_credential(connection_id)
+                .unwrap()
+                .expose_secret(),
             "command-only-password"
         );
         let returned_json = serde_json::to_string(&returned).unwrap();
         assert!(!returned_json.contains("password"));
         assert!(!returned_json.contains("command-only-password"));
+        drop(state);
         let database_bytes = std::fs::read(directory.path().join("pipa.db")).unwrap();
         assert!(!String::from_utf8_lossy(&database_bytes).contains("command-only-password"));
     }
 
-    /// Verifies a credential-write failure cannot make a profile visible in local storage.
+    /// Verifies an injected credential failure leaves neither profile nor credential visible.
     #[test]
-    fn credential_failure_does_not_attempt_profile_write() {
+    fn saving_connection_failure_is_atomic_and_redacted() {
+        let (directory, state) = test_state();
         let input = mysql_input("set-failure-password");
-        let profile_write_called = Cell::new(false);
-
-        let error = persist_mysql_connection(
-            input,
-            |_connection_id, _password| Err(secret_store_lock_error()),
-            |_profile| {
-                profile_write_called.set(true);
-                Ok(())
-            },
-            |_connection_id| Ok(()),
-        )
-        .unwrap_err();
-
-        assert!(matches!(error.code, AppErrorCode::Storage));
-        assert!(!profile_write_called.get());
-        assert!(!format!("{error:?}").contains("set-failure-password"));
-    }
-
-    /// Verifies profile failure removes the newly written credential and exposes no profile.
-    #[test]
-    fn profile_failure_rolls_back_new_credential() {
-        let input = mysql_input("rollback-password");
         let connection_id = input.profile.id;
-        let secrets = RefCell::new(HashMap::<Uuid, SecretString>::new());
-        let visible_profiles = RefCell::new(Vec::<ConnectionProfile>::new());
-        let fail_profile_save = Cell::new(true);
-        let delete_called = Cell::new(false);
+        let connection = rusqlite::Connection::open(directory.path().join("pipa.db")).unwrap();
+        connection
+            .pragma_update(None, "key", "test-encryption-key")
+            .unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_command_credential
+                 BEFORE INSERT ON connection_credentials
+                 BEGIN
+                   SELECT RAISE(ABORT, 'injected credential failure');
+                 END;",
+            )
+            .unwrap();
 
-        let error = persist_mysql_connection(
-            input,
-            |id, password| {
-                secrets.borrow_mut().insert(id, password.clone());
-                Ok(())
-            },
-            |profile| {
-                if fail_profile_save.get() {
-                    return Err(secret_store_lock_error());
-                }
-                visible_profiles.borrow_mut().push(profile.clone());
-                Ok(())
-            },
-            |id| {
-                delete_called.set(true);
-                secrets.borrow_mut().remove(&id);
-                Ok(())
-            },
-        )
-        .unwrap_err();
+        let error = save_mysql_connection_inner(&state, input).unwrap_err();
 
         assert!(matches!(error.code, AppErrorCode::Storage));
-        assert!(delete_called.get());
-        assert!(visible_profiles.borrow().is_empty());
-        assert!(!secrets.borrow().contains_key(&connection_id));
-        assert!(!format!("{error:?}").contains("rollback-password"));
+        assert!(state.local_store.list_connections().unwrap().is_empty());
+        assert!(state
+            .local_store
+            .get_connection_credential(connection_id)
+            .is_err());
+        assert!(!format!("{error:?}").contains("set-failure-password"));
     }
 
     /// Verifies the list command returns the profiles persisted by the local store.
     #[test]
     fn listing_connections_reads_local_store_profiles() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let first = save_mysql_connection_inner(&state, mysql_input("first-password")).unwrap();
 
         let listed = list_connections_inner(&state).unwrap();
@@ -531,7 +426,7 @@ mod tests {
     /// Verifies unknown query cancellation returns the stable not-found category.
     #[tokio::test]
     async fn canceling_unknown_query_returns_not_found() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
 
         let error = cancel_query_inner(&state, Uuid::new_v4())
             .await
@@ -544,7 +439,7 @@ mod tests {
     /// Verifies cancellation signals but retains registration for terminal cleanup.
     #[tokio::test]
     async fn canceling_known_query_only_signals_its_token() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let query_id = Uuid::new_v4();
         let cancellation = CancellationToken::new();
         state
@@ -562,7 +457,7 @@ mod tests {
     /// Verifies workspace payloads map store-owned fields without redesigning their shape.
     #[test]
     fn workspace_commands_round_trip_store_owned_tab_shape() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let tab = WorkspaceTabPayload {
             id: Uuid::new_v4(),
             connection_id: Uuid::new_v4(),
@@ -590,7 +485,7 @@ mod tests {
     /// Verifies replaying a Started event records one history row with backend UTC time.
     #[test]
     fn record_history_command_is_idempotent_and_uses_safe_fields() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let query_id = Uuid::new_v4();
         let connection_id = Uuid::new_v4();
         let input = RecordQueryHistoryInput {
@@ -613,7 +508,7 @@ mod tests {
     /// Verifies the adapter connection test returns safe errors without persisting credentials.
     #[tokio::test]
     async fn testing_connection_does_not_persist_or_expose_password() {
-        let (_directory, state, secret_store) = test_state();
+        let (_directory, state) = test_state();
         let mut input = mysql_input("test-only-password");
         input.profile.port = 1;
         let connection_id = input.profile.id;
@@ -623,7 +518,10 @@ mod tests {
             .unwrap_err();
 
         assert!(state.local_store.list_connections().unwrap().is_empty());
-        assert!(secret_store.get(connection_id).is_err());
+        assert!(state
+            .local_store
+            .get_connection_credential(connection_id)
+            .is_err());
         assert!(!format!("{error:?}").contains("test-only-password"));
     }
 
@@ -726,7 +624,7 @@ mod tests {
     /// Verifies adapter startup failure emits a terminal event and cleans registration.
     #[tokio::test]
     async fn run_query_emits_failed_event_and_cleans_up_adapter_failure() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let mut input = mysql_input("query-only-password");
         input.profile.port = 1;
         let connection_id = input.profile.id;
@@ -768,7 +666,7 @@ mod tests {
     /// Verifies a duplicate query identifier cannot replace a live cancellation token.
     #[tokio::test]
     async fn run_query_rejects_duplicate_query_id_without_replacing_registration() {
-        let (_directory, state, _secret_store) = test_state();
+        let (_directory, state) = test_state();
         let input = mysql_input("duplicate-query-password");
         let connection_id = input.profile.id;
         save_mysql_connection_inner(&state, input).unwrap();

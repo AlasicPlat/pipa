@@ -1,9 +1,8 @@
-//! Encrypted local persistence and operating-system credential storage.
+//! SQLCipher-encrypted local persistence for application data and database credentials.
 
 #![warn(missing_docs)]
 
 mod connection_repository;
-mod secret_store;
 mod workspace_repository;
 
 use pipa_core::{AppError, AppErrorCode};
@@ -14,12 +13,9 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-#[cfg(test)]
-pub use secret_store::MemorySecretStore;
-pub use secret_store::{KeyringSecretStore, SecretStore};
 pub use workspace_repository::{QueryHistoryEntry, WorkspaceTab};
 
-/// Encrypted SQLite storage for non-secret local application data.
+/// Encrypted SQLite storage for local application data and database credentials.
 pub struct LocalStore {
     path: PathBuf,
     connection: Mutex<Connection>,
@@ -37,6 +33,7 @@ impl LocalStore {
             .and_then(|_| {
                 connection.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
             })
+            .and_then(|_| connection.pragma_update(None, "foreign_keys", "ON"))
             .and_then(|_| connection.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())))
             .and_then(|_| {
                 connection.execute_batch(
@@ -51,6 +48,11 @@ impl LocalStore {
                        database_name TEXT,
                        tls_mode TEXT NOT NULL,
                        updated_at TEXT NOT NULL
+                     );
+                     CREATE TABLE IF NOT EXISTS connection_credentials (
+                       connection_id TEXT PRIMARY KEY,
+                       password TEXT NOT NULL,
+                       FOREIGN KEY(connection_id) REFERENCES connections(id) ON DELETE CASCADE
                      );
                      CREATE TABLE IF NOT EXISTS workspace_tabs (
                        id TEXT PRIMARY KEY,
@@ -123,7 +125,7 @@ fn storage_error(
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalStore, MemorySecretStore, QueryHistoryEntry, SecretStore, WorkspaceTab};
+    use super::{LocalStore, QueryHistoryEntry, WorkspaceTab};
     use chrono::{Duration, TimeZone, Utc};
     use pipa_core::{ConnectionProfile, Engine, Environment, TlsMode};
     use secrecy::{ExposeSecret, SecretString};
@@ -152,7 +154,7 @@ mod tests {
         (directory, store)
     }
 
-    /// Verifies profiles round-trip without introducing a password into SQLite.
+    /// Verifies profiles round-trip without adding secret fields to their public shape.
     #[test]
     fn connection_round_trip_excludes_password() {
         let (_directory, store) = test_store("correct horse battery staple");
@@ -166,6 +168,57 @@ mod tests {
         );
         let bytes = std::fs::read(store.path()).unwrap();
         assert!(!String::from_utf8_lossy(&bytes).contains("database-password"));
+    }
+
+    /// Verifies a connection credential round-trips while SQLCipher hides it on disk.
+    #[test]
+    fn credential_round_trip_is_encrypted_at_rest() {
+        let (_directory, store) = test_store("credential-key");
+        let profile = mysql_profile();
+        let password = SecretString::from("encrypted-database-password");
+
+        store
+            .save_connection_with_credential(&profile, &password)
+            .unwrap();
+
+        assert_eq!(
+            store
+                .get_connection_credential(profile.id)
+                .unwrap()
+                .expose_secret(),
+            "encrypted-database-password"
+        );
+        let database_path = store.path().to_path_buf();
+        drop(store);
+        let bytes = std::fs::read(database_path).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("encrypted-database-password"));
+    }
+
+    /// Verifies a credential-write failure rolls back its new connection profile atomically.
+    #[test]
+    fn credential_failure_leaves_no_connection_or_credential() {
+        let (_directory, store) = test_store("atomic-key");
+        let profile = mysql_profile();
+        let password = SecretString::from("rollback-database-password");
+        store
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_connection_credential
+                 BEFORE INSERT ON connection_credentials
+                 BEGIN
+                   SELECT RAISE(ABORT, 'injected credential failure');
+                 END;",
+            )
+            .unwrap();
+
+        let error = store
+            .save_connection_with_credential(&profile, &password)
+            .unwrap_err();
+
+        assert!(store.list_connections().unwrap().is_empty());
+        assert!(store.get_connection_credential(profile.id).is_err());
+        assert!(!format!("{error:?}").contains("rollback-database-password"));
     }
 
     /// Verifies saving an existing profile identifier replaces its non-secret fields.
@@ -313,21 +366,5 @@ mod tests {
         store.record_query_history(&duplicate).unwrap();
 
         assert_eq!(store.list_query_history(10).unwrap(), vec![first]);
-    }
-
-    /// Verifies the test secret store supports isolated set, get, and delete operations.
-    #[test]
-    fn memory_secret_store_round_trip_and_delete() {
-        let store = MemorySecretStore::default();
-        let connection_id = Uuid::new_v4();
-        let password = SecretString::from("database-password");
-
-        store.set(connection_id, &password).unwrap();
-        assert_eq!(
-            store.get(connection_id).unwrap().expose_secret(),
-            "database-password"
-        );
-        store.delete(connection_id).unwrap();
-        assert!(store.get(connection_id).is_err());
     }
 }
