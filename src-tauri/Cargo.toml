@@ -24,6 +24,7 @@ keyring.workspace = true
 pipa-core = { path = "../crates/pipa-core" }
 pipa-mysql = { path = "../crates/pipa-mysql" }
 pipa-store = { path = "../crates/pipa-store" }
+rusqlite.workspace = true
 secrecy.workspace = true
 tauri = { workspace = true, features = [] }
 serde.workspace = true

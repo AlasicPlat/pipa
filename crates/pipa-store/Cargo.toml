@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 chrono.workspace = true
-keyring.workspace = true
 pipa-core = { path = "../pipa-core" }
 rusqlite.workspace = true
 secrecy.workspace = true

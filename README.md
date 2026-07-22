@@ -73,14 +73,17 @@ docker compose -f infra/test/mysql.compose.yml down
 | 部分 | 职责 |
 | --- | --- |
 | `pipa-core` | 与框架无关的连接、查询、结果、错误模型和数据库适配器契约，并生成 TypeScript 边界类型。 |
-| `pipa-store` | SQLCipher 加密 SQLite 中的非秘密连接配置、工作区和查询历史，以及系统钥匙串中的数据库密码。 |
+| `pipa-store` | 在 SQLCipher 加密 SQLite 中原子保存连接配置与密码，并持久化工作区和查询历史。 |
 | `pipa-mysql` | 基于 SQLx 的 MySQL 连接测试、可取消查询、结果分批和数据库值的无损传输转换。 |
-| `src-tauri` | 组合存储与 MySQL 适配器，管理查询生命周期和取消令牌，并通过类型化 Tauri IPC 向 React 界面提供命令。 |
+| `src-tauri` | 管理 bootstrap root key、隔离旧版钥匙串迁移、组合存储与 MySQL 适配器，并通过类型化 Tauri IPC 提供命令。 |
 
 ## 本地数据与安全策略
 
-- 非秘密连接配置、工作区和查询历史保存在应用数据目录内的 SQLCipher 加密 SQLite 数据库中。
-- 数据库密码和 SQLite 加密密钥只保存在操作系统钥匙串中；密码不写入 SQLite、日志或前端持久化存储。
+- 连接配置、数据库密码、工作区和查询历史保存在应用数据目录内的 `pipa.db`；该数据库由 SQLCipher 整库加密，配置与密码在同一事务中保存。
+- 随机 32-byte SQLCipher root key 单独保存在未加密的 `pipa-bootstrap.db`，因为解锁主库的 key 不能存进主库自身。Unix 系统上应用数据目录尽可能限制为 `0700`，bootstrap 文件限制为 `0600`，并使用 DELETE journal 避免额外 WAL 文件。
+- 本地威胁模型明确接受：能够读取当前用户应用数据目录的进程，也能取得 bootstrap root key 并解密主库。SQLCipher 主要防止数据库文件被单独复制或直接检查时泄露内容；它不替代操作系统账号、磁盘加密和文件权限保护。
+- 新安装及完成迁移后的日常启动不访问系统钥匙串。旧版本首次升级时可能最后一次请求钥匙串权限，以只读方式迁移旧 root key 和连接密码；全部迁移成功后写入完成标记，旧钥匙串条目保留且不再访问。
+- 数据库密码不会写入日志或前端持久化存储，错误与 Debug 输出保持脱敏。
 - 不使用 `localStorage`、`sessionStorage`、浏览器持久化或云端同步保存应用数据。
 - 查询结果只存在于当前运行内存中，默认不持久化；重启仅恢复未保存的 SQL 和标签上下文。
 - 日志和错误只应包含脱敏后的诊断信息，不包含密码或完整结果数据。
@@ -89,4 +92,4 @@ docker compose -f infra/test/mysql.compose.yml down
 
 - `docker compose ... up --wait` 失败：确认 Docker 守护进程正在运行，且宿主机端口 `33306` 未被占用。
 - Tauri 启动或打包失败：确认已安装 Xcode Command Line Tools、Rust stable、`rustfmt` 和 `clippy`。
-- 应用启动时报安全存储错误：确认当前登录会话允许应用访问 macOS 钥匙串；Pipa 不会回退到明文凭据文件。
+- 旧版本首次升级时报迁移错误：允许 Pipa 最后一次读取旧钥匙串条目后重试；迁移失败不会覆盖旧 `pipa.db`，完成标记也不会提前写入。
