@@ -43,6 +43,7 @@ async function assertTestThenSaveFlow(): Promise<void> {
   const onSaved = vi.fn();
 
   render(<ConnectionForm onSaved={onSaved} onCancel={vi.fn()} />);
+  expect(screen.getByText(/密码仅写入本机加密数据库/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: savedProfile.name } });
   fireEvent.change(screen.getByLabelText("主机"), { target: { value: savedProfile.host } });
   fireEvent.change(screen.getByLabelText("端口"), { target: { value: "3307" } });
