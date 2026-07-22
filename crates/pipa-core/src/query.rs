@@ -18,6 +18,21 @@ pub struct QueryRequest {
     pub sql: String,
 }
 
+/// Stable query context recorded after its matching backend execution starts.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RecordQueryHistoryInput {
+    /// Query identifier reused as the idempotent history-entry identifier.
+    #[ts(type = "string")]
+    pub query_id: Uuid,
+    /// Immutable connection associated with the executing query tab.
+    #[ts(type = "string")]
+    pub connection_id: Uuid,
+    /// Exact selected statement or editor selection sent for execution.
+    pub sql: String,
+}
+
 /// Metadata for one column in a streamed result set.
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -114,7 +129,7 @@ pub enum QueryEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellValue, QueryColumn, QueryEvent};
+    use super::{CellValue, QueryColumn, QueryEvent, RecordQueryHistoryInput};
     use crate::{AppError, AppErrorCode};
     use ts_rs::{Config, TS};
     use uuid::Uuid;
@@ -204,5 +219,27 @@ mod tests {
         let declaration = QueryEvent::decl(&Config::default());
 
         assert!(declaration.contains("affectedRows: number"));
+    }
+
+    /// Verifies the history command accepts only the stable run context and executed SQL.
+    #[test]
+    fn history_input_contract_excludes_transient_and_secret_fields() {
+        let input = RecordQueryHistoryInput {
+            query_id: Uuid::nil(),
+            connection_id: Uuid::nil(),
+            sql: "SELECT 1".into(),
+        };
+
+        let json = serde_json::to_value(input).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "queryId": "00000000-0000-0000-0000-000000000000",
+                "connectionId": "00000000-0000-0000-0000-000000000000",
+                "sql": "SELECT 1"
+            })
+        );
+        assert!(!json.to_string().contains("password"));
+        assert!(!json.to_string().contains("rows"));
     }
 }

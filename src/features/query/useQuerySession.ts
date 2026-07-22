@@ -5,6 +5,7 @@ import type { QueryColumn } from "../../bindings/QueryColumn";
 import type { QueryEvent } from "../../bindings/QueryEvent";
 import type { QueryRequest } from "../../bindings/QueryRequest";
 import type { CellValue } from "../../bindings/CellValue";
+import { recordQueryHistory } from "../../lib/tauriClient";
 
 export interface QuerySessionState {
   queryId: string | null;
@@ -155,6 +156,7 @@ export function useQuerySession(connectionId: string): QuerySessionController {
   );
   const activeQueryIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
+  const historyRecordedQueryIdRef = useRef<string | null>(null);
 
   /**
    * Starts SQL only when this workspace has no active query.
@@ -173,11 +175,26 @@ export function useQuerySession(connectionId: string): QuerySessionController {
       const onEvent = new Channel<QueryEvent>();
       activeQueryIdRef.current = queryId;
       cancelRequestedRef.current = false;
+      historyRecordedQueryIdRef.current = null;
       dispatch({ type: "begin", queryId, connectionId, sql });
 
       // Assigning first prevents fast backend events from racing the invoke promise.
       onEvent.onmessage = (event) => {
         dispatch({ type: "event", event });
+        if (
+          event.type === "started" &&
+          activeQueryIdRef.current === event.queryId &&
+          historyRecordedQueryIdRef.current !== event.queryId
+        ) {
+          historyRecordedQueryIdRef.current = event.queryId;
+          void recordQueryHistory({ queryId: event.queryId, connectionId, sql }).catch((error) => {
+            // History is secondary to the live query and failures never reveal SQL in logs.
+            console.error("Pipa record_query_history invocation failed", {
+              queryId: event.queryId,
+              error: toAppError(error),
+            });
+          });
+        }
         if (event.type === "completed" || event.type === "canceled" || event.type === "failed") {
           if (activeQueryIdRef.current === event.queryId) {
             activeQueryIdRef.current = null;

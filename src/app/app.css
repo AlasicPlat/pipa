@@ -411,8 +411,50 @@ body {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 36px minmax(220px, 44%) minmax(220px, 1fr);
+  grid-template-rows: 34px 36px minmax(220px, 44%) minmax(220px, 1fr);
   background: var(--surface-panel);
+}
+
+.query-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.query-tab {
+  position: relative;
+  min-width: 112px;
+  max-width: 220px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 0;
+  border-right: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 620;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-tab:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.query-tab.is-active {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-mysql);
+}
+
+.query-tab:disabled {
+  cursor: wait;
+  opacity: 0.52;
 }
 
 .query-context,
@@ -464,6 +506,25 @@ body {
 
 .query-context .environment-badge {
   margin-left: auto;
+}
+
+.workspace-save-error {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-redis);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.workspace-save-error button {
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--accent-redis) 36%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
 }
 
 .query-editor-panel {

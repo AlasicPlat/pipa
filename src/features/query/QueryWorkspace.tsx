@@ -1,12 +1,19 @@
 import { Play, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
 import { useQuerySession } from "./useQuerySession";
+import type { WorkspaceTab } from "./useWorkspacePersistence";
 
 interface QueryWorkspaceProps {
   profile: ConnectionProfile;
+  tab: WorkspaceTab;
+  tabs: WorkspaceTab[];
+  persistenceError: string | null;
+  onRetryPersistence: () => Promise<void>;
+  onSelectTab: (tabId: string) => void;
+  onSqlChange: (tabId: string, sqlText: string) => void;
 }
 
 /**
@@ -21,12 +28,19 @@ function environmentLabel(environment: ConnectionProfile["environment"]): string
 
 /**
  * Composes one connection-bound MySQL editor, minimal run controls, and streamed results.
- * @param props - Selected saved MySQL profile; credentials are intentionally absent.
+ * @param props - Active persisted tab, its fixed non-secret profile, and tab actions.
  * @returns The usable query workspace for that fixed connection.
- * Side effects: owns unsaved SQL in memory and invokes query-session commands after user actions.
+ * Side effects: reports controlled SQL edits and invokes query-session commands after user actions.
  */
-export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
-  const [sql, setSql] = useState("SELECT 1;");
+export function QueryWorkspace({
+  profile,
+  tab,
+  tabs,
+  persistenceError,
+  onRetryPersistence,
+  onSelectTab,
+  onSqlChange,
+}: QueryWorkspaceProps) {
   const session = useQuerySession(profile.id);
   const queryEditorRef = useRef<QueryEditorHandle>(null);
 
@@ -60,8 +74,31 @@ export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
     void session.cancel();
   }
 
+  /** Retries the latest failed encrypted workspace snapshot without touching editor state. */
+  function handleRetryPersistence(): void {
+    void onRetryPersistence();
+  }
+
   return (
     <section className="query-workspace" aria-label={`${profile.name} 查询工作区`}>
+      <div className="query-tabs" role="tablist" aria-label="已恢复查询标签">
+        {tabs.map((workspaceTab) => {
+          const isActive = workspaceTab.id === tab.id;
+          return (
+            <button
+              aria-selected={isActive}
+              className={`query-tab${isActive ? " is-active" : ""}`}
+              disabled={session.state.running && !isActive}
+              key={workspaceTab.id}
+              onClick={() => onSelectTab(workspaceTab.id)}
+              role="tab"
+              type="button"
+            >
+              <span>{workspaceTab.title}</span>
+            </button>
+          );
+        })}
+      </div>
       <header className="query-context">
         <span className="query-context__engine">MySQL</span>
         <strong>{profile.name}</strong>
@@ -71,6 +108,14 @@ export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
         <span className={`environment-badge environment-badge--${profile.environment}`}>
           {environmentLabel(profile.environment)}
         </span>
+        {persistenceError ? (
+          <span className="workspace-save-error" role="status">
+            未保存到本地
+            <button onClick={handleRetryPersistence} type="button">
+              重试
+            </button>
+          </span>
+        ) : null}
       </header>
 
       <div className="query-editor-panel">
@@ -89,8 +134,8 @@ export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
         </div>
         <QueryEditor
           ref={queryEditorRef}
-          sql={sql}
-          onSqlChange={setSql}
+          sql={tab.sqlText}
+          onSqlChange={(sqlText) => onSqlChange(tab.id, sqlText)}
           onExecute={handleExecute}
         />
       </div>

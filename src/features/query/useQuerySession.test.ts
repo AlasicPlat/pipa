@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppError } from "../../bindings/AppError";
+import { recordQueryHistory } from "../../lib/tauriClient";
 import {
   createInitialQuerySessionState,
   querySessionReducer,
@@ -41,6 +42,8 @@ vi.mock("@tauri-apps/api/core", () => {
 
   return { Channel: MockChannel, invoke: vi.fn() };
 });
+
+vi.mock("../../lib/tauriClient", () => ({ recordQueryHistory: vi.fn() }));
 
 const QUERY_ERROR: AppError = {
   code: "query",
@@ -183,6 +186,50 @@ async function assertChannelAndCancellationContract(): Promise<void> {
   expect(hook.result.current.state).toMatchObject({ running: false, incomplete: true });
 }
 
+/** Verifies history is written once only after the matching backend Started event. */
+async function assertStartedOnlyHistoryContract(): Promise<void> {
+  vi.mocked(invoke).mockResolvedValue("query-1");
+  vi.mocked(recordQueryHistory).mockResolvedValue(undefined);
+  const hook = renderHook(() => useQuerySession("connection-1"));
+
+  await act(async () => hook.result.current.run("select actual_scope"));
+  const queryId = hook.result.current.state.queryId;
+  expect(recordQueryHistory).not.toHaveBeenCalled();
+
+  act(() => {
+    channelState.instances[0].onmessage({ type: "started", queryId: "stale-query" });
+    channelState.instances[0].onmessage({ type: "started", queryId });
+    channelState.instances[0].onmessage({ type: "started", queryId });
+  });
+  expect(recordQueryHistory).toHaveBeenCalledTimes(1);
+  expect(recordQueryHistory).toHaveBeenCalledWith({
+    queryId,
+    connectionId: "connection-1",
+    sql: "select actual_scope",
+  });
+}
+
+/** Verifies startup rejection or a pre-Started adapter failure creates no history row. */
+async function assertPreStartedFailureSkipsHistory(): Promise<void> {
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("invoke failed"));
+  const invokeFailure = renderHook(() => useQuerySession("connection-1"));
+  await act(async () => invokeFailure.result.current.run("select invoke_failure"));
+  expect(recordQueryHistory).not.toHaveBeenCalled();
+  invokeFailure.unmount();
+
+  vi.mocked(invoke).mockResolvedValue("query-2");
+  const adapterFailure = renderHook(() => useQuerySession("connection-1"));
+  await act(async () => adapterFailure.result.current.run("select adapter_failure"));
+  act(() => {
+    channelState.instances[channelState.instances.length - 1]?.onmessage({
+      type: "failed",
+      queryId: adapterFailure.result.current.state.queryId,
+      error: QUERY_ERROR,
+    });
+  });
+  expect(recordQueryHistory).not.toHaveBeenCalled();
+}
+
 /** Registers reducer and hook contract tests. */
 function registerQuerySessionTests(): void {
   beforeEach(() => {
@@ -192,6 +239,8 @@ function registerQuerySessionTests(): void {
   it("reduces ordered events and ignores stale query ids", assertOrderedQueryReduction);
   it("preserves context and partial rows at terminal boundaries", assertTerminalStatePreservation);
   it("subscribes before invoke and cancels once per run", assertChannelAndCancellationContract);
+  it("records matching Started history once and ignores stale duplicates", assertStartedOnlyHistoryContract);
+  it("does not record history before Started", assertPreStartedFailureSkipsHistory);
 }
 
 describe("querySession", registerQuerySessionTests);

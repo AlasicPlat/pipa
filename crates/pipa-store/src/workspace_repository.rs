@@ -110,7 +110,7 @@ impl LocalStore {
         let result = (|| -> rusqlite::Result<()> {
             let transaction = connection.transaction()?;
             transaction.execute(
-                "INSERT INTO query_history (id, connection_id, sql_text, executed_at)
+                "INSERT OR IGNORE INTO query_history (id, connection_id, sql_text, executed_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
                     entry.id,

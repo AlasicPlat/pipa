@@ -291,6 +291,30 @@ mod tests {
         assert_eq!(store.list_query_history(2).unwrap().len(), 2);
     }
 
+    /// Verifies replaying the same started query identifier cannot duplicate history.
+    #[test]
+    fn query_history_is_idempotent_by_query_id() {
+        let (_directory, store) = test_store("idempotent-history-key");
+        let query_id = Uuid::new_v4();
+        let first = QueryHistoryEntry {
+            id: query_id,
+            connection_id: Uuid::new_v4(),
+            sql_text: "SELECT first".into(),
+            executed_at: Utc.with_ymd_and_hms(2026, 7, 12, 1, 0, 0).unwrap(),
+        };
+        let duplicate = QueryHistoryEntry {
+            id: query_id,
+            connection_id: Uuid::new_v4(),
+            sql_text: "SELECT duplicate".into(),
+            executed_at: Utc.with_ymd_and_hms(2026, 7, 12, 2, 0, 0).unwrap(),
+        };
+
+        store.record_query_history(&first).unwrap();
+        store.record_query_history(&duplicate).unwrap();
+
+        assert_eq!(store.list_query_history(10).unwrap(), vec![first]);
+    }
+
     /// Verifies the test secret store supports isolated set, get, and delete operations.
     #[test]
     fn memory_secret_store_round_trip_and_delete() {

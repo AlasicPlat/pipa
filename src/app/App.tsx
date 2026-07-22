@@ -5,6 +5,7 @@ import { ConnectionForm } from "../features/connections/ConnectionForm";
 import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { useConnections } from "../features/connections/useConnections";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
+import { useWorkspacePersistence } from "../features/query/useWorkspacePersistence";
 import "./tokens.css";
 import "./app.css";
 
@@ -16,9 +17,13 @@ import "./app.css";
  */
 export function App() {
   const connections = useConnections();
+  const queryWorkspace = useWorkspacePersistence();
   const [isAddingConnection, setIsAddingConnection] = useState(false);
   const selectedProfile = connections.profiles.find(
     (profile) => profile.id === connections.selectedConnectionId,
+  );
+  const activeQueryProfile = connections.profiles.find(
+    (profile) => profile.id === queryWorkspace.activeTab?.connectionId,
   );
 
   /**
@@ -29,7 +34,28 @@ export function App() {
    */
   function handleConnectionSaved(profile: ConnectionProfile): void {
     connections.addProfile(profile);
+    if (!queryWorkspace.loading && queryWorkspace.tabs.length === 0) {
+      queryWorkspace.addTab(profile.id, "查询 1");
+    }
     setIsAddingConnection(false);
+  }
+
+  /**
+   * Changes only navigator selection and creates a fixed tab solely when no workspace exists.
+   * @param connectionId - Connection selected in the left navigation.
+   * @returns Nothing (`void`).
+   * Side effects: updates sidebar state and may create the first immutable MySQL query tab.
+   */
+  function handleSelectConnection(connectionId: string): void {
+    connections.selectConnection(connectionId);
+    const profile = connections.profiles.find((item) => item.id === connectionId);
+    if (
+      profile?.engine === "my_sql" &&
+      !queryWorkspace.loading &&
+      queryWorkspace.tabs.length === 0
+    ) {
+      queryWorkspace.addTab(profile.id, "查询 1");
+    }
   }
 
   /**
@@ -91,7 +117,7 @@ export function App() {
         ) : null}
         <ConnectionSidebar
           onAddConnection={handleAddConnection}
-          onSelectConnection={connections.selectConnection}
+          onSelectConnection={handleSelectConnection}
           profiles={connections.profiles}
           selectedConnectionId={connections.selectedConnectionId}
         />
@@ -104,7 +130,7 @@ export function App() {
 
         <div
           className={`workspace__content${
-            selectedProfile?.engine === "my_sql" && !isAddingConnection
+            activeQueryProfile?.engine === "my_sql" && !isAddingConnection
               ? " workspace__content--query"
               : ""
           }`}
@@ -114,8 +140,30 @@ export function App() {
               onCancel={handleCancelConnection}
               onSaved={handleConnectionSaved}
             />
-          ) : selectedProfile?.engine === "my_sql" ? (
-            <QueryWorkspace key={selectedProfile.id} profile={selectedProfile} />
+          ) : queryWorkspace.loading ? (
+            <p className="panel-status" role="status">
+              正在恢复本地工作区…
+            </p>
+          ) : queryWorkspace.activeTab && activeQueryProfile?.engine === "my_sql" ? (
+            <QueryWorkspace
+              key={queryWorkspace.activeTab.id}
+              onRetryPersistence={queryWorkspace.retrySave}
+              onSelectTab={queryWorkspace.selectTab}
+              onSqlChange={queryWorkspace.updateTabSql}
+              persistenceError={queryWorkspace.error}
+              profile={activeQueryProfile}
+              tab={queryWorkspace.activeTab}
+              tabs={queryWorkspace.tabs}
+            />
+          ) : queryWorkspace.activeTab ? (
+            <section className="connection-overview" aria-labelledby="connection-overview-title">
+              <span className="connection-overview__icon" aria-hidden="true">
+                <Database size={24} strokeWidth={1.6} />
+              </span>
+              <span className="eyebrow">CONNECTION UNAVAILABLE</span>
+              <h2 id="connection-overview-title">无法恢复查询连接</h2>
+              <p>此标签仍保留原连接标识，不会改绑到当前侧栏连接。</p>
+            </section>
           ) : selectedProfile ? (
             <section className="connection-overview" aria-labelledby="connection-overview-title">
               <span className="connection-overview__icon" aria-hidden="true">

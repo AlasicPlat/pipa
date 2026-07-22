@@ -2,7 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
-import { listConnections, saveMySqlConnection, testMySqlConnection } from "./tauriClient";
+import {
+  listConnections,
+  loadWorkspace,
+  recordQueryHistory,
+  saveMySqlConnection,
+  saveWorkspace,
+  testMySqlConnection,
+  type WorkspaceTabPayload,
+} from "./tauriClient";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -40,6 +48,36 @@ async function assertExactConnectionCommands(): Promise<void> {
   expect(invoke).toHaveBeenNthCalledWith(3, "save_mysql_connection", { input: INPUT });
 }
 
+/** Verifies exact workspace and history command names and their safe payload envelopes. */
+async function assertExactWorkspaceCommands(): Promise<void> {
+  const tabs: WorkspaceTabPayload[] = [
+    {
+      id: "tab-1",
+      connectionId: PROFILE.id,
+      title: "查询 1",
+      sqlText: "SELECT 1",
+      position: 0,
+    },
+  ];
+  const history = {
+    queryId: "query-1",
+    connectionId: PROFILE.id,
+    sql: "SELECT 1",
+  };
+  vi.mocked(invoke)
+    .mockResolvedValueOnce(tabs)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(undefined);
+
+  await expect(loadWorkspace()).resolves.toEqual(tabs);
+  await expect(saveWorkspace(tabs)).resolves.toBeUndefined();
+  await expect(recordQueryHistory(history)).resolves.toBeUndefined();
+
+  expect(invoke).toHaveBeenNthCalledWith(1, "load_workspace");
+  expect(invoke).toHaveBeenNthCalledWith(2, "save_workspace", { tabs });
+  expect(invoke).toHaveBeenNthCalledWith(3, "record_query_history", { input: history });
+}
+
 /**
  * Registers typed connection IPC contract tests.
  * Parameters: none.
@@ -49,6 +87,7 @@ async function assertExactConnectionCommands(): Promise<void> {
 function registerTauriClientTests(): void {
   beforeEach(() => vi.clearAllMocks());
   it("uses the exact connection command contract", assertExactConnectionCommands);
+  it("uses the exact safe workspace command contracts", assertExactWorkspaceCommands);
 }
 
 describe("tauriClient", registerTauriClientTests);
