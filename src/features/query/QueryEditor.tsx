@@ -1,5 +1,7 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
@@ -13,6 +15,8 @@ export interface QueryEditorHandle {
 }
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
+
+const SHORTCUT_ECHO_WINDOW_MS = 250;
 
 /**
  * Tracks the operating-system color preference for Monaco without owning application theme state.
@@ -86,6 +90,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 ) {
   const theme = useMonacoTheme();
   const editorRef = useRef<MonacoEditorInstance | null>(null);
+  const lastShortcutExecutionAtRef = useRef<number | null>(null);
   const onExecuteRef = useRef(onExecute);
   onExecuteRef.current = onExecute;
 
@@ -95,6 +100,25 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
       executeEditorScope(editorRef.current, onExecuteRef.current);
     }
   }, []);
+
+  /**
+   * Executes one native/DOM shortcut while suppressing an immediate echo from the other source.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: records the shortcut time and executes the current editor scope once.
+   */
+  const executeShortcutOnce = useCallback((): void => {
+    if (!editorRef.current) {
+      return;
+    }
+    const now = performance.now();
+    const lastExecutionAt = lastShortcutExecutionAtRef.current;
+    if (lastExecutionAt !== null && now - lastExecutionAt < SHORTCUT_ECHO_WINDOW_MS) {
+      return;
+    }
+    lastShortcutExecutionAtRef.current = now;
+    executeCurrent();
+  }, [executeCurrent]);
 
   useImperativeHandle(forwardedRef, () => ({ executeCurrent }), [executeCurrent]);
 
@@ -115,12 +139,40 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
         return;
       }
       event.preventDefault();
-      executeCurrent();
+      executeShortcutOnce();
     }
 
     document.addEventListener("keydown", handleExecuteShortcut, true);
     return () => document.removeEventListener("keydown", handleExecuteShortcut, true);
-  }, [executeCurrent]);
+  }, [executeShortcutOnce]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+
+    // Tauri registration is asynchronous, so late resolution must honor an earlier unmount.
+    void listen<void>(NATIVE_EXECUTE_QUERY_EVENT, executeShortcutOnce)
+      .then((registeredUnlisten) => {
+        if (disposed) {
+          registeredUnlisten();
+          return;
+        }
+        unlisten = registeredUnlisten;
+      })
+      .catch((error: unknown) => {
+        if (!disposed) {
+          console.error(
+            "Pipa native execute shortcut listener failed",
+            error instanceof Error ? error.message : "unknown listener error",
+          );
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [executeShortcutOnce]);
 
   return (
     <div className="query-editor" aria-label="SQL 编辑器">
