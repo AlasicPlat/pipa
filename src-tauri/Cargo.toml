@@ -20,7 +20,7 @@ tauri-build = { workspace = true, features = [] }
 base64.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
-keyring.workspace = true
+libc.workspace = true
 pipa-core = { path = "../crates/pipa-core" }
 pipa-mysql = { path = "../crates/pipa-mysql" }
 pipa-store = { path = "../crates/pipa-store" }

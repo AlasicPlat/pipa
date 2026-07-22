@@ -1,7 +1,4 @@
-use crate::{
-    bootstrap::BootstrapStore,
-    legacy_keyring::{KeyringLegacyMigration, LegacySecretMigration},
-};
+use crate::bootstrap::{try_path_exists, BootstrapStore};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use pipa_core::{AppError, AppErrorCode};
 use pipa_mysql::MySqlAdapter;
@@ -16,7 +13,7 @@ use zeroize::Zeroizing;
 use std::os::unix::fs::PermissionsExt;
 
 const LOCAL_DATABASE_KEY_LENGTH: usize = 32;
-const LOCAL_DATABASE_FILENAME: &str = "pipa.db";
+const LOCAL_DATABASE_FILENAME: &str = "pipa-data.db";
 const BOOTSTRAP_DATABASE_FILENAME: &str = "pipa-bootstrap.db";
 
 /// Shared application dependencies managed by the Tauri runtime.
@@ -33,11 +30,10 @@ impl AppState {
     /// Initializes application dependencies inside the supplied app-data directory.
     ///
     /// # Side effects
-    /// Opens local SQLite files and accesses the operating-system keyring only when a legacy main
-    /// database still needs its one-time migration.
+    /// Opens or creates the local bootstrap and SQLCipher database without accessing the
+    /// operating-system keyring or inspecting legacy `pipa.db` files.
     pub fn initialize(app_data_dir: &Path) -> Result<Self, AppError> {
-        let legacy = KeyringLegacyMigration;
-        let local_store = initialize_local_storage(app_data_dir, &legacy, |key| {
+        let local_store = initialize_local_storage(app_data_dir, |key| {
             getrandom::fill(key).map_err(|error| {
                 startup_storage_error(
                     "Could not generate local storage encryption key",
@@ -55,59 +51,39 @@ impl AppState {
     }
 }
 
-/// Opens local storage from the bootstrap or performs the one-time legacy keyring migration.
+/// Opens local storage from a complete bootstrap or creates a new independent data store.
 fn initialize_local_storage(
     app_data_dir: &Path,
-    legacy: &impl LegacySecretMigration,
     fill_random: impl FnOnce(&mut [u8]) -> Result<(), AppError>,
 ) -> Result<LocalStore, AppError> {
     prepare_app_data_directory(app_data_dir)?;
     let bootstrap_path = app_data_dir.join(BOOTSTRAP_DATABASE_FILENAME);
     let main_database_path = app_data_dir.join(LOCAL_DATABASE_FILENAME);
 
-    if bootstrap_path.exists() {
-        let bootstrap = BootstrapStore::open(&bootstrap_path)?;
-        let bootstrap_state = bootstrap.load()?;
-        let local_store = open_main_store(&main_database_path, &bootstrap_state.root_key)?;
-        if !bootstrap_state.legacy_migration_complete {
-            migrate_legacy_credentials(&local_store, legacy)?;
-            bootstrap.mark_legacy_migration_complete()?;
-        }
-        return Ok(local_store);
-    }
+    let root_key = if try_path_exists(&bootstrap_path, "probe bootstrap during startup")? {
+        BootstrapStore::open(&bootstrap_path)?.load()?.root_key
+    } else {
+        let mut root_key = Zeroizing::new(vec![0_u8; LOCAL_DATABASE_KEY_LENGTH]);
+        fill_random(&mut root_key)?;
+        let bootstrap = BootstrapStore::create(&bootstrap_path, &root_key)?;
+        let stored_root_key = bootstrap.load()?.root_key;
+        drop(bootstrap);
+        stored_root_key
+    };
 
-    if main_database_path.exists() {
-        let root_key = legacy.load_root_key()?;
-        validate_root_key(&root_key)?;
-        let bootstrap = BootstrapStore::create(&bootstrap_path, &root_key, false)?;
-        let local_store = open_main_store(&main_database_path, &root_key)?;
-        migrate_legacy_credentials(&local_store, legacy)?;
-        bootstrap.mark_legacy_migration_complete()?;
-        return Ok(local_store);
-    }
-
-    let mut root_key = Zeroizing::new(vec![0_u8; LOCAL_DATABASE_KEY_LENGTH]);
-    fill_random(&mut root_key)?;
-    let _bootstrap = BootstrapStore::create(&bootstrap_path, &root_key, true)?;
     open_main_store(&main_database_path, &root_key)
-}
-
-/// Imports every legacy connection password in one encrypted-main-database transaction.
-fn migrate_legacy_credentials(
-    local_store: &LocalStore,
-    legacy: &impl LegacySecretMigration,
-) -> Result<(), AppError> {
-    let profiles = local_store.list_connections()?;
-    let mut credentials = Vec::with_capacity(profiles.len());
-    for profile in profiles {
-        credentials.push((profile.id, legacy.load_connection_credential(profile.id)?));
-    }
-    local_store.import_connection_credentials(&credentials)
 }
 
 /// Opens the SQLCipher main database with a validated, base64-encoded root key.
 fn open_main_store(path: &Path, root_key: &[u8]) -> Result<LocalStore, AppError> {
-    validate_root_key(root_key)?;
+    if root_key.len() != LOCAL_DATABASE_KEY_LENGTH {
+        return Err(AppError {
+            code: AppErrorCode::Storage,
+            message: "Local storage encryption key is invalid".into(),
+            technical_details: Some("root key did not contain exactly 32 bytes".into()),
+            retryable: false,
+        });
+    }
     let encoded_key = Zeroizing::new(STANDARD_NO_PAD.encode(root_key));
     LocalStore::open(path, &encoded_key)
 }
@@ -132,20 +108,6 @@ fn prepare_app_data_directory(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Rejects malformed root-key material without logging or formatting its contents.
-fn validate_root_key(root_key: &[u8]) -> Result<(), AppError> {
-    if root_key.len() == LOCAL_DATABASE_KEY_LENGTH {
-        Ok(())
-    } else {
-        Err(AppError {
-            code: AppErrorCode::Storage,
-            message: "Local storage encryption key is invalid".into(),
-            technical_details: Some("root key did not contain exactly 32 bytes".into()),
-            retryable: false,
-        })
-    }
-}
-
 /// Builds a stable startup storage error without including secret inputs.
 fn startup_storage_error(
     message: &'static str,
@@ -163,97 +125,20 @@ fn startup_storage_error(
 #[cfg(test)]
 mod tests {
     use super::{initialize_local_storage, BOOTSTRAP_DATABASE_FILENAME, LOCAL_DATABASE_FILENAME};
-    use crate::{bootstrap::BootstrapStore, legacy_keyring::LegacySecretMigration};
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
-    use pipa_core::{AppError, AppErrorCode, ConnectionProfile, Engine, Environment, TlsMode};
-    use pipa_store::LocalStore;
+    use crate::bootstrap::BootstrapStore;
+    use pipa_core::{AppErrorCode, ConnectionProfile, Engine, Environment, TlsMode};
     use secrecy::{ExposeSecret, SecretString};
-    use std::{
-        cell::{Cell, RefCell},
-        collections::HashMap,
-    };
+    use std::cell::Cell;
     use uuid::Uuid;
-    use zeroize::Zeroizing;
 
     #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
-    /// Deterministic read-only legacy boundary used without a real operating-system keyring.
-    struct FakeLegacyMigration {
-        root_key: Vec<u8>,
-        credentials: RefCell<HashMap<Uuid, SecretString>>,
-        root_key_reads: Cell<usize>,
-        credential_reads: Cell<usize>,
-    }
-
-    impl FakeLegacyMigration {
-        /// Creates a fake boundary with one root key and no connection credentials.
-        fn new(root_key: Vec<u8>) -> Self {
-            Self {
-                root_key,
-                credentials: RefCell::new(HashMap::new()),
-                root_key_reads: Cell::new(0),
-                credential_reads: Cell::new(0),
-            }
-        }
-
-        /// Adds or replaces one fake legacy connection password.
-        fn insert_credential(&self, connection_id: Uuid, password: &str) {
-            self.credentials
-                .borrow_mut()
-                .insert(connection_id, SecretString::from(password));
-        }
-    }
-
-    impl LegacySecretMigration for FakeLegacyMigration {
-        /// Returns the configured root key and records one legacy access.
-        fn load_root_key(&self) -> Result<Zeroizing<Vec<u8>>, AppError> {
-            self.root_key_reads.set(self.root_key_reads.get() + 1);
-            Ok(Zeroizing::new(self.root_key.clone()))
-        }
-
-        /// Returns a configured password or the stable legacy not-found error.
-        fn load_connection_credential(
-            &self,
-            connection_id: Uuid,
-        ) -> Result<SecretString, AppError> {
-            self.credential_reads.set(self.credential_reads.get() + 1);
-            self.credentials
-                .borrow()
-                .get(&connection_id)
-                .cloned()
-                .ok_or_else(|| AppError {
-                    code: AppErrorCode::NotFound,
-                    message: "Legacy database credential was not found".into(),
-                    technical_details: Some("legacy credential entry is missing".into()),
-                    retryable: false,
-                })
-        }
-    }
-
-    /// Legacy boundary that proves a completed bootstrap never reaches the keyring path.
-    struct PanicLegacyMigration;
-
-    impl LegacySecretMigration for PanicLegacyMigration {
-        /// Panics because a completed bootstrap must never request the legacy root key.
-        fn load_root_key(&self) -> Result<Zeroizing<Vec<u8>>, AppError> {
-            panic!("completed bootstrap unexpectedly requested the legacy root key")
-        }
-
-        /// Panics because a completed bootstrap must never request legacy connection passwords.
-        fn load_connection_credential(
-            &self,
-            _connection_id: Uuid,
-        ) -> Result<SecretString, AppError> {
-            panic!("completed bootstrap unexpectedly requested a legacy credential")
-        }
-    }
-
-    /// Creates a representative legacy connection profile.
-    fn mysql_profile(name: &str) -> ConnectionProfile {
+    /// Creates a representative connection used to prove the new encrypted store is usable.
+    fn mysql_profile() -> ConnectionProfile {
         ConnectionProfile {
             id: Uuid::new_v4(),
-            name: name.into(),
+            name: "New Local MySQL".into(),
             engine: Engine::MySql,
             environment: Environment::Development,
             host: "127.0.0.1".into(),
@@ -264,25 +149,11 @@ mod tests {
         }
     }
 
-    /// Creates an encrypted legacy main database without a bootstrap file.
-    fn create_legacy_main_database(
-        directory: &std::path::Path,
-        root_key: &[u8],
-        profiles: &[ConnectionProfile],
-    ) {
-        let encoded_key = STANDARD_NO_PAD.encode(root_key);
-        let store =
-            LocalStore::open(directory.join(LOCAL_DATABASE_FILENAME), &encoded_key).unwrap();
-        for profile in profiles {
-            store.save_connection(profile).unwrap();
-        }
-    }
-
-    /// Verifies a new installation generates a stable 32-byte key and never touches legacy data.
+    /// Verifies a new installation generates a stable 32-byte key and reuses it without RNG.
     #[test]
     fn new_installation_bootstrap_key_is_stable() {
         let directory = tempfile::tempdir().unwrap();
-        let first = initialize_local_storage(directory.path(), &PanicLegacyMigration, |key| {
+        let first = initialize_local_storage(directory.path(), |key| {
             key.fill(0xA5);
             Ok(())
         })
@@ -295,9 +166,8 @@ mod tests {
             .load()
             .unwrap();
         assert_eq!(bootstrap_state.root_key.as_slice(), &[0xA5; 32]);
-        assert!(bootstrap_state.legacy_migration_complete);
 
-        initialize_local_storage(directory.path(), &PanicLegacyMigration, |_| {
+        initialize_local_storage(directory.path(), |_| {
             panic!("an existing bootstrap key must be reused")
         })
         .unwrap();
@@ -323,118 +193,68 @@ mod tests {
         }
     }
 
-    /// Verifies an old encrypted database imports its key and passwords exactly once.
+    /// Verifies a failed bootstrap existence probe aborts before random generation or file writes.
+    #[cfg(unix)]
     #[test]
-    fn legacy_database_migrates_credentials_only_once() {
+    fn bootstrap_probe_error_fails_closed_without_generating_key() {
         let directory = tempfile::tempdir().unwrap();
-        let root_key = vec![0x33; 32];
-        let profile = mysql_profile("Legacy MySQL");
-        create_legacy_main_database(directory.path(), &root_key, std::slice::from_ref(&profile));
-        let legacy = FakeLegacyMigration::new(root_key);
-        legacy.insert_credential(profile.id, "legacy-database-password");
+        let bootstrap_path = directory.path().join(BOOTSTRAP_DATABASE_FILENAME);
+        symlink(&bootstrap_path, &bootstrap_path).unwrap();
+        let generated = Cell::new(false);
 
-        let first = initialize_local_storage(directory.path(), &legacy, |_| {
-            panic!("a legacy database must reuse its existing root key")
+        let error = initialize_local_storage(directory.path(), |_| {
+            generated.set(true);
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(matches!(error.code, AppErrorCode::Storage));
+        assert_eq!(error.message, "Could not inspect local storage path");
+        assert!(!generated.get());
+        assert!(!directory
+            .path()
+            .join(LOCAL_DATABASE_FILENAME)
+            .try_exists()
+            .unwrap());
+    }
+
+    /// Verifies arbitrary legacy files remain untouched while the new database is created.
+    #[test]
+    fn legacy_database_files_are_ignored_and_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy_files = [
+            ("pipa.db", b"legacy-main".as_slice()),
+            ("pipa.db-wal", b"legacy-wal".as_slice()),
+            ("pipa.db-shm", b"legacy-shm".as_slice()),
+        ];
+        for (name, bytes) in legacy_files {
+            std::fs::write(directory.path().join(name), bytes).unwrap();
+        }
+
+        let store = initialize_local_storage(directory.path(), |key| {
+            key.fill(0x3C);
+            Ok(())
         })
         .unwrap();
+        let profile = mysql_profile();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("new-database-password"))
+            .unwrap();
+
         assert_eq!(
-            first
+            store
                 .get_connection_credential(profile.id)
                 .unwrap()
                 .expose_secret(),
-            "legacy-database-password"
+            "new-database-password"
         );
-        drop(first);
-        initialize_local_storage(directory.path(), &legacy, |_| {
-            panic!("an existing bootstrap must reuse its root key")
-        })
-        .unwrap();
-
-        assert_eq!(legacy.root_key_reads.get(), 1);
-        assert_eq!(legacy.credential_reads.get(), 1);
-        assert!(
-            BootstrapStore::open(&directory.path().join(BOOTSTRAP_DATABASE_FILENAME))
-                .unwrap()
-                .load()
-                .unwrap()
-                .legacy_migration_complete
-        );
-    }
-
-    /// Verifies a failed credential migration preserves the main DB and remains retryable.
-    #[test]
-    fn failed_legacy_migration_preserves_main_database_and_marker() {
-        let directory = tempfile::tempdir().unwrap();
-        let root_key = vec![0x44; 32];
-        let first_profile = mysql_profile("First Legacy MySQL");
-        let second_profile = mysql_profile("Second Legacy MySQL");
-        create_legacy_main_database(
-            directory.path(),
-            &root_key,
-            &[first_profile.clone(), second_profile.clone()],
-        );
-        let legacy = FakeLegacyMigration::new(root_key.clone());
-        legacy.insert_credential(first_profile.id, "first-legacy-password");
-
-        let error = initialize_local_storage(directory.path(), &legacy, |_| {
-            panic!("a legacy database must reuse its existing root key")
-        })
-        .unwrap_err();
-
-        assert!(matches!(error.code, AppErrorCode::NotFound));
-        assert!(!format!("{error:?}").contains("first-legacy-password"));
-        let bootstrap =
-            BootstrapStore::open(&directory.path().join(BOOTSTRAP_DATABASE_FILENAME)).unwrap();
-        assert!(!bootstrap.load().unwrap().legacy_migration_complete);
-        let encoded_key = STANDARD_NO_PAD.encode(&root_key);
-        let preserved =
-            LocalStore::open(directory.path().join(LOCAL_DATABASE_FILENAME), &encoded_key).unwrap();
-        assert_eq!(preserved.list_connections().unwrap().len(), 2);
-        assert!(preserved
-            .get_connection_credential(first_profile.id)
-            .is_err());
-        drop(preserved);
-
-        legacy.insert_credential(second_profile.id, "second-legacy-password");
-        let migrated = initialize_local_storage(directory.path(), &legacy, |_| {
-            panic!("retry must reuse the bootstrap root key")
-        })
-        .unwrap();
-        assert_eq!(
-            migrated
-                .get_connection_credential(second_profile.id)
-                .unwrap()
-                .expose_secret(),
-            "second-legacy-password"
-        );
-        assert_eq!(legacy.root_key_reads.get(), 1);
-        assert!(
-            BootstrapStore::open(&directory.path().join(BOOTSTRAP_DATABASE_FILENAME))
-                .unwrap()
-                .load()
-                .unwrap()
-                .legacy_migration_complete
-        );
-    }
-
-    /// Verifies malformed legacy key material never replaces the existing encrypted main file.
-    #[test]
-    fn malformed_legacy_root_key_does_not_replace_main_database() {
-        let directory = tempfile::tempdir().unwrap();
-        let main_path = directory.path().join(LOCAL_DATABASE_FILENAME);
-        std::fs::write(&main_path, b"existing-encrypted-main-database").unwrap();
-        let legacy = FakeLegacyMigration::new(vec![0x55; 31]);
-
-        let error = initialize_local_storage(directory.path(), &legacy, |_| {
-            panic!("legacy installations must not generate a replacement key")
-        })
-        .unwrap_err();
-
-        assert_eq!(error.message, "Local storage encryption key is invalid");
-        assert_eq!(
-            std::fs::read(main_path).unwrap(),
-            b"existing-encrypted-main-database"
-        );
-        assert!(!directory.path().join(BOOTSTRAP_DATABASE_FILENAME).exists());
+        assert!(directory
+            .path()
+            .join(LOCAL_DATABASE_FILENAME)
+            .try_exists()
+            .unwrap());
+        for (name, bytes) in legacy_files {
+            assert_eq!(std::fs::read(directory.path().join(name)).unwrap(), bytes);
+        }
     }
 }
