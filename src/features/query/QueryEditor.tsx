@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
@@ -7,6 +7,12 @@ interface QueryEditorProps {
   onSqlChange: (sql: string) => void;
   onExecute: (sql: string) => void;
 }
+
+export interface QueryEditorHandle {
+  executeCurrent: () => void;
+}
+
+type MonacoEditorInstance = Parameters<OnMount>[0];
 
 /**
  * Tracks the operating-system color preference for Monaco without owning application theme state.
@@ -35,54 +41,76 @@ function useMonacoTheme(): "vs" | "vs-dark" {
 }
 
 /**
- * Registers SQL execution using Monaco's native cross-platform command system.
- * @param onExecute - Callback receiving selection-first, cursor-aware SQL.
- * @returns Monaco's mount callback.
- * Side effects: adds one `Ctrl/Cmd + R` editor action after Monaco mounts.
+ * Executes Monaco's current scope using the one selection-first scanner path.
+ * @param editor - Mounted Monaco editor that owns selection, cursor, and current buffer state.
+ * @param onExecute - Callback receiving only the selected or cursor-containing statement.
+ * @returns Nothing (`void`).
+ * Side effects: reads Monaco state and invokes `onExecute` for a non-empty scope.
  */
-function createEditorMountHandler(onExecute: (sql: string) => void): OnMount {
-  return (editor, monaco) => {
-    editor.addAction({
-      id: "pipa.execute-query",
-      label: "执行当前语句或选中内容",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_R],
-      run: () => {
-        const model = editor.getModel();
-        const position = editor.getPosition();
-        if (!model || !position) {
-          return;
-        }
+function executeEditorScope(editor: MonacoEditorInstance, onExecute: (sql: string) => void): void {
+  const model = editor.getModel();
+  const position = editor.getPosition();
+  if (!model || !position) {
+    return;
+  }
 
-        const monacoSelection = editor.getSelection();
-        const selection = monacoSelection
-          ? {
-              start: model.getOffsetAt({
-                lineNumber: monacoSelection.startLineNumber,
-                column: monacoSelection.startColumn,
-              }),
-              end: model.getOffsetAt({
-                lineNumber: monacoSelection.endLineNumber,
-                column: monacoSelection.endColumn,
-              }),
-            }
-          : null;
-        const sql = sqlToExecute(editor.getValue(), selection, model.getOffsetAt(position));
-        if (sql) {
-          onExecute(sql);
-        }
-      },
-    });
-  };
+  const monacoSelection = editor.getSelection();
+  const selection = monacoSelection
+    ? {
+        start: model.getOffsetAt({
+          lineNumber: monacoSelection.startLineNumber,
+          column: monacoSelection.startColumn,
+        }),
+        end: model.getOffsetAt({
+          lineNumber: monacoSelection.endLineNumber,
+          column: monacoSelection.endColumn,
+        }),
+      }
+    : null;
+  const sql = sqlToExecute(editor.getValue(), selection, model.getOffsetAt(position));
+  if (sql) {
+    onExecute(sql);
+  }
 }
 
 /**
  * Renders the MySQL editor and prevents the WebView refresh shortcut in capture phase.
  * @param props - Controlled SQL value plus edit and execute callbacks.
+ * @param forwardedRef - Imperative handle used by the visible toolbar execute control.
  * @returns The query-editor element.
- * Side effects: registers a temporary document key guard and a Monaco action.
+ * Side effects: registers a temporary document key guard, Monaco action, and shared execute handle.
  */
-export function QueryEditor({ sql, onSqlChange, onExecute }: QueryEditorProps) {
+export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function QueryEditor(
+  { sql, onSqlChange, onExecute },
+  forwardedRef,
+) {
   const theme = useMonacoTheme();
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+  const onExecuteRef = useRef(onExecute);
+  onExecuteRef.current = onExecute;
+
+  /** Executes the same selection/cursor scope for keyboard and toolbar callers. */
+  const executeCurrent = useCallback((): void => {
+    if (editorRef.current) {
+      executeEditorScope(editorRef.current, onExecuteRef.current);
+    }
+  }, []);
+
+  useImperativeHandle(forwardedRef, () => ({ executeCurrent }), [executeCurrent]);
+
+  /** Registers the native shortcut and retains the mounted editor for toolbar execution. */
+  const handleMount = useCallback<OnMount>(
+    (editor, monaco) => {
+      editorRef.current = editor;
+      editor.addAction({
+        id: "pipa.execute-query",
+        label: "执行当前语句或选中内容",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_R],
+        run: executeCurrent,
+      });
+    },
+    [executeCurrent],
+  );
 
   useEffect(() => {
     /** Prevents the desktop shell from interpreting the product shortcut as refresh. */
@@ -101,7 +129,7 @@ export function QueryEditor({ sql, onSqlChange, onExecute }: QueryEditorProps) {
       <Editor
         language="sql"
         onChange={(value) => onSqlChange(value ?? "")}
-        onMount={createEditorMountHandler(onExecute)}
+        onMount={handleMount}
         options={{
           accessibilityPageSize: 20,
           ariaLabel: "MySQL 查询编辑器",
@@ -120,4 +148,4 @@ export function QueryEditor({ sql, onSqlChange, onExecute }: QueryEditorProps) {
       />
     </div>
   );
-}
+});
