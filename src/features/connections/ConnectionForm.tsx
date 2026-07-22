@@ -93,7 +93,7 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
         <span>
           <span className="eyebrow">MYSQL CONNECTION</span>
           <h2 id="connection-form-title">添加 MySQL 连接</h2>
-          <p>先验证连接，再将配置保存在本机。密码仅写入系统凭据存储。</p>
+          <p>先验证连接，再将配置保存在本机。密码仅写入本机加密数据库。</p>
         </span>
       </header>
 
