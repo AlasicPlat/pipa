@@ -12,6 +12,16 @@ type ScannerState =
   | "block_comment";
 
 /**
+ * Reports whether the character after `--` satisfies MySQL's comment introducer rule.
+ * @param character - Character immediately following the second dash, if present.
+ * @returns `true` only for whitespace or ASCII control characters; end-of-input is not enough.
+ * Side effects: none.
+ */
+function isMySqlDashCommentFollower(character: string | undefined): boolean {
+  return character !== undefined && /[\s\u0000-\u001f\u007f]/u.test(character);
+}
+
+/**
  * Returns selected SQL or the statement containing the cursor without mutating editor state.
  * @param sql - Complete editor text using JavaScript/Monaco UTF-16 offsets.
  * @param selection - Optional half-open selection range; non-whitespace selections take priority.
@@ -75,7 +85,11 @@ export function sqlToExecute(
       state = "backtick";
     } else if (character === "#") {
       state = "line_comment";
-    } else if (character === "-" && nextCharacter === "-") {
+    } else if (
+      character === "-" &&
+      nextCharacter === "-" &&
+      isMySqlDashCommentFollower(sql[index + 2])
+    ) {
       state = "line_comment";
       index += 1;
     } else if (character === "/" && nextCharacter === "*") {

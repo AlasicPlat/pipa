@@ -1,7 +1,7 @@
 import { Play, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
-import { QueryEditor } from "./QueryEditor";
+import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
 import { useQuerySession } from "./useQuerySession";
 
@@ -28,6 +28,7 @@ function environmentLabel(environment: ConnectionProfile["environment"]): string
 export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
   const [sql, setSql] = useState("SELECT 1;");
   const session = useQuerySession(profile.id);
+  const queryEditorRef = useRef<QueryEditorHandle>(null);
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.
@@ -37,6 +38,16 @@ export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
    */
   function handleExecute(sqlToRun: string): void {
     void session.run(sqlToRun);
+  }
+
+  /**
+   * Delegates the visible execute control to Monaco's shared selection/cursor path.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: asks the mounted editor to execute its current scope.
+   */
+  function handleToolbarExecute(): void {
+    queryEditorRef.current?.executeCurrent();
   }
 
   /**
@@ -68,15 +79,20 @@ export function QueryWorkspace({ profile }: QueryWorkspaceProps) {
           <button
             className="query-run-button"
             disabled={session.state.running}
-            onClick={() => handleExecute(sql)}
+            onClick={handleToolbarExecute}
             type="button"
           >
             <Play size={13} fill="currentColor" aria-hidden="true" />
             执行
-            <kbd>⌘/Ctrl R</kbd>
+            <kbd>Ctrl/Cmd + R</kbd>
           </button>
         </div>
-        <QueryEditor sql={sql} onSqlChange={setSql} onExecute={handleExecute} />
+        <QueryEditor
+          ref={queryEditorRef}
+          sql={sql}
+          onSqlChange={setSql}
+          onExecute={handleExecute}
+        />
       </div>
 
       <section className="query-results" aria-label="结果区域">

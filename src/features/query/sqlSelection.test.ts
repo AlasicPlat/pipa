@@ -36,6 +36,20 @@ function assertCommentDelimiterHandling(): void {
   expect(sqlToExecute("select 1 /* ; */;\nselect 2;", null, 25)).toBe("select 2");
   expect(sqlToExecute("select 1 -- ;\n;\nselect 2;", null, 27)).toBe("select 2");
   expect(sqlToExecute("select 1 # ;\n;\nselect 2;", null, 26)).toBe("select 2");
+  expect(sqlToExecute("SELECT 1--2;\nSELECT 3;", null, 20)).toBe("SELECT 3");
+}
+
+/**
+ * Verifies the cursor remains in one statement when syntax content contains semicolons.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: none.
+ */
+function assertCurrentStatementContainingSyntaxSemicolons(): void {
+  expect(sqlToExecute("select ';' as value;\nselect 2;", null, 10)).toBe("select ';' as value");
+  expect(sqlToExecute("select 1 /* ; */;\nselect 2;", null, 12)).toBe("select 1 /* ; */");
+  expect(sqlToExecute("select 1 -- ;\n;\nselect 2;", null, 12)).toBe("select 1 -- ;");
+  expect(sqlToExecute("SELECT 1--2;\nSELECT 3;", null, 8)).toBe("SELECT 1--2");
 }
 
 /**
@@ -54,5 +68,6 @@ describe("sqlToExecute", () => {
   it("prefers a non-empty selection", assertSelectionPrecedence);
   it("ignores semicolons inside quoted values and identifiers", assertQuotedDelimiterHandling);
   it("ignores semicolons inside comments", assertCommentDelimiterHandling);
+  it("keeps syntax semicolons inside the cursor statement", assertCurrentStatementContainingSyntaxSemicolons);
   it("handles empty statements and cursor edges", assertCursorEdgeHandling);
 });
