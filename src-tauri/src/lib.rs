@@ -14,6 +14,9 @@ const EXECUTE_QUERY_MENU_ID: &str = "pipa.execute-query";
 const EXECUTE_QUERY_EVENT: &str = "pipa://execute-query";
 #[cfg(any(target_os = "macos", test))]
 const EXECUTE_QUERY_ACCELERATOR: &str = "CmdOrCtrl+R";
+/// Tauri's default macOS menu places View at index 3 and Window/Help after it.
+#[cfg(any(target_os = "macos", test))]
+const QUERY_MENU_INSERTION_INDEX_AFTER_VIEW: usize = 4;
 
 /// Returns whether a native menu event requests execution of the current query.
 ///
@@ -55,7 +58,7 @@ pub fn run() {
                 Some(EXECUTE_QUERY_ACCELERATOR),
             )?;
             let query_menu = Submenu::with_items(app, "查询", true, &[&execute_query])?;
-            menu.append(&query_menu)?;
+            menu.insert(&query_menu, QUERY_MENU_INSERTION_INDEX_AFTER_VIEW)?;
             Ok(menu)
         })
         .on_menu_event(|app, event| {
@@ -99,15 +102,16 @@ pub fn run() {
 mod tests {
     use super::{
         is_execute_query_menu, EXECUTE_QUERY_ACCELERATOR, EXECUTE_QUERY_EVENT,
-        EXECUTE_QUERY_MENU_ID,
+        EXECUTE_QUERY_MENU_ID, QUERY_MENU_INSERTION_INDEX_AFTER_VIEW,
     };
 
-    /// Verifies the native menu identifier, accelerator, and frontend event contract stay stable.
+    /// Verifies the native query menu identifiers, accelerator, event, and position stay stable.
     #[test]
     fn native_execute_query_contract_is_stable() {
         assert_eq!(EXECUTE_QUERY_MENU_ID, "pipa.execute-query");
         assert_eq!(EXECUTE_QUERY_EVENT, "pipa://execute-query");
         assert_eq!(EXECUTE_QUERY_ACCELERATOR, "CmdOrCtrl+R");
+        assert_eq!(QUERY_MENU_INSERTION_INDEX_AFTER_VIEW, 4);
         assert!(is_execute_query_menu(EXECUTE_QUERY_MENU_ID));
         assert!(!is_execute_query_menu("pipa.new-query"));
     }
