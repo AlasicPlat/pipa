@@ -34,7 +34,11 @@ export function App() {
    */
   function handleConnectionSaved(profile: ConnectionProfile): void {
     connections.addProfile(profile);
-    if (!queryWorkspace.loading && queryWorkspace.tabs.length === 0) {
+    if (
+      !queryWorkspace.loading &&
+      !queryWorkspace.recoveryBlocked &&
+      queryWorkspace.tabs.length === 0
+    ) {
       queryWorkspace.addTab(profile.id, "查询 1");
     }
     setIsAddingConnection(false);
@@ -52,6 +56,7 @@ export function App() {
     if (
       profile?.engine === "my_sql" &&
       !queryWorkspace.loading &&
+      !queryWorkspace.recoveryBlocked &&
       queryWorkspace.tabs.length === 0
     ) {
       queryWorkspace.addTab(profile.id, "查询 1");
@@ -65,6 +70,9 @@ export function App() {
    * Side effects: updates local form visibility state.
    */
   function handleAddConnection(): void {
+    if (queryWorkspace.recoveryBlocked) {
+      return;
+    }
     setIsAddingConnection(true);
   }
 
@@ -86,6 +94,12 @@ export function App() {
    */
   function handleReloadConnections(): void {
     void connections.reload();
+  }
+
+  /** Retries the blocked startup restore before allowing any workspace mutation. */
+  function handleRetryWorkspaceRecovery(): void {
+    setIsAddingConnection(false);
+    void queryWorkspace.retryLoad();
   }
 
   return (
@@ -135,7 +149,28 @@ export function App() {
               : ""
           }`}
         >
-          {isAddingConnection ? (
+          {queryWorkspace.recoveryBlocked ? (
+            <section
+              className="connection-overview"
+              aria-labelledby="workspace-recovery-title"
+              role="alert"
+            >
+              <span className="connection-overview__icon" aria-hidden="true">
+                <Database size={24} strokeWidth={1.6} />
+              </span>
+              <span className="eyebrow">RECOVERY REQUIRED</span>
+              <h2 id="workspace-recovery-title">无法恢复上次工作区</h2>
+              <p>{queryWorkspace.loadError}</p>
+              <button
+                className="button button--primary"
+                disabled={queryWorkspace.loading}
+                onClick={handleRetryWorkspaceRecovery}
+                type="button"
+              >
+                {queryWorkspace.loading ? "正在恢复…" : "重新恢复"}
+              </button>
+            </section>
+          ) : isAddingConnection ? (
             <ConnectionForm
               onCancel={handleCancelConnection}
               onSaved={handleConnectionSaved}
@@ -150,7 +185,7 @@ export function App() {
               onRetryPersistence={queryWorkspace.retrySave}
               onSelectTab={queryWorkspace.selectTab}
               onSqlChange={queryWorkspace.updateTabSql}
-              persistenceError={queryWorkspace.error}
+              persistenceError={queryWorkspace.saveError}
               profile={activeQueryProfile}
               tab={queryWorkspace.activeTab}
               tabs={queryWorkspace.tabs}
