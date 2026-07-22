@@ -254,6 +254,71 @@ async function assertRecoveryFailureBlocksWritesUntilRetry(): Promise<void> {
   expect(hook.result.current.activeTab?.connectionId).toBe("connection-1");
 }
 
+/**
+ * Verifies closing tabs persists order and activates the nearest surviving neighbor.
+ * Parameters: none.
+ * @returns A promise that resolves after startup restoration settles.
+ * Side effects: renders and mutates an isolated workspace hook.
+ */
+async function assertCloseTabSelectsNearestNeighbor(): Promise<void> {
+  const secondTab = { ...RESTORED_TAB, id: "tab-2", title: "第二个", position: 1 };
+  const thirdTab = { ...RESTORED_TAB, id: "tab-3", title: "第三个", position: 2 };
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([RESTORED_TAB, secondTab, thirdTab]);
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hook.result.current.selectTab(secondTab.id));
+  act(() => hook.result.current.closeTab(secondTab.id));
+  expect(hook.result.current.activeTabId).toBe(thirdTab.id);
+
+  act(() => hook.result.current.closeTab(thirdTab.id));
+  expect(hook.result.current.activeTabId).toBe(RESTORED_TAB.id);
+
+  act(() => hook.result.current.closeTab(RESTORED_TAB.id));
+  expect(hook.result.current.activeTabId).toBeNull();
+  expect(hook.result.current.tabs).toEqual([]);
+}
+
+/** Verifies deleting a connection closes all of its tabs in one workspace revision. */
+async function assertCloseTabsForConnection(): Promise<void> {
+  const deletedSecondTab = { ...RESTORED_TAB, id: "tab-2", title: "待删除 2", position: 1 };
+  const retainedTab = {
+    ...RESTORED_TAB,
+    id: "tab-3",
+    connectionId: "connection-2",
+    title: "保留",
+    position: 2,
+  };
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([RESTORED_TAB, deletedSecondTab, retainedTab]);
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hook.result.current.selectTab(deletedSecondTab.id));
+  act(() => hook.result.current.closeTabsForConnection("connection-1"));
+
+  expect(hook.result.current.tabs).toEqual([{ ...retainedTab, position: 0 }]);
+  expect(hook.result.current.activeTabId).toBe(retainedTab.id);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenLastCalledWith([{ ...retainedTab, position: 0 }]);
+}
+
+/** Verifies connection renames update generated tab prefixes while preserving custom titles. */
+async function assertRenameConnectionTabTitles(): Promise<void> {
+  const generatedTab = { ...RESTORED_TAB, title: "旧连接 · 查询 1" };
+  const customTab = { ...RESTORED_TAB, id: "tab-custom", title: "月度报表", position: 1 };
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([generatedTab, customTab]);
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hook.result.current.renameConnectionTabTitles("connection-1", "旧连接", "新连接"));
+  expect(hook.result.current.tabs.map((tab) => tab.title)).toEqual(["新连接 · 查询 1", "月度报表"]);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenLastCalledWith([
+    { ...generatedTab, title: "新连接 · 查询 1" },
+    customTab,
+  ]);
+}
+
 /** Registers local workspace recovery behavior with deterministic fake timers. */
 function registerWorkspacePersistenceTests(): void {
   beforeEach(() => {
@@ -273,6 +338,9 @@ function registerWorkspacePersistenceTests(): void {
   it("serializes writes and lets the latest failed revision own the error", assertSerialLatestWriteAndNewFailure);
   it("does not retain a stale failure after the latest revision succeeds", assertStaleFailureCannotPolluteLatestSuccess);
   it("blocks replacement after restore failure until retry succeeds", assertRecoveryFailureBlocksWritesUntilRetry);
+  it("activates the nearest neighbor when a tab closes", assertCloseTabSelectsNearestNeighbor);
+  it("closes every tab bound to a deleted connection", assertCloseTabsForConnection);
+  it("renames only generated titles for one connection", assertRenameConnectionTabTitles);
 }
 
 describe("useWorkspacePersistence", registerWorkspacePersistenceTests);

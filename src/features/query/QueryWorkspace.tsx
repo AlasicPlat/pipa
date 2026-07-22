@@ -1,7 +1,9 @@
-import { Play, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { Play, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
+import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import type { ResolvedTheme } from "../preferences/theme";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
 import { useQuerySession } from "./useQuerySession";
@@ -10,12 +12,10 @@ import type { WorkspaceTab } from "./useWorkspacePersistence";
 interface QueryWorkspaceProps {
   profile: ConnectionProfile;
   tab: WorkspaceTab;
-  tabs: WorkspaceTab[];
+  theme: ResolvedTheme;
   persistenceError: string | null;
-  newQueryConnectionName: string | null;
-  onCreateQuery: () => void;
   onRetryPersistence: () => Promise<void>;
-  onSelectTab: (tabId: string) => void;
+  onRunningChange: (tabId: string, running: boolean) => void;
   onSqlChange: (tabId: string, sqlText: string) => void;
 }
 
@@ -77,14 +77,13 @@ function queryErrorAdvice(error: AppError): string {
 export function QueryWorkspace({
   profile,
   tab,
-  tabs,
+  theme,
   persistenceError,
-  newQueryConnectionName,
-  onCreateQuery,
   onRetryPersistence,
-  onSelectTab,
+  onRunningChange,
   onSqlChange,
 }: QueryWorkspaceProps) {
+  const shortcuts = useShortcutSettings();
   const session = useQuerySession(profile.id);
   const queryEditorRef = useRef<QueryEditorHandle>(null);
 
@@ -121,37 +120,28 @@ export function QueryWorkspace({
     void session.cancel();
   }
 
-  /**
-   * Creates one query for the navigator-selected MySQL connection when no query is running.
-   * Parameters: none.
-   * @returns Nothing (`void`).
-   * Side effects: invokes the workspace-owned creation callback.
-   */
-  const handleCreateQuery = useCallback((): void => {
-    if (session.state.running || newQueryConnectionName === null) {
-      return;
-    }
-    onCreateQuery();
-  }, [newQueryConnectionName, onCreateQuery, session.state.running]);
-
   useEffect(() => {
-    /** Captures the desktop new-query shortcut before the WebView handles a browser tab action. */
-    function handleNewQueryShortcut(event: KeyboardEvent): void {
-      const isNewQuery =
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "t";
-      if (!isNewQuery) {
+    /** Cancels only this mounted, active query before the WebView consumes the primary shortcut. */
+    function handleCancelShortcut(event: KeyboardEvent): void {
+      if (document.querySelector("[aria-modal='true']")) {
+        return;
+      }
+      const isCancelShortcut = matchesShortcut(event, shortcuts.bindings.cancelQuery);
+      if (!isCancelShortcut || !session.state.running) {
         return;
       }
       event.preventDefault();
-      handleCreateQuery();
+      void session.cancel();
     }
 
-    document.addEventListener("keydown", handleNewQueryShortcut, true);
-    return () => document.removeEventListener("keydown", handleNewQueryShortcut, true);
-  }, [handleCreateQuery]);
+    document.addEventListener("keydown", handleCancelShortcut, true);
+    return () => document.removeEventListener("keydown", handleCancelShortcut, true);
+  }, [session.cancel, session.state.running, shortcuts.bindings.cancelQuery]);
+
+  useEffect(() => {
+    onRunningChange(tab.id, session.state.running);
+    return () => onRunningChange(tab.id, false);
+  }, [onRunningChange, session.state.running, tab.id]);
 
   /** Retries the latest failed encrypted workspace snapshot without touching editor state. */
   function handleRetryPersistence(): void {
@@ -160,42 +150,6 @@ export function QueryWorkspace({
 
   return (
     <section className="query-workspace" aria-label={`${profile.name} 查询工作区`}>
-      <div className="query-tabs-bar">
-        <div className="query-tabs" role="tablist" aria-label="已恢复查询标签">
-          {tabs.map((workspaceTab) => {
-            const isActive = workspaceTab.id === tab.id;
-            return (
-              <button
-                aria-selected={isActive}
-                className={`query-tab${isActive ? " is-active" : ""}`}
-                disabled={session.state.running && !isActive}
-                key={workspaceTab.id}
-                onClick={() => onSelectTab(workspaceTab.id)}
-                role="tab"
-                type="button"
-              >
-                <span>{workspaceTab.title}</span>
-              </button>
-            );
-          })}
-        </div>
-        <button
-          aria-label={
-            newQueryConnectionName
-              ? `在当前已选 MySQL 连接 ${newQueryConnectionName} 中新建查询`
-              : "请选择 MySQL 连接后新建查询"
-          }
-          className="query-new-button"
-          disabled={session.state.running || newQueryConnectionName === null}
-          onClick={handleCreateQuery}
-          title={newQueryConnectionName ? `新建查询 · ${newQueryConnectionName}` : undefined}
-          type="button"
-        >
-          <Plus size={13} aria-hidden="true" />
-          <span>新建查询</span>
-          <kbd>Ctrl/Cmd + T</kbd>
-        </button>
-      </div>
       <header className="query-context">
         <span className="query-context__engine">MySQL</span>
         <strong>{profile.name}</strong>
@@ -222,11 +176,12 @@ export function QueryWorkspace({
             className="query-run-button"
             disabled={session.state.running}
             onClick={handleToolbarExecute}
+            title={`执行选中 SQL 或当前语句（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
             type="button"
           >
             <Play size={13} fill="currentColor" aria-hidden="true" />
             执行
-            <kbd>Ctrl/Cmd + R</kbd>
+            <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
           </button>
         </div>
         <QueryEditor
@@ -234,6 +189,7 @@ export function QueryWorkspace({
           sql={tab.sqlText}
           onSqlChange={(sqlText) => onSqlChange(tab.id, sqlText)}
           onExecute={handleExecute}
+          theme={theme}
         />
       </div>
 
@@ -247,10 +203,12 @@ export function QueryWorkspace({
               <button
                 disabled={session.state.cancelRequested}
                 onClick={handleCancel}
+                title={`取消当前查询（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
                 type="button"
               >
                 <X size={12} aria-hidden="true" />
                 取消
+                <kbd>{getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}</kbd>
               </button>
             </span>
           ) : null}

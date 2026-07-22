@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
 import {
+  deleteConnection,
   listConnections,
   loadWorkspace,
+  reconnectConnection,
   recordQueryHistory,
+  renameConnection,
   saveMySqlConnection,
+  setExecuteQueryAccelerator,
   saveWorkspace,
   testMySqlConnection,
   type WorkspaceTabPayload,
@@ -37,15 +41,31 @@ async function assertExactConnectionCommands(): Promise<void> {
   vi.mocked(invoke)
     .mockResolvedValueOnce([PROFILE])
     .mockResolvedValueOnce(undefined)
-    .mockResolvedValueOnce(PROFILE);
+    .mockResolvedValueOnce(PROFILE)
+    .mockResolvedValueOnce(PROFILE)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(undefined);
 
   await expect(listConnections()).resolves.toEqual([PROFILE]);
   await expect(testMySqlConnection(INPUT)).resolves.toBeUndefined();
   await expect(saveMySqlConnection(INPUT)).resolves.toEqual(PROFILE);
+  await expect(renameConnection(PROFILE.id, "Primary database")).resolves.toEqual(PROFILE);
+  await expect(reconnectConnection(PROFILE.id)).resolves.toBeUndefined();
+  await expect(deleteConnection(PROFILE.id)).resolves.toBeUndefined();
 
   expect(invoke).toHaveBeenNthCalledWith(1, "list_connections");
   expect(invoke).toHaveBeenNthCalledWith(2, "test_mysql_connection", { input: INPUT });
   expect(invoke).toHaveBeenNthCalledWith(3, "save_mysql_connection", { input: INPUT });
+  expect(invoke).toHaveBeenNthCalledWith(4, "rename_connection", {
+    connectionId: PROFILE.id,
+    name: "Primary database",
+  });
+  expect(invoke).toHaveBeenNthCalledWith(5, "reconnect_connection", {
+    connectionId: PROFILE.id,
+  });
+  expect(invoke).toHaveBeenNthCalledWith(6, "delete_connection", {
+    connectionId: PROFILE.id,
+  });
 }
 
 /** Verifies exact workspace and history command names and their safe payload envelopes. */
@@ -78,6 +98,15 @@ async function assertExactWorkspaceCommands(): Promise<void> {
   expect(invoke).toHaveBeenNthCalledWith(3, "record_query_history", { input: history });
 }
 
+/** Verifies the native query-menu accelerator uses an explicit typed IPC envelope. */
+async function assertNativeAcceleratorCommand(): Promise<void> {
+  vi.mocked(invoke).mockResolvedValueOnce(undefined);
+  await expect(setExecuteQueryAccelerator("CmdOrCtrl+Shift+E")).resolves.toBeUndefined();
+  expect(invoke).toHaveBeenCalledWith("set_execute_query_accelerator", {
+    accelerator: "CmdOrCtrl+Shift+E",
+  });
+}
+
 /**
  * Registers typed connection IPC contract tests.
  * Parameters: none.
@@ -88,6 +117,7 @@ function registerTauriClientTests(): void {
   beforeEach(() => vi.clearAllMocks());
   it("uses the exact connection command contract", assertExactConnectionCommands);
   it("uses the exact safe workspace command contracts", assertExactWorkspaceCommands);
+  it("updates the native execute-query accelerator", assertNativeAcceleratorCommand);
 }
 
 describe("tauriClient", registerTauriClientTests);

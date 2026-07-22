@@ -1,6 +1,7 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
+import { resetAllShortcutBindings, updateShortcutBinding } from "../commands/shortcutRegistry";
 import { QueryEditor } from "./QueryEditor";
 
 const nativeEventState = vi.hoisted(() => ({
@@ -11,6 +12,10 @@ const nativeEventState = vi.hoisted(() => ({
 
 const monacoState = vi.hoisted(() => ({
   actionRegistrations: 0,
+  findRun: vi.fn(async () => undefined),
+  focus: vi.fn(),
+  hasTextFocus: true,
+  setSelection: vi.fn(),
   sql: "select 1;\nselect 2;",
   selection: {
     startLineNumber: 1,
@@ -43,10 +48,22 @@ vi.mock("@monaco-editor/react", () => ({
         addAction: () => {
           monacoState.actionRegistrations += 1;
         },
-        getModel: () => ({ getOffsetAt }),
+        focus: monacoState.focus,
+        getAction: (actionId: string) => actionId === "actions.find" ? { run: monacoState.findRun } : null,
+        getModel: () => ({
+          getFullModelRange: () => ({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 2,
+            endColumn: 10,
+          }),
+          getOffsetAt,
+        }),
         getPosition: () => monacoState.position,
         getSelection: () => monacoState.selection,
         getValue: () => monacoState.sql,
+        hasTextFocus: () => monacoState.hasTextFocus,
+        setSelection: monacoState.setSelection,
       },
       { KeyMod: { CtrlCmd: 2048 }, KeyCode: { KEY_R: 48 } },
     );
@@ -57,7 +74,7 @@ vi.mock("@monaco-editor/react", () => ({
 vi.mock("@tauri-apps/api/event", () => ({ listen: nativeEventState.listen }));
 
 /**
- * Verifies both platform modifiers execute once through document capture and block refresh.
+ * Verifies both platform modifiers execute the primary shortcut once through document capture.
  * Parameters: none.
  * @returns Nothing (`void`).
  * Side effects: renders the editor mock and dispatches cancelable keyboard events.
@@ -68,7 +85,7 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
     <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />,
   );
   const controlShortcut = new KeyboardEvent("keydown", {
-    key: "r",
+    key: "Enter",
     ctrlKey: true,
     bubbles: true,
     cancelable: true,
@@ -81,7 +98,7 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
 
   render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
   const commandShortcut = new KeyboardEvent("keydown", {
-    key: "R",
+    key: "Enter",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -92,6 +109,77 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
   expect(onExecute).toHaveBeenCalledTimes(2);
   expect(onExecute).toHaveBeenLastCalledWith("select 1");
   expect(monacoState.actionRegistrations).toBe(0);
+}
+
+/**
+ * Verifies a changed execution binding replaces the previous combination immediately.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: updates the in-process shortcut store and dispatches configured/default combinations.
+ */
+function assertConfiguredExecuteShortcutReplacesDefault(): void {
+  expect(updateShortcutBinding("executeQuery", "Mod+Shift+E")).toBe(true);
+  const onExecute = vi.fn();
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+  const configuredShortcut = new KeyboardEvent("keydown", {
+    key: "E",
+    metaKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  const previousDefault = new KeyboardEvent("keydown", {
+    key: "Enter",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(configuredShortcut);
+  document.dispatchEvent(previousDefault);
+
+  expect(onExecute).toHaveBeenCalledTimes(1);
+  expect(configuredShortcut.defaultPrevented).toBe(true);
+  expect(previousDefault.defaultPrevented).toBe(false);
+}
+
+/** Verifies the configurable contextual search binding opens Monaco's native find action. */
+function assertConfiguredFindShortcutRunsMonacoAction(): void {
+  expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={vi.fn()} />);
+  const findShortcut = new KeyboardEvent("keydown", {
+    key: "k",
+    altKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(findShortcut);
+
+  expect(findShortcut.defaultPrevented).toBe(true);
+  expect(monacoState.findRun).toHaveBeenCalledTimes(1);
+}
+
+/** Verifies an open modal prevents its recorded keys from leaking into the SQL editor. */
+function assertModalBlocksEditorShortcuts(): void {
+  const onExecute = vi.fn();
+  render(
+    <>
+      <section aria-modal="true" role="dialog" />
+      <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />
+    </>,
+  );
+  const shortcut = new KeyboardEvent("keydown", {
+    key: "Enter",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(shortcut);
+
+  expect(shortcut.defaultPrevented).toBe(false);
+  expect(onExecute).not.toHaveBeenCalled();
 }
 
 /**
@@ -115,7 +203,7 @@ async function assertNativeShortcutRegistrationAndCleanup(): Promise<void> {
 
   act(() => nativeEventState.handler?.());
   const echoedDomShortcut = new KeyboardEvent("keydown", {
-    key: "r",
+    key: "Enter",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -144,7 +232,7 @@ async function assertSameSourceShortcutsAlwaysExecute(): Promise<void> {
   for (let index = 0; index < 2; index += 1) {
     document.dispatchEvent(
       new KeyboardEvent("keydown", {
-        key: "r",
+        key: "Enter",
         ctrlKey: true,
         bubbles: true,
         cancelable: true,
@@ -179,7 +267,7 @@ async function assertCrossSourceEchoRules(): Promise<void> {
   now.mockReturnValue(1_000);
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "r",
+      key: "Enter",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -213,7 +301,7 @@ async function assertNativeThenDomEchoExecutesOnce(): Promise<void> {
   act(() => nativeEventState.handler?.());
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "r",
+      key: "Enter",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -263,7 +351,7 @@ function assertModifiedShortcutsAreIgnored(): void {
   render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
   const shortcuts = [
     new KeyboardEvent("keydown", {
-      key: "r",
+      key: "Enter",
       ctrlKey: true,
       altKey: true,
       bubbles: true,
@@ -298,13 +386,44 @@ function assertCapturedCursorExecution(): void {
 
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "r",
+      key: "Enter",
       ctrlKey: true,
       bubbles: true,
       cancelable: true,
     }),
   );
   expect(onExecute).toHaveBeenCalledWith("select 2");
+}
+
+/** Verifies Ctrl/Cmd+L selects SQL only while Monaco owns text focus. */
+function assertScopedSqlSelectionShortcut(): void {
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={vi.fn()} />);
+  const focusedShortcut = new KeyboardEvent("keydown", {
+    key: "l",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(focusedShortcut);
+  expect(focusedShortcut.defaultPrevented).toBe(true);
+  expect(monacoState.setSelection).toHaveBeenCalledWith({
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: 2,
+    endColumn: 10,
+  });
+  expect(monacoState.focus).toHaveBeenCalledTimes(1);
+
+  monacoState.hasTextFocus = false;
+  const outsideShortcut = new KeyboardEvent("keydown", {
+    key: "l",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(outsideShortcut);
+  expect(outsideShortcut.defaultPrevented).toBe(false);
+  expect(monacoState.setSelection).toHaveBeenCalledTimes(1);
 }
 
 /** Registers query-editor keyboard interaction tests. */
@@ -319,6 +438,7 @@ function registerQueryEditorTests(): void {
       },
     );
     monacoState.actionRegistrations = 0;
+    monacoState.hasTextFocus = true;
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.selection = {
       startLineNumber: 1,
@@ -328,8 +448,15 @@ function registerQueryEditorTests(): void {
     };
     monacoState.position = { lineNumber: 1, column: 8 };
   });
-  afterEach(() => vi.restoreAllMocks());
-  it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  afterEach(() => {
+    cleanup();
+    resetAllShortcutBindings();
+    vi.restoreAllMocks();
+  });
+  it("executes Ctrl/Cmd + Enter once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  it("replaces the default execution binding after customization", assertConfiguredExecuteShortcutReplacesDefault);
+  it("opens Monaco find with the configured contextual binding", assertConfiguredFindShortcutRunsMonacoAction);
+  it("does not leak modal key recording into the SQL editor", assertModalBlocksEditorShortcuts);
   it("executes one native shortcut and cleans up its listener", assertNativeShortcutRegistrationAndCleanup);
   it("always executes repeated shortcuts from the same source", assertSameSourceShortcutsAlwaysExecute);
   it("suppresses only cross-source echoes without updating state", assertCrossSourceEchoRules);
@@ -337,6 +464,7 @@ function registerQueryEditorTests(): void {
   it("disposes a native listener that resolves after unmount", assertPendingNativeListenerIsDisposed);
   it("ignores execute shortcuts with extra modifiers", assertModifiedShortcutsAreIgnored);
   it("executes the cursor statement without a selection", assertCapturedCursorExecution);
+  it("selects current SQL only while the editor is focused", assertScopedSqlSelectionShortcut);
 }
 
 describe("QueryEditor", registerQueryEditorTests);

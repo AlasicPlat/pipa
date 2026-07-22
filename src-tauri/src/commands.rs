@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use chrono::Utc;
 use pipa_core::{
-    AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, QueryEvent, QueryRequest,
+    AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, Engine, QueryEvent, QueryRequest,
     RecordQueryHistoryInput, SaveConnectionInput,
 };
 use pipa_store::{QueryHistoryEntry, WorkspaceTab as StoredWorkspaceTab};
@@ -64,6 +64,34 @@ pub(crate) fn list_connections(
     list_connections_inner(&state)
 }
 
+/// Permanently removes one connection and its related encrypted local data.
+#[tauri::command]
+pub(crate) fn delete_connection(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<(), AppError> {
+    delete_connection_inner(&state, connection_id)
+}
+
+/// Renames one saved connection after validating and trimming its user-visible name.
+#[tauri::command]
+pub(crate) fn rename_connection(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    name: String,
+) -> Result<ConnectionProfile, AppError> {
+    rename_connection_inner(&state, connection_id, name)
+}
+
+/// Re-tests one saved connection using its credential from encrypted local storage.
+#[tauri::command]
+pub(crate) async fn reconnect_connection(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<(), AppError> {
+    reconnect_connection_inner(&state, connection_id).await
+}
+
 /// Saves one MySQL profile and password atomically in encrypted local storage.
 #[tauri::command]
 pub(crate) fn save_mysql_connection(
@@ -80,6 +108,24 @@ pub(crate) async fn test_mysql_connection(
     input: SaveConnectionInput,
 ) -> Result<(), AppError> {
     test_mysql_connection_inner(&state, input).await
+}
+
+/// Saves one Redis profile and password atomically in encrypted local storage.
+#[tauri::command]
+pub(crate) fn save_redis_connection(
+    state: State<'_, AppState>,
+    input: SaveConnectionInput,
+) -> Result<ConnectionProfile, AppError> {
+    save_redis_connection_inner(&state, input)
+}
+
+/// Tests a Redis profile and password without persisting either value.
+#[tauri::command]
+pub(crate) async fn test_redis_connection(
+    state: State<'_, AppState>,
+    input: SaveConnectionInput,
+) -> Result<(), AppError> {
+    test_redis_connection_inner(&state, input).await
 }
 
 /// Starts a MySQL query and forwards ordered streaming events to the caller.
@@ -132,12 +178,57 @@ fn list_connections_inner(state: &AppState) -> Result<Vec<ConnectionProfile>, Ap
     state.local_store.list_connections()
 }
 
+/// Deletes one connection through the store's idempotent transaction boundary.
+fn delete_connection_inner(state: &AppState, connection_id: Uuid) -> Result<(), AppError> {
+    state.local_store.delete_connection(connection_id)
+}
+
+/// Validates and atomically applies one connection's trimmed display name.
+fn rename_connection_inner(
+    state: &AppState,
+    connection_id: Uuid,
+    name: String,
+) -> Result<ConnectionProfile, AppError> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(AppError {
+            code: AppErrorCode::Validation,
+            message: "Connection name cannot be empty".into(),
+            technical_details: None,
+            retryable: false,
+        });
+    }
+
+    state
+        .local_store
+        .rename_connection(connection_id, trimmed_name)
+}
+
+/// Loads one profile and secret locally, then dispatches its adapter connection test.
+async fn reconnect_connection_inner(state: &AppState, connection_id: Uuid) -> Result<(), AppError> {
+    let profile = state.local_store.get_connection(connection_id)?;
+    let password = state.local_store.get_connection_credential(connection_id)?;
+    match profile.engine {
+        Engine::MySql => state.mysql.test_connection(&profile, &password).await,
+        Engine::Redis => state.redis.test_connection(&profile, &password).await,
+        Engine::PostgreSql | Engine::MongoDb => Err(AppError {
+            code: AppErrorCode::Validation,
+            message: "Saved connection engine does not support reconnecting".into(),
+            technical_details: None,
+            retryable: false,
+        }),
+    }
+}
+
 /// Persists a profile and credential in one SQLCipher transaction.
 fn save_mysql_connection_inner(
     state: &AppState,
     input: SaveConnectionInput,
 ) -> Result<ConnectionProfile, AppError> {
     let SaveConnectionInput { profile, password } = input;
+    if !matches!(profile.engine, Engine::MySql) {
+        return Err(engine_validation_error("MySQL"));
+    }
     state
         .local_store
         .save_connection_with_credential(&profile, &password)?;
@@ -149,10 +240,52 @@ async fn test_mysql_connection_inner(
     state: &AppState,
     input: SaveConnectionInput,
 ) -> Result<(), AppError> {
+    if !matches!(input.profile.engine, Engine::MySql) {
+        return Err(engine_validation_error("MySQL"));
+    }
     state
         .mysql
         .test_connection(&input.profile, &input.password)
         .await
+}
+
+/// Persists a validated Redis profile and credential in one SQLCipher transaction.
+fn save_redis_connection_inner(
+    state: &AppState,
+    input: SaveConnectionInput,
+) -> Result<ConnectionProfile, AppError> {
+    let SaveConnectionInput { profile, password } = input;
+    if !matches!(profile.engine, Engine::Redis) {
+        return Err(engine_validation_error("Redis"));
+    }
+    state
+        .local_store
+        .save_connection_with_credential(&profile, &password)?;
+    Ok(profile)
+}
+
+/// Tests one Redis profile and password without persisting either value.
+async fn test_redis_connection_inner(
+    state: &AppState,
+    input: SaveConnectionInput,
+) -> Result<(), AppError> {
+    if !matches!(input.profile.engine, Engine::Redis) {
+        return Err(engine_validation_error("Redis"));
+    }
+    state
+        .redis
+        .test_connection(&input.profile, &input.password)
+        .await
+}
+
+/// Builds a stable validation error for an engine-specific command mismatch.
+fn engine_validation_error(expected_engine: &'static str) -> AppError {
+    AppError {
+        code: AppErrorCode::Validation,
+        message: format!("Connection profile must use {expected_engine}"),
+        technical_details: None,
+        retryable: false,
+    }
 }
 
 /// Registers and starts one MySQL query with an eight-event backpressure bridge.
@@ -295,10 +428,11 @@ async fn forward_query_events(
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel_query_inner, forward_query_events, list_connections_inner, load_workspace_inner,
-        record_query_history_inner, run_query_inner, save_mysql_connection_inner,
-        save_workspace_inner, test_mysql_connection_inner, WorkspaceTabPayload,
-        QUERY_EVENT_CHANNEL_CAPACITY,
+        cancel_query_inner, delete_connection_inner, forward_query_events, list_connections_inner,
+        load_workspace_inner, reconnect_connection_inner, record_query_history_inner,
+        rename_connection_inner, run_query_inner, save_mysql_connection_inner,
+        save_redis_connection_inner, save_workspace_inner, test_mysql_connection_inner,
+        WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
     };
     use crate::state::AppState;
     use pipa_core::{
@@ -306,6 +440,7 @@ mod tests {
         RecordQueryHistoryInput, SaveConnectionInput, TlsMode,
     };
     use pipa_mysql::MySqlAdapter;
+    use pipa_redis::RedisAdapter;
     use pipa_store::LocalStore;
     use secrecy::{ExposeSecret, SecretString};
     use std::{collections::HashMap, sync::Arc};
@@ -324,6 +459,7 @@ mod tests {
         let state = AppState {
             local_store,
             mysql: Arc::new(MySqlAdapter::new()),
+            redis: Arc::new(RedisAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -343,6 +479,24 @@ mod tests {
                 username: "developer".into(),
                 database: Some("pipa".into()),
                 tls_mode: TlsMode::Preferred,
+            },
+            password: SecretString::from(password),
+        }
+    }
+
+    /// Creates a representative secret-bearing Redis connection input.
+    fn redis_input(password: &str) -> SaveConnectionInput {
+        SaveConnectionInput {
+            profile: ConnectionProfile {
+                id: Uuid::new_v4(),
+                name: "Local Redis".into(),
+                engine: Engine::Redis,
+                environment: Environment::Development,
+                host: "127.0.0.1".into(),
+                port: 6379,
+                username: String::new(),
+                database: Some("0".into()),
+                tls_mode: TlsMode::Disabled,
             },
             password: SecretString::from(password),
         }
@@ -421,6 +575,86 @@ mod tests {
             serde_json::to_value(listed).unwrap(),
             serde_json::to_value([first]).unwrap()
         );
+    }
+
+    /// Verifies connection deletion removes the profile and credential and remains retryable.
+    #[test]
+    fn deleting_connection_removes_profile_and_credential_idempotently() {
+        let (_directory, state) = test_state();
+        let saved = save_mysql_connection_inner(&state, mysql_input("delete-password")).unwrap();
+
+        delete_connection_inner(&state, saved.id).unwrap();
+        delete_connection_inner(&state, saved.id).unwrap();
+
+        assert!(state.local_store.list_connections().unwrap().is_empty());
+        assert!(state
+            .local_store
+            .get_connection_credential(saved.id)
+            .is_err());
+    }
+
+    /// Verifies command-level rename trimming, validation, and credential preservation.
+    #[test]
+    fn renaming_connection_trims_name_and_preserves_credential() {
+        let (_directory, state) = test_state();
+        let saved =
+            save_mysql_connection_inner(&state, mysql_input("rename-command-password")).unwrap();
+
+        let renamed =
+            rename_connection_inner(&state, saved.id, "  Main database  ".into()).unwrap();
+        let empty_error = rename_connection_inner(&state, saved.id, " \n\t ".into()).unwrap_err();
+
+        assert_eq!(renamed.name, "Main database");
+        assert!(matches!(empty_error.code, AppErrorCode::Validation));
+        assert_eq!(empty_error.message, "Connection name cannot be empty");
+        assert_eq!(
+            state
+                .local_store
+                .get_connection_credential(saved.id)
+                .unwrap()
+                .expose_secret(),
+            "rename-command-password"
+        );
+    }
+
+    /// Verifies reconnect reads encrypted credentials and dispatches both supported adapters.
+    #[tokio::test]
+    async fn reconnecting_supports_saved_mysql_and_redis_without_exposing_passwords() {
+        let (_directory, state) = test_state();
+        let mut mysql = mysql_input("saved-mysql-reconnect-password");
+        mysql.profile.port = 1;
+        let mysql_id = mysql.profile.id;
+        save_mysql_connection_inner(&state, mysql).unwrap();
+        let mut redis = redis_input("saved-redis-reconnect-password");
+        redis.profile.port = 1;
+        let redis_id = redis.profile.id;
+        save_redis_connection_inner(&state, redis).unwrap();
+
+        let mysql_error = reconnect_connection_inner(&state, mysql_id)
+            .await
+            .unwrap_err();
+        let redis_error = reconnect_connection_inner(&state, redis_id)
+            .await
+            .unwrap_err();
+
+        let diagnostic = format!("{mysql_error:?} {redis_error:?}");
+        assert!(!diagnostic.contains("saved-mysql-reconnect-password"));
+        assert!(!diagnostic.contains("saved-redis-reconnect-password"));
+        assert!(!matches!(mysql_error.code, AppErrorCode::Validation));
+        assert!(!matches!(redis_error.code, AppErrorCode::Validation));
+    }
+
+    /// Verifies reconnecting an unknown identifier fails before any adapter access.
+    #[tokio::test]
+    async fn reconnecting_unknown_connection_returns_not_found() {
+        let (_directory, state) = test_state();
+
+        let error = reconnect_connection_inner(&state, Uuid::new_v4())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error.code, AppErrorCode::NotFound));
+        assert_eq!(error.message, "Database connection was not found");
     }
 
     /// Verifies unknown query cancellation returns the stable not-found category.

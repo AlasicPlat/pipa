@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
+import { resetAllShortcutBindings, updateShortcutBinding } from "../commands/shortcutRegistry";
 import type { QuerySessionState } from "./useQuerySession";
 import { QueryWorkspace } from "./QueryWorkspace";
 
@@ -89,12 +90,10 @@ const TAB = {
 const WORKSPACE_PROPS = {
   profile: PROFILE,
   tab: TAB,
-  tabs: [TAB],
+  theme: "light" as const,
   persistenceError: null,
-  newQueryConnectionName: PROFILE.name,
-  onCreateQuery: vi.fn(),
   onRetryPersistence: vi.fn(async () => undefined),
-  onSelectTab: vi.fn(),
+  onRunningChange: vi.fn(),
   onSqlChange: vi.fn(),
 };
 
@@ -108,7 +107,10 @@ function assertMinimalQueryLoading(): void {
   render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
   expect(screen.getByText("查询中…")).toBeVisible();
-  expect(screen.getByRole("button", { name: "取消" })).toBeVisible();
+  const cancelButton = screen.getByRole("button", { name: /取消/ });
+  expect(cancelButton).toBeVisible();
+  expect(cancelButton).toHaveAttribute("title", "取消当前查询（Ctrl/Cmd + .）");
+  expect(screen.getByText("Ctrl/Cmd + .")).toBeVisible();
   expect(screen.queryByText(/耗时|行数|连接中|执行阶段|正在认证/)).not.toBeInTheDocument();
 }
 
@@ -128,7 +130,13 @@ function assertToolbarSelectionExecution(): void {
   };
   render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
-  fireEvent.click(screen.getByRole("button", { name: /执行/ }));
+  const executeButton = screen.getByRole("button", { name: /执行/ });
+  expect(executeButton).toHaveAttribute(
+    "title",
+    "执行选中 SQL 或当前语句（Ctrl/Cmd + Enter）",
+  );
+  expect(screen.getByText("Ctrl/Cmd + Enter")).toBeVisible();
+  fireEvent.click(executeButton);
   expect(sessionController.run).toHaveBeenCalledWith("select 1");
 }
 
@@ -152,7 +160,7 @@ function assertRunningSessionIgnoresExecuteShortcut(): void {
   sessionController.state.running = true;
   render(<QueryWorkspace {...WORKSPACE_PROPS} />);
   const shortcut = new KeyboardEvent("keydown", {
-    key: "r",
+    key: "Enter",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -164,13 +172,15 @@ function assertRunningSessionIgnoresExecuteShortcut(): void {
   expect(sessionController.run).not.toHaveBeenCalled();
 }
 
-/** Verifies button and shortcut share one guarded new-query action. */
-function assertNewQueryControlsShareRunningGuard(): void {
-  sessionController.state.running = false;
-  const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+/** Verifies the primary cancel shortcut consumes the event and cancels an active query. */
+function assertRunningSessionCancelsViaShortcut(): void {
+  expect(updateShortcutBinding("cancelQuery", "Alt+X")).toBe(true);
+  sessionController.state.running = true;
+  sessionController.state.cancelRequested = false;
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
   const shortcut = new KeyboardEvent("keydown", {
-    key: "t",
-    ctrlKey: true,
+    key: "x",
+    altKey: true,
     bubbles: true,
     cancelable: true,
   });
@@ -178,24 +188,24 @@ function assertNewQueryControlsShareRunningGuard(): void {
   document.dispatchEvent(shortcut);
 
   expect(shortcut.defaultPrevented).toBe(true);
-  expect(WORKSPACE_PROPS.onCreateQuery).toHaveBeenCalledTimes(1);
+  expect(sessionController.cancel).toHaveBeenCalledTimes(1);
+}
 
-  sessionController.state.running = true;
-  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
-  const button = screen.getByRole("button", {
-    name: `在当前已选 MySQL 连接 ${PROFILE.name} 中新建查询`,
-  });
-  expect(button).toBeDisabled();
-  fireEvent.click(button);
-  const runningShortcut = new KeyboardEvent("keydown", {
-    key: "t",
+/** Verifies the cancel shortcut remains available to the platform when no query is active. */
+function assertIdleCancelShortcutIsIgnored(): void {
+  sessionController.state.running = false;
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  const shortcut = new KeyboardEvent("keydown", {
+    key: ".",
     metaKey: true,
     bubbles: true,
     cancelable: true,
   });
-  document.dispatchEvent(runningShortcut);
-  expect(runningShortcut.defaultPrevented).toBe(true);
-  expect(WORKSPACE_PROPS.onCreateQuery).toHaveBeenCalledTimes(1);
+
+  document.dispatchEvent(shortcut);
+
+  expect(shortcut.defaultPrevented).toBe(false);
+  expect(sessionController.cancel).not.toHaveBeenCalled();
 }
 
 /** Verifies safe guidance and redacted diagnostics are progressively disclosed. */
@@ -260,12 +270,16 @@ function registerQueryWorkspaceTests(): void {
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.position = { lineNumber: 2, column: 4 };
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    resetAllShortcutBindings();
+  });
   it("keeps cancel visible without diagnostic loading copy", assertMinimalQueryLoading);
   it("executes only Monaco's selected SQL from the toolbar", assertToolbarSelectionExecution);
   it("executes only Monaco's cursor statement from the toolbar", assertToolbarCursorExecution);
   it("does not start a second query from the shortcut while running", assertRunningSessionIgnoresExecuteShortcut);
-  it("creates a query through one guarded button and shortcut path", assertNewQueryControlsShareRunningGuard);
+  it("cancels a running query with its configured binding", assertRunningSessionCancelsViaShortcut);
+  it("ignores the cancel shortcut while idle", assertIdleCancelShortcutIsIgnored);
   it("shows actionable query errors with closed diagnostic details", assertLayeredQueryError);
   it("shows a terminal state for an empty canceled query", assertCanceledEmptyQueryState);
 }

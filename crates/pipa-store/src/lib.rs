@@ -253,6 +253,130 @@ mod tests {
         );
     }
 
+    /// Verifies renaming changes only the profile name and remains safe to retry.
+    #[test]
+    fn renaming_connection_preserves_credential_and_is_idempotent() {
+        let (_directory, store) = test_store("rename-key");
+        let mut profile = mysql_profile();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("rename-password"))
+            .unwrap();
+
+        let renamed = store
+            .rename_connection(profile.id, "Renamed MySQL")
+            .unwrap();
+        let retried = store
+            .rename_connection(profile.id, "Renamed MySQL")
+            .unwrap();
+
+        profile.name = "Renamed MySQL".into();
+        assert_eq!(
+            serde_json::to_value([renamed, retried]).unwrap(),
+            serde_json::to_value([&profile, &profile]).unwrap()
+        );
+        assert_eq!(store.get_connection(profile.id).unwrap().name, profile.name);
+        assert_eq!(
+            store
+                .get_connection_credential(profile.id)
+                .unwrap()
+                .expose_secret(),
+            "rename-password"
+        );
+    }
+
+    /// Verifies reading or renaming an unknown connection returns the stable not-found category.
+    #[test]
+    fn unknown_connection_profile_returns_not_found() {
+        let (_directory, store) = test_store("not-found-key");
+        let connection_id = Uuid::new_v4();
+
+        let read_error = store.get_connection(connection_id).unwrap_err();
+        let rename_error = store
+            .rename_connection(connection_id, "Missing")
+            .unwrap_err();
+
+        assert!(matches!(read_error.code, pipa_core::AppErrorCode::NotFound));
+        assert!(matches!(
+            rename_error.code,
+            pipa_core::AppErrorCode::NotFound
+        ));
+        assert_eq!(read_error.message, "Database connection was not found");
+        assert_eq!(rename_error.message, "Database connection was not found");
+    }
+
+    /// Verifies deletion is atomic, removes related local data, and is safe to retry.
+    #[test]
+    fn deleting_connection_removes_related_local_data_idempotently() {
+        let (_directory, store) = test_store("delete-key");
+        let deleted_profile = mysql_profile();
+        let retained_profile = mysql_profile();
+        store
+            .save_connection_with_credential(
+                &deleted_profile,
+                &SecretString::from("deleted-password"),
+            )
+            .unwrap();
+        store
+            .save_connection_with_credential(
+                &retained_profile,
+                &SecretString::from("retained-password"),
+            )
+            .unwrap();
+        let deleted_tab = WorkspaceTab {
+            id: Uuid::new_v4(),
+            connection_id: deleted_profile.id,
+            title: "Deleted connection tab".into(),
+            sql_text: "SELECT deleted".into(),
+            position: 0,
+        };
+        let retained_tab = WorkspaceTab {
+            id: Uuid::new_v4(),
+            connection_id: retained_profile.id,
+            title: "Retained connection tab".into(),
+            sql_text: "SELECT retained".into(),
+            position: 1,
+        };
+        store
+            .save_workspace(&[deleted_tab, retained_tab.clone()])
+            .unwrap();
+        store
+            .record_query_history(&QueryHistoryEntry {
+                id: Uuid::new_v4(),
+                connection_id: deleted_profile.id,
+                sql_text: "SELECT deleted history".into(),
+                executed_at: Utc::now(),
+            })
+            .unwrap();
+        store
+            .record_query_history(&QueryHistoryEntry {
+                id: Uuid::new_v4(),
+                connection_id: retained_profile.id,
+                sql_text: "SELECT retained history".into(),
+                executed_at: Utc::now(),
+            })
+            .unwrap();
+
+        store.delete_connection(deleted_profile.id).unwrap();
+        store.delete_connection(deleted_profile.id).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(store.list_connections().unwrap()).unwrap(),
+            serde_json::to_value([&retained_profile]).unwrap()
+        );
+        assert!(store.get_connection_credential(deleted_profile.id).is_err());
+        assert_eq!(
+            store
+                .get_connection_credential(retained_profile.id)
+                .unwrap()
+                .expose_secret(),
+            "retained-password"
+        );
+        assert_eq!(store.load_workspace().unwrap(), vec![retained_tab]);
+        let history = store.list_query_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].connection_id, retained_profile.id);
+    }
+
     /// Verifies a database encrypted with one key rejects another without exposing either key.
     #[test]
     fn wrong_encryption_key_cannot_open_database() {

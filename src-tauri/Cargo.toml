@@ -1,6 +1,6 @@
 [package]
 name = "pipa-app"
-version = "0.1.0"
+version = "0.2.2"
 description = "Pipa desktop database client"
 edition = "2021"
 
@@ -23,10 +23,12 @@ getrandom.workspace = true
 libc.workspace = true
 pipa-core = { path = "../crates/pipa-core" }
 pipa-mysql = { path = "../crates/pipa-mysql" }
+pipa-redis = { path = "../crates/pipa-redis" }
 pipa-store = { path = "../crates/pipa-store" }
 rusqlite.workspace = true
 secrecy.workspace = true
 tauri = { workspace = true, features = [] }
+tauri-plugin-clipboard-manager.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

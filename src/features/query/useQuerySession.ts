@@ -32,6 +32,11 @@ interface QuerySessionController {
   cancel: () => Promise<void>;
 }
 
+interface QuerySessionOptions {
+  /** Whether successful query starts should appear in user query history. */
+  recordHistory?: boolean;
+}
+
 /**
  * Creates an empty, immutable query-session snapshot.
  * Parameters: none.
@@ -145,10 +150,15 @@ function toAppError(error: unknown): AppError {
 /**
  * Owns one connection-bound query run, ordered channel delivery, and one-shot cancellation.
  * @param connectionId - Saved MySQL connection fixed to this workspace instance.
+ * @param options - Optional behavior for internal metadata queries.
  * @returns Current state and asynchronous run/cancel commands.
  * Side effects: invokes exact Tauri query commands; never sends credentials to the frontend.
  */
-export function useQuerySession(connectionId: string): QuerySessionController {
+export function useQuerySession(
+  connectionId: string,
+  options: QuerySessionOptions = {},
+): QuerySessionController {
+  const recordHistoryEnabled = options.recordHistory ?? true;
   const [state, dispatch] = useReducer(
     querySessionReducer,
     undefined,
@@ -184,7 +194,8 @@ export function useQuerySession(connectionId: string): QuerySessionController {
         if (
           event.type === "started" &&
           activeQueryIdRef.current === event.queryId &&
-          historyRecordedQueryIdRef.current !== event.queryId
+          historyRecordedQueryIdRef.current !== event.queryId &&
+          recordHistoryEnabled
         ) {
           historyRecordedQueryIdRef.current = event.queryId;
           void recordQueryHistory({ queryId: event.queryId, connectionId, sql }).catch((error) => {
@@ -213,7 +224,7 @@ export function useQuerySession(connectionId: string): QuerySessionController {
         }
       }
     },
-    [connectionId],
+    [connectionId, recordHistoryEnabled],
   );
 
   /**

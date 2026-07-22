@@ -9,6 +9,7 @@ interface ConnectionsState {
   error: string | null;
   selectConnection: (id: string) => void;
   addProfile: (profile: ConnectionProfile) => void;
+  removeProfile: (id: string) => void;
   reload: () => Promise<void>;
 }
 
@@ -74,6 +75,24 @@ export function useConnections(): ConnectionsState {
     setSelectedConnectionId(profile.id);
   }, []);
 
+  /**
+   * Removes one backend-deleted profile and selects its nearest surviving neighbor.
+   * @param id - Stable identifier already deleted by the backend.
+   * @returns Nothing (`void`).
+   * Side effects: updates the in-memory profile list and navigator selection.
+   */
+  const removeProfile = useCallback((id: string): void => {
+    const removedIndex = profiles.findIndex((profile) => profile.id === id);
+    if (removedIndex === -1) {
+      return;
+    }
+    const nextProfiles = profiles.filter((profile) => profile.id !== id);
+    setProfiles(nextProfiles);
+    setSelectedConnectionId((currentId) => currentId === id
+      ? nextProfiles[removedIndex]?.id ?? nextProfiles[removedIndex - 1]?.id ?? null
+      : currentId);
+  }, [profiles]);
+
   return {
     profiles,
     selectedConnectionId,
@@ -81,6 +100,7 @@ export function useConnections(): ConnectionsState {
     error,
     selectConnection,
     addProfile,
+    removeProfile,
     reload,
   };
 }

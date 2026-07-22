@@ -2,6 +2,7 @@ use crate::bootstrap::{try_path_exists, BootstrapStore};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use pipa_core::{AppError, AppErrorCode};
 use pipa_mysql::MySqlAdapter;
+use pipa_redis::RedisAdapter;
 use pipa_store::LocalStore;
 use std::{collections::HashMap, fmt, path::Path, sync::Arc};
 use tokio::sync::Mutex;
@@ -22,6 +23,8 @@ pub struct AppState {
     pub local_store: Arc<LocalStore>,
     /// Stateless MySQL database adapter.
     pub mysql: Arc<MySqlAdapter>,
+    /// Stateless Redis connection adapter.
+    pub redis: Arc<RedisAdapter>,
     /// Cancellation tokens for currently running queries.
     pub cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
@@ -46,6 +49,7 @@ impl AppState {
         Ok(Self {
             local_store: Arc::new(local_store),
             mysql: Arc::new(MySqlAdapter::new()),
+            redis: Arc::new(RedisAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         })
     }
