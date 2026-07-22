@@ -2,13 +2,8 @@ import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryEditor } from "./QueryEditor";
 
-interface RegisteredAction {
-  keybindings: number[];
-  run: () => void;
-}
-
 const monacoState = vi.hoisted(() => ({
-  action: null as RegisteredAction | null,
+  actionRegistrations: 0,
   sql: "select 1;\nselect 2;",
   selection: {
     startLineNumber: 1,
@@ -38,8 +33,8 @@ vi.mock("@monaco-editor/react", () => ({
 
     props.onMount(
       {
-        addAction: (action: RegisteredAction) => {
-          monacoState.action = action;
+        addAction: () => {
+          monacoState.actionRegistrations += 1;
         },
         getModel: () => ({ getOffsetAt }),
         getPosition: () => monacoState.position,
@@ -53,59 +48,98 @@ vi.mock("@monaco-editor/react", () => ({
 }));
 
 /**
- * Verifies Monaco executes the explicit selection with the cross-platform shortcut.
+ * Verifies both platform modifiers execute once through document capture and block refresh.
  * Parameters: none.
  * @returns Nothing (`void`).
- * Side effects: renders the editor mock and invokes the registered Monaco action.
+ * Side effects: renders the editor mock and dispatches cancelable keyboard events.
  */
-function assertMonacoRunAction(): void {
+function assertCapturedPlatformShortcutsExecuteOnce(): void {
   const onExecute = vi.fn();
   render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
-
-  expect(monacoState.action?.keybindings).toEqual([2048 | 48]);
-  monacoState.action?.run();
-  expect(onExecute).toHaveBeenCalledWith("select 1");
-}
-
-/**
- * Verifies Monaco executes the cursor statement when there is no selection.
- * Parameters: none.
- * @returns Nothing (`void`).
- * Side effects: renders the editor mock and invokes the registered Monaco action.
- */
-function assertMonacoCursorRunAction(): void {
-  const onExecute = vi.fn();
-  monacoState.selection = null;
-  monacoState.position = { lineNumber: 2, column: 4 };
-  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
-
-  monacoState.action?.run();
-  expect(onExecute).toHaveBeenCalledWith("select 2");
-}
-
-/**
- * Verifies the capture-phase guard blocks the WebView refresh shortcut.
- * Parameters: none.
- * @returns Nothing (`void`).
- * Side effects: dispatches a cancelable keyboard event to the document.
- */
-function assertWebViewRefreshGuard(): void {
-  render(<QueryEditor sql="select 1" onSqlChange={vi.fn()} onExecute={vi.fn()} />);
-  const event = new KeyboardEvent("keydown", {
+  const controlShortcut = new KeyboardEvent("keydown", {
     key: "r",
     ctrlKey: true,
     bubbles: true,
     cancelable: true,
   });
+  const commandShortcut = new KeyboardEvent("keydown", {
+    key: "R",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
 
-  document.dispatchEvent(event);
-  expect(event.defaultPrevented).toBe(true);
+  document.dispatchEvent(controlShortcut);
+  expect(controlShortcut.defaultPrevented).toBe(true);
+  expect(onExecute).toHaveBeenCalledTimes(1);
+  expect(onExecute).toHaveBeenLastCalledWith("select 1");
+
+  document.dispatchEvent(commandShortcut);
+  expect(commandShortcut.defaultPrevented).toBe(true);
+  expect(onExecute).toHaveBeenCalledTimes(2);
+  expect(onExecute).toHaveBeenLastCalledWith("select 1");
+  expect(monacoState.actionRegistrations).toBe(0);
+}
+
+/**
+ * Verifies extra modifiers do not execute or consume unrelated keyboard combinations.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: renders the editor mock and dispatches keyboard events to the document.
+ */
+function assertModifiedShortcutsAreIgnored(): void {
+  const onExecute = vi.fn();
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+  const shortcuts = [
+    new KeyboardEvent("keydown", {
+      key: "r",
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+    new KeyboardEvent("keydown", {
+      key: "r",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  ];
+
+  shortcuts.forEach((shortcut) => document.dispatchEvent(shortcut));
+
+  expect(onExecute).not.toHaveBeenCalled();
+  shortcuts.forEach((shortcut) => expect(shortcut.defaultPrevented).toBe(false));
+}
+
+/**
+ * Verifies the captured shortcut executes the cursor statement when there is no selection.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: renders the editor mock and dispatches a keyboard event.
+ */
+function assertCapturedCursorExecution(): void {
+  const onExecute = vi.fn();
+  monacoState.selection = null;
+  monacoState.position = { lineNumber: 2, column: 4 };
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "r",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(onExecute).toHaveBeenCalledWith("select 2");
 }
 
 /** Registers query-editor keyboard interaction tests. */
 function registerQueryEditorTests(): void {
   beforeEach(() => {
-    monacoState.action = null;
+    monacoState.actionRegistrations = 0;
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.selection = {
       startLineNumber: 1,
@@ -115,9 +149,9 @@ function registerQueryEditorTests(): void {
     };
     monacoState.position = { lineNumber: 1, column: 8 };
   });
-  it("registers Ctrl/Cmd + R and executes the selected SQL", assertMonacoRunAction);
-  it("executes the cursor statement without a selection", assertMonacoCursorRunAction);
-  it("prevents the WebView refresh shortcut in capture phase", assertWebViewRefreshGuard);
+  it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  it("ignores execute shortcuts with extra modifiers", assertModifiedShortcutsAreIgnored);
+  it("executes the cursor statement without a selection", assertCapturedCursorExecution);
 }
 
 describe("QueryEditor", registerQueryEditorTests);

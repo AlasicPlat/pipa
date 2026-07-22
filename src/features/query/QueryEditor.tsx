@@ -74,11 +74,11 @@ function executeEditorScope(editor: MonacoEditorInstance, onExecute: (sql: strin
 }
 
 /**
- * Renders the MySQL editor and prevents the WebView refresh shortcut in capture phase.
+ * Renders the MySQL editor and executes the desktop shortcut in capture phase.
  * @param props - Controlled SQL value plus edit and execute callbacks.
  * @param forwardedRef - Imperative handle used by the visible toolbar execute control.
  * @returns The query-editor element.
- * Side effects: registers a temporary document key guard, Monaco action, and shared execute handle.
+ * Side effects: registers one temporary document shortcut and the shared toolbar execute handle.
  */
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function QueryEditor(
   { sql, onSqlChange, onExecute },
@@ -98,31 +98,29 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 
   useImperativeHandle(forwardedRef, () => ({ executeCurrent }), [executeCurrent]);
 
-  /** Registers the native shortcut and retains the mounted editor for toolbar execution. */
-  const handleMount = useCallback<OnMount>(
-    (editor, monaco) => {
-      editorRef.current = editor;
-      editor.addAction({
-        id: "pipa.execute-query",
-        label: "执行当前语句或选中内容",
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KEY_R],
-        run: executeCurrent,
-      });
-    },
-    [executeCurrent],
-  );
+  /** Retains the mounted editor for both toolbar and captured-shortcut execution. */
+  const handleMount = useCallback<OnMount>((editor) => {
+    editorRef.current = editor;
+  }, []);
 
   useEffect(() => {
-    /** Prevents the desktop shell from interpreting the product shortcut as refresh. */
-    function preventWebViewRefresh(event: KeyboardEvent): void {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r") {
-        event.preventDefault();
+    /** Executes the product shortcut directly before the WebView or Monaco can consume it. */
+    function handleExecuteShortcut(event: KeyboardEvent): void {
+      const isExecuteShortcut =
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "r";
+      if (!isExecuteShortcut) {
+        return;
       }
+      event.preventDefault();
+      executeCurrent();
     }
 
-    document.addEventListener("keydown", preventWebViewRefresh, true);
-    return () => document.removeEventListener("keydown", preventWebViewRefresh, true);
-  }, []);
+    document.addEventListener("keydown", handleExecuteShortcut, true);
+    return () => document.removeEventListener("keydown", handleExecuteShortcut, true);
+  }, [executeCurrent]);
 
   return (
     <div className="query-editor" aria-label="SQL 编辑器">
