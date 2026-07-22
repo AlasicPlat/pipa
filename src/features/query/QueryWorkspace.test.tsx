@@ -76,6 +76,24 @@ const PROFILE: ConnectionProfile = {
   tlsMode: "preferred",
 };
 
+const TAB = {
+  id: "tab-1",
+  connectionId: PROFILE.id,
+  title: "查询 1",
+  sqlText: "select 1;\nselect 2;",
+  position: 0,
+};
+
+const WORKSPACE_PROPS = {
+  profile: PROFILE,
+  tab: TAB,
+  tabs: [TAB],
+  persistenceError: null,
+  onRetryPersistence: vi.fn(async () => undefined),
+  onSelectTab: vi.fn(),
+  onSqlChange: vi.fn(),
+};
+
 /**
  * Verifies running feedback remains intentionally small after cancellation is requested.
  * Parameters: none.
@@ -83,7 +101,7 @@ const PROFILE: ConnectionProfile = {
  * Side effects: renders a query workspace with a mocked active session.
  */
 function assertMinimalQueryLoading(): void {
-  render(<QueryWorkspace profile={PROFILE} />);
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
   expect(screen.getByText("查询中…")).toBeVisible();
   expect(screen.getByRole("button", { name: "取消" })).toBeVisible();
@@ -104,7 +122,7 @@ function assertToolbarSelectionExecution(): void {
     endLineNumber: 1,
     endColumn: 9,
   };
-  render(<QueryWorkspace profile={PROFILE} />);
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
   fireEvent.click(screen.getByRole("button", { name: /执行/ }));
   expect(sessionController.run).toHaveBeenCalledWith("select 1");
@@ -119,7 +137,7 @@ function assertToolbarSelectionExecution(): void {
 function assertToolbarCursorExecution(): void {
   sessionController.state.running = false;
   monacoState.selection = null;
-  render(<QueryWorkspace profile={PROFILE} />);
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
   fireEvent.click(screen.getByRole("button", { name: /执行/ }));
   expect(sessionController.run).toHaveBeenCalledWith("select 2");

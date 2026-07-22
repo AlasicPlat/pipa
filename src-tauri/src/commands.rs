@@ -1,9 +1,10 @@
 use crate::state::AppState;
+use chrono::Utc;
 use pipa_core::{
     AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, QueryEvent, QueryRequest,
-    SaveConnectionInput,
+    RecordQueryHistoryInput, SaveConnectionInput,
 };
-use pipa_store::WorkspaceTab as StoredWorkspaceTab;
+use pipa_store::{QueryHistoryEntry, WorkspaceTab as StoredWorkspaceTab};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tauri::{ipc::Channel, State};
@@ -115,6 +116,15 @@ pub(crate) fn save_workspace(
     tabs: Vec<WorkspaceTabPayload>,
 ) -> Result<(), AppError> {
     save_workspace_inner(&state, tabs)
+}
+
+/// Records one query after its matching streamed execution emits `Started`.
+#[tauri::command]
+pub(crate) fn record_query_history(
+    state: State<'_, AppState>,
+    input: RecordQueryHistoryInput,
+) -> Result<(), AppError> {
+    record_query_history_inner(&state, input)
 }
 
 /// Reads all non-secret connection profiles from encrypted local storage.
@@ -236,6 +246,19 @@ fn save_workspace_inner(state: &AppState, tabs: Vec<WorkspaceTabPayload>) -> Res
     state.local_store.save_workspace(&tabs)
 }
 
+/// Stores a started query with server-owned UTC time and query-id idempotency.
+fn record_query_history_inner(
+    state: &AppState,
+    input: RecordQueryHistoryInput,
+) -> Result<(), AppError> {
+    state.local_store.record_query_history(&QueryHistoryEntry {
+        id: input.query_id,
+        connection_id: input.connection_id,
+        sql_text: input.sql,
+        executed_at: Utc::now(),
+    })
+}
+
 /// Forwards ordered query events and removes cancellation state on every exit path.
 async fn forward_query_events(
     query_id: Uuid,
@@ -269,13 +292,14 @@ async fn forward_query_events(
 mod tests {
     use super::{
         cancel_query_inner, forward_query_events, list_connections_inner, load_workspace_inner,
-        run_query_inner, save_mysql_connection_inner, save_workspace_inner,
-        test_mysql_connection_inner, WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
+        record_query_history_inner, run_query_inner, save_mysql_connection_inner,
+        save_workspace_inner, test_mysql_connection_inner, WorkspaceTabPayload,
+        QUERY_EVENT_CHANNEL_CAPACITY,
     };
     use crate::state::AppState;
     use pipa_core::{
         AppError, AppErrorCode, ConnectionProfile, Engine, Environment, QueryEvent, QueryRequest,
-        SaveConnectionInput, TlsMode,
+        RecordQueryHistoryInput, SaveConnectionInput, TlsMode,
     };
     use pipa_mysql::MySqlAdapter;
     use pipa_store::{LocalStore, SecretStore};
@@ -469,6 +493,29 @@ mod tests {
                 "position": 4
             })
         );
+    }
+
+    /// Verifies replaying a Started event records one history row with backend UTC time.
+    #[test]
+    fn record_history_command_is_idempotent_and_uses_safe_fields() {
+        let (_directory, state, _secret_store) = test_state();
+        let query_id = Uuid::new_v4();
+        let connection_id = Uuid::new_v4();
+        let input = RecordQueryHistoryInput {
+            query_id,
+            connection_id,
+            sql: "SELECT actual_scope".into(),
+        };
+
+        record_query_history_inner(&state, input.clone()).unwrap();
+        record_query_history_inner(&state, input).unwrap();
+
+        let history = state.local_store.list_query_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, query_id);
+        assert_eq!(history[0].connection_id, connection_id);
+        assert_eq!(history[0].sql_text, "SELECT actual_scope");
+        assert!(history[0].executed_at.to_rfc3339().ends_with("+00:00"));
     }
 
     /// Verifies the adapter connection test returns safe errors without persisting credentials.

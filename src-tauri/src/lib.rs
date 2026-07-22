@@ -29,6 +29,7 @@ pub fn run() {
             commands::cancel_query,
             commands::load_workspace,
             commands::save_workspace,
+            commands::record_query_history,
         ])
         .run(tauri::generate_context!())
         .expect("Pipa could not start because secure local storage is unavailable");

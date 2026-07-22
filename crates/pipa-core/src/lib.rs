@@ -11,4 +11,4 @@ mod adapter;
 pub use adapter::DatabaseAdapter;
 pub use connection::{ConnectionProfile, Engine, Environment, SaveConnectionInput, TlsMode};
 pub use error::{AppError, AppErrorCode};
-pub use query::{CellValue, QueryColumn, QueryEvent, QueryRequest};
+pub use query::{CellValue, QueryColumn, QueryEvent, QueryRequest, RecordQueryHistoryInput};
