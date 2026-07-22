@@ -75,14 +75,15 @@ docker compose -f infra/test/mysql.compose.yml down
 | `pipa-core` | 与框架无关的连接、查询、结果、错误模型和数据库适配器契约，并生成 TypeScript 边界类型。 |
 | `pipa-store` | 在 SQLCipher 加密 SQLite 中原子保存连接配置与密码，并持久化工作区和查询历史。 |
 | `pipa-mysql` | 基于 SQLx 的 MySQL 连接测试、可取消查询、结果分批和数据库值的无损传输转换。 |
-| `src-tauri` | 管理 bootstrap root key、隔离旧版钥匙串迁移、组合存储与 MySQL 适配器，并通过类型化 Tauri IPC 提供命令。 |
+| `src-tauri` | 原子管理 bootstrap root key、组合本地存储与 MySQL 适配器，并通过类型化 Tauri IPC 提供命令。 |
 
 ## 本地数据与安全策略
 
-- 连接配置、数据库密码、工作区和查询历史保存在应用数据目录内的 `pipa.db`；该数据库由 SQLCipher 整库加密，配置与密码在同一事务中保存。
-- 随机 32-byte SQLCipher root key 单独保存在未加密的 `pipa-bootstrap.db`，因为解锁主库的 key 不能存进主库自身。Unix 系统上应用数据目录尽可能限制为 `0700`，bootstrap 文件限制为 `0600`，并使用 DELETE journal 避免额外 WAL 文件。
+- 连接配置、数据库密码、工作区和查询历史保存在应用数据目录内的 `pipa-data.db`；该数据库由 SQLCipher 整库加密，配置与密码在同一事务中保存。
+- 随机 32-byte SQLCipher root key 单独保存在未加密的 `pipa-bootstrap.db`，因为解锁主库的 key 不能存进主库自身。Bootstrap 先在同目录私有临时库中完整事务提交并同步，再以不覆盖已有文件的方式原子发布；进程崩溃最多留下启动时会忽略的唯一临时文件，不会留下半初始化的最终文件。
+- Unix 系统上应用数据目录尽可能限制为 `0700`，bootstrap 最终文件和临时文件限制为 `0600`，并使用 DELETE journal 与 FULL 同步。
 - 本地威胁模型明确接受：能够读取当前用户应用数据目录的进程，也能取得 bootstrap root key 并解密主库。SQLCipher 主要防止数据库文件被单独复制或直接检查时泄露内容；它不替代操作系统账号、磁盘加密和文件权限保护。
-- 新安装及完成迁移后的日常启动不访问系统钥匙串。旧版本首次升级时可能最后一次请求钥匙串权限，以只读方式迁移旧 root key 和连接密码；全部迁移成功后写入完成标记，旧钥匙串条目保留且不再访问。
+- Pipa 不访问系统钥匙串，也不迁移旧版密钥或连接。旧 `pipa.db`、`pipa.db-wal` 和 `pipa.db-shm` 会被原样忽略并保留为备份；升级后需要在新数据库中重新添加连接。
 - 数据库密码不会写入日志或前端持久化存储，错误与 Debug 输出保持脱敏。
 - 不使用 `localStorage`、`sessionStorage`、浏览器持久化或云端同步保存应用数据。
 - 查询结果只存在于当前运行内存中，默认不持久化；重启仅恢复未保存的 SQL 和标签上下文。
@@ -92,4 +93,4 @@ docker compose -f infra/test/mysql.compose.yml down
 
 - `docker compose ... up --wait` 失败：确认 Docker 守护进程正在运行，且宿主机端口 `33306` 未被占用。
 - Tauri 启动或打包失败：确认已安装 Xcode Command Line Tools、Rust stable、`rustfmt` 和 `clippy`。
-- 旧版本首次升级时报迁移错误：允许 Pipa 最后一次读取旧钥匙串条目后重试；迁移失败不会覆盖旧 `pipa.db`，完成标记也不会提前写入。
+- 旧版本升级后看不到原连接：这是新本地密钥策略的预期行为，请重新添加连接；旧 `pipa.db` 及其 sidecar 不会被修改或删除。
