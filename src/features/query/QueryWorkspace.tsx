@@ -283,7 +283,9 @@ export function QueryWorkspace({
         !session.state.error &&
         session.state.columns.length === 0 &&
         session.state.affectedRows === null ? (
-          <div className="query-results__empty">执行查询后，结果会显示在这里。</div>
+          <div className="query-results__empty">
+            {session.state.incomplete ? "查询已取消" : "执行查询后，结果会显示在这里。"}
+          </div>
         ) : null}
 
         {!session.state.running &&
