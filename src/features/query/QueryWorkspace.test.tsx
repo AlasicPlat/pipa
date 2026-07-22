@@ -147,6 +147,23 @@ function assertToolbarCursorExecution(): void {
   expect(sessionController.run).toHaveBeenCalledWith("select 2");
 }
 
+/** Verifies a captured editor shortcut cannot start a second query while one is running. */
+function assertRunningSessionIgnoresExecuteShortcut(): void {
+  sessionController.state.running = true;
+  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  const shortcut = new KeyboardEvent("keydown", {
+    key: "r",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(shortcut);
+
+  expect(shortcut.defaultPrevented).toBe(true);
+  expect(sessionController.run).not.toHaveBeenCalled();
+}
+
 /** Verifies button and shortcut share one guarded new-query action. */
 function assertNewQueryControlsShareRunningGuard(): void {
   sessionController.state.running = false;
@@ -228,6 +245,7 @@ function registerQueryWorkspaceTests(): void {
   it("keeps cancel visible without diagnostic loading copy", assertMinimalQueryLoading);
   it("executes only Monaco's selected SQL from the toolbar", assertToolbarSelectionExecution);
   it("executes only Monaco's cursor statement from the toolbar", assertToolbarCursorExecution);
+  it("does not start a second query from the shortcut while running", assertRunningSessionIgnoresExecuteShortcut);
   it("creates a query through one guarded button and shortcut path", assertNewQueryControlsShareRunningGuard);
   it("shows actionable query errors with closed diagnostic details", assertLayeredQueryError);
 }

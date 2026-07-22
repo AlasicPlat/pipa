@@ -95,6 +95,9 @@ export function QueryWorkspace({
    * Side effects: starts the asynchronous query session.
    */
   function handleExecute(sqlToRun: string): void {
+    if (session.state.running) {
+      return;
+    }
     void session.run(sqlToRun);
   }
 
