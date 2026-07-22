@@ -16,6 +16,11 @@ dist
 dist-ssr
 *.local
 
+# Local encrypted application state
+*.db
+*.db-shm
+*.db-wal
+
 # Editor directories and files
 .vscode
 .idea
