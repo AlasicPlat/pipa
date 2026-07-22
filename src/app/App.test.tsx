@@ -57,6 +57,15 @@ const PRODUCTION_PROFILE: ConnectionProfile = {
   database: "pipa",
 };
 
+const MONGODB_PROFILE: ConnectionProfile = {
+  ...DEVELOPMENT_PROFILE,
+  id: "connection-mongodb",
+  name: "文档开发库",
+  engine: "mongo_db",
+  port: 27017,
+  database: "documents",
+};
+
 /**
  * Verifies that the Pipa root exposes the required workspace landmarks.
  * Parameters: none.
@@ -81,6 +90,49 @@ async function assertRestoredTabConnectionIsImmutable(): Promise<void> {
 
   expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
   expect(screen.queryByRole("region", { name: "生产主库 查询工作区" })).not.toBeInTheDocument();
+}
+
+/** Verifies a selected MySQL connection creates a new bound tab without rebinding old tabs. */
+async function assertNewQueryUsesSelectedConnectionWithoutRebinding(): Promise<void> {
+  render(<App />);
+  const productionRow = await screen.findByRole("button", { name: /生产主库/ });
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+
+  fireEvent.click(productionRow);
+  await waitFor(() => expect(productionRow).toHaveAttribute("aria-selected", "true"));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "在当前已选 MySQL 连接 生产主库 中新建查询",
+    }),
+  );
+
+  expect(await screen.findByRole("region", { name: "生产主库 查询工作区" })).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  expect(screen.getByRole("tab", { name: "生产主库 · 查询 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("tab", { name: "恢复的查询" }));
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "生产主库 查询工作区" })).not.toBeInTheDocument();
+}
+
+/** Verifies a non-MySQL navigator selection cannot create a misleading SQL query tab. */
+async function assertNonMySqlSelectionCannotCreateQuery(): Promise<void> {
+  render(<App />);
+  const mongodbRow = await screen.findByRole("button", { name: /文档开发库/ });
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+
+  fireEvent.click(mongodbRow);
+  await waitFor(() => expect(mongodbRow).toHaveAttribute("aria-selected", "true"));
+  expect(
+    screen.getByRole("button", { name: "请选择 MySQL 连接后新建查询" }),
+  ).toBeDisabled();
+  fireEvent.keyDown(document, { key: "t", ctrlKey: true });
+
+  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
 }
 
 /** Verifies restore failure is actionable and retry restores the original immutable tab. */
@@ -122,7 +174,11 @@ async function assertRecoveryFailureRequiresSuccessfulRetry(): Promise<void> {
 function registerAppTests(): void {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(listConnections).mockResolvedValue([DEVELOPMENT_PROFILE, PRODUCTION_PROFILE]);
+    vi.mocked(listConnections).mockResolvedValue([
+      DEVELOPMENT_PROFILE,
+      PRODUCTION_PROFILE,
+      MONGODB_PROFILE,
+    ]);
     vi.mocked(loadWorkspace).mockResolvedValue([
       {
         id: "restored-tab",
@@ -136,6 +192,8 @@ function registerAppTests(): void {
   afterEach(cleanup);
   it("renders the Pipa workspace landmarks", assertPipaWorkspaceLandmarks);
   it("keeps a restored tab bound while another sidebar connection is selected", assertRestoredTabConnectionIsImmutable);
+  it("creates a selected-connection tab without rebinding restored tabs", assertNewQueryUsesSelectedConnectionWithoutRebinding);
+  it("does not create a SQL tab for a non-MySQL selection", assertNonMySqlSelectionCannotCreateQuery);
   it("blocks workspace replacement until an explicit recovery retry succeeds", assertRecoveryFailureRequiresSuccessfulRetry);
 }
 

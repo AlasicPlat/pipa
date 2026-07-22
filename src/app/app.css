@@ -415,12 +415,18 @@ body {
   background: var(--surface-panel);
 }
 
+.query-tabs-bar {
+  display: flex;
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
 .query-tabs {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-muted);
 }
 
 .query-tab {
@@ -455,6 +461,38 @@ body {
 .query-tab:disabled {
   cursor: wait;
   opacity: 0.52;
+}
+
+.query-new-button {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.query-new-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.query-new-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.query-new-button kbd {
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 8px;
+  font-weight: 560;
 }
 
 .query-context,
@@ -550,7 +588,15 @@ body {
   letter-spacing: 0.02em;
 }
 
+.query-toolbar__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .query-run-button {
+  flex: 0 0 auto;
   min-height: 26px;
   gap: 5px;
   padding: 3px 8px;
@@ -663,6 +709,38 @@ body {
 
 .query-error strong {
   color: var(--text-primary);
+}
+
+.query-error__summary {
+  color: var(--text-primary);
+  font-weight: 620;
+}
+
+.query-error__advice {
+  line-height: 1.5;
+}
+
+.query-error__details {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+
+.query-error__details summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.query-error__details pre {
+  margin: 6px 0 0;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .result-grid {
