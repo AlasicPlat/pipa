@@ -4,6 +4,7 @@ import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import { ConnectionForm } from "../features/connections/ConnectionForm";
 import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { useConnections } from "../features/connections/useConnections";
+import { QueryWorkspace } from "../features/query/QueryWorkspace";
 import "./tokens.css";
 import "./app.css";
 
@@ -101,32 +102,41 @@ export function App() {
           <span className="workspace__scope">本地会话</span>
         </header>
 
-        <div className="workspace__content">
+        <div
+          className={`workspace__content${
+            selectedProfile?.engine === "my_sql" && !isAddingConnection
+              ? " workspace__content--query"
+              : ""
+          }`}
+        >
           {isAddingConnection ? (
             <ConnectionForm
               onCancel={handleCancelConnection}
               onSaved={handleConnectionSaved}
             />
+          ) : selectedProfile?.engine === "my_sql" ? (
+            <QueryWorkspace key={selectedProfile.id} profile={selectedProfile} />
+          ) : selectedProfile ? (
+            <section className="connection-overview" aria-labelledby="connection-overview-title">
+              <span className="connection-overview__icon" aria-hidden="true">
+                <Database size={24} strokeWidth={1.6} />
+              </span>
+              <span className="eyebrow">CONNECTION SELECTED</span>
+              <h2 id="connection-overview-title">{selectedProfile.name}</h2>
+              <p>当前里程碑仅开放 MySQL 查询。请选择一个 MySQL 连接继续。</p>
+            </section>
           ) : (
             <section className="connection-overview" aria-labelledby="connection-overview-title">
               <span className="connection-overview__icon" aria-hidden="true">
                 <Database size={24} strokeWidth={1.6} />
               </span>
-              <span className="eyebrow">{selectedProfile ? "MYSQL SELECTED" : "GET STARTED"}</span>
-              <h2 id="connection-overview-title">
-                {selectedProfile?.name ?? "选择或创建一个 MySQL 连接"}
-              </h2>
-              <p>
-                {selectedProfile
-                  ? `${selectedProfile.host}:${selectedProfile.port} · ${selectedProfile.database ?? "未指定数据库"}`
-                  : "连接会按数据库引擎独立整理。当前版本仅支持创建 MySQL 连接。"}
-              </p>
-              {!selectedProfile ? (
-                <button className="button button--primary" onClick={handleAddConnection} type="button">
-                  <Plus size={16} aria-hidden="true" />
-                  添加 MySQL 连接
-                </button>
-              ) : null}
+              <span className="eyebrow">GET STARTED</span>
+              <h2 id="connection-overview-title">选择或创建一个 MySQL 连接</h2>
+              <p>连接会按数据库引擎独立整理。当前版本仅支持创建 MySQL 连接。</p>
+              <button className="button button--primary" onClick={handleAddConnection} type="button">
+                <Plus size={16} aria-hidden="true" />
+                添加 MySQL 连接
+              </button>
             </section>
           )}
         </div>
