@@ -21,7 +21,6 @@ pub struct QueryRequest {
 /// Stable query context recorded after its matching backend execution starts.
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct RecordQueryHistoryInput {
     /// Query identifier reused as the idempotent history-entry identifier.
     #[ts(type = "string")]
@@ -241,5 +240,9 @@ mod tests {
         );
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("rows"));
+        let declaration = RecordQueryHistoryInput::decl(&Config::default());
+        assert!(declaration.contains("queryId: string"));
+        assert!(declaration.contains("connectionId: string"));
+        assert!(declaration.contains("sql: string"));
     }
 }

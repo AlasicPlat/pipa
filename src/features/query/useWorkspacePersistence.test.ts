@@ -16,6 +16,23 @@ const RESTORED_TAB: WorkspaceTab = {
   position: 0,
 };
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+}
+
+/** Creates a controllable promise for deterministic persistence ordering tests. */
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 /** Settles the startup load promise without advancing the debounce clock. */
 async function settleStartupLoad(): Promise<void> {
   await act(async () => {
@@ -72,6 +89,55 @@ async function assertLifecycleFlushesLatestState(): Promise<void> {
   ]);
 }
 
+/** Verifies hidden and unmount requests queue their latest revision behind an active save. */
+async function assertLifecycleFlushesSerializeBehindActiveSave(): Promise<void> {
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const hiddenFirst = deferred<void>();
+  const hiddenLatest = deferred<void>();
+  vi.mocked(saveWorkspace)
+    .mockReturnValueOnce(hiddenFirst.promise)
+    .mockReturnValueOnce(hiddenLatest.promise);
+  const hiddenHook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hiddenHook.result.current.updateTabSql("tab-1", "SELECT 'active';"));
+  await vi.advanceTimersByTimeAsync(500);
+  act(() => hiddenHook.result.current.updateTabSql("tab-1", "SELECT 'hidden latest';"));
+  visibility.mockReturnValue("hidden");
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(saveWorkspace).toHaveBeenCalledTimes(1);
+
+  await act(async () => hiddenFirst.resolve(undefined));
+  expect(saveWorkspace).toHaveBeenCalledTimes(2);
+  expect(saveWorkspace).toHaveBeenLastCalledWith([
+    { ...RESTORED_TAB, sqlText: "SELECT 'hidden latest';" },
+  ]);
+  await act(async () => hiddenLatest.resolve(undefined));
+  hiddenHook.unmount();
+
+  vi.mocked(saveWorkspace).mockReset();
+  const unmountFirst = deferred<void>();
+  const unmountLatest = deferred<void>();
+  vi.mocked(saveWorkspace)
+    .mockReturnValueOnce(unmountFirst.promise)
+    .mockReturnValueOnce(unmountLatest.promise);
+  visibility.mockReturnValue("visible");
+  const unmountHook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+  act(() => unmountHook.result.current.updateTabSql("tab-1", "SELECT 'active';"));
+  await vi.advanceTimersByTimeAsync(500);
+  act(() => unmountHook.result.current.updateTabSql("tab-1", "SELECT 'unmount latest';"));
+  unmountHook.unmount();
+  expect(saveWorkspace).toHaveBeenCalledTimes(1);
+
+  await act(async () => unmountFirst.resolve(undefined));
+  expect(saveWorkspace).toHaveBeenCalledTimes(2);
+  expect(saveWorkspace).toHaveBeenLastCalledWith([
+    { ...RESTORED_TAB, sqlText: "SELECT 'unmount latest';" },
+  ]);
+  await act(async () => unmountLatest.resolve(undefined));
+}
+
 /** Verifies save failures preserve memory and serialization excludes transient or secret fields. */
 async function assertFailurePreservesSafeInMemoryTabs(): Promise<void> {
   vi.mocked(loadWorkspace).mockResolvedValue([
@@ -93,10 +159,99 @@ async function assertFailurePreservesSafeInMemoryTabs(): Promise<void> {
   });
 
   expect(hook.result.current.tabs[0].sqlText).toBe("SELECT 'kept';");
-  expect(hook.result.current.error).toMatch(/编辑内容仍保留/);
+  expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
   const serialized = JSON.stringify(vi.mocked(saveWorkspace).mock.calls[0][0]);
   expect(serialized).not.toMatch(/password|rows|error|must-not-save|transient/);
   expect(hook.result.current.retrySave).toEqual(expect.any(Function));
+}
+
+/** Verifies revisions save serially and the latest failed snapshot owns the final error. */
+async function assertSerialLatestWriteAndNewFailure(): Promise<void> {
+  const initialFailure = deferred<void>();
+  const obsoleteSuccess = deferred<void>();
+  const latestFailure = deferred<void>();
+  vi.mocked(saveWorkspace)
+    .mockReturnValueOnce(initialFailure.promise)
+    .mockReturnValueOnce(obsoleteSuccess.promise)
+    .mockReturnValueOnce(latestFailure.promise);
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'seed error';"));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenCalledTimes(1);
+  await act(async () => initialFailure.reject(new Error("seed failed")));
+  expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
+
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'obsolete';"));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenCalledTimes(2);
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'latest';"));
+  act(() => {
+    void hook.result.current.retrySave();
+  });
+  expect(saveWorkspace).toHaveBeenCalledTimes(2);
+
+  await act(async () => obsoleteSuccess.resolve(undefined));
+  expect(saveWorkspace).toHaveBeenCalledTimes(3);
+  expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
+  expect(saveWorkspace).toHaveBeenLastCalledWith([
+    { ...RESTORED_TAB, sqlText: "SELECT 'latest';" },
+  ]);
+
+  await act(async () => latestFailure.reject(new Error("latest failed")));
+  expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
+  expect(hook.result.current.tabs[0].sqlText).toBe("SELECT 'latest';");
+}
+
+/** Verifies an obsolete failed revision cannot outlive a newer successful save. */
+async function assertStaleFailureCannotPolluteLatestSuccess(): Promise<void> {
+  const firstSave = deferred<void>();
+  const secondSave = deferred<void>();
+  vi.mocked(saveWorkspace)
+    .mockReturnValueOnce(firstSave.promise)
+    .mockReturnValueOnce(secondSave.promise);
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'obsolete';"));
+  await vi.advanceTimersByTimeAsync(500);
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'latest';"));
+  await vi.advanceTimersByTimeAsync(500);
+
+  await act(async () => firstSave.reject(new Error("obsolete failed")));
+  expect(saveWorkspace).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.saveError).toBeNull();
+
+  await act(async () => secondSave.resolve(undefined));
+  expect(hook.result.current.saveError).toBeNull();
+  expect(saveWorkspace).toHaveBeenLastCalledWith([
+    { ...RESTORED_TAB, sqlText: "SELECT 'latest';" },
+  ]);
+}
+
+/** Verifies failed recovery blocks destructive replacement until an explicit retry succeeds. */
+async function assertRecoveryFailureBlocksWritesUntilRetry(): Promise<void> {
+  vi.mocked(loadWorkspace).mockRejectedValueOnce(new Error("locked"));
+  const hook = renderHook(() => useWorkspacePersistence());
+  await settleStartupLoad();
+
+  expect(hook.result.current.recoveryBlocked).toBe(true);
+  expect(hook.result.current.loadError).toMatch(/无法恢复/);
+  expect(hook.result.current.addTab("connection-new", "不可创建")).toBeNull();
+  act(() => hook.result.current.updateTabSql("tab-1", "DROP OLD WORKSPACE"));
+  await vi.advanceTimersByTimeAsync(500);
+  await act(async () => hook.result.current.retrySave());
+  expect(saveWorkspace).not.toHaveBeenCalled();
+
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([RESTORED_TAB]);
+  await act(async () => hook.result.current.retryLoad());
+
+  expect(loadWorkspace).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.recoveryBlocked).toBe(false);
+  expect(hook.result.current.loadError).toBeNull();
+  expect(hook.result.current.tabs).toEqual([RESTORED_TAB]);
+  expect(hook.result.current.activeTab?.connectionId).toBe("connection-1");
 }
 
 /** Registers local workspace recovery behavior with deterministic fake timers. */
@@ -113,7 +268,11 @@ function registerWorkspacePersistenceTests(): void {
   });
   it("loads once and saves only after 500ms", assertLoadOnceAndDebounce);
   it("flushes the latest SQL when hidden or unmounted", assertLifecycleFlushesLatestState);
+  it("serializes hidden and unmount flushes behind an active save", assertLifecycleFlushesSerializeBehindActiveSave);
   it("keeps memory intact and serializes only safe tab fields after failure", assertFailurePreservesSafeInMemoryTabs);
+  it("serializes writes and lets the latest failed revision own the error", assertSerialLatestWriteAndNewFailure);
+  it("does not retain a stale failure after the latest revision succeeds", assertStaleFailureCannotPolluteLatestSuccess);
+  it("blocks replacement after restore failure until retry succeeds", assertRecoveryFailureBlocksWritesUntilRetry);
 }
 
 describe("useWorkspacePersistence", registerWorkspacePersistenceTests);

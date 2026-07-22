@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
-import { listConnections, loadWorkspace } from "../lib/tauriClient";
+import { listConnections, loadWorkspace, saveWorkspace } from "../lib/tauriClient";
 import { App } from "./App";
 
 vi.mock("../lib/tauriClient", () => ({
@@ -83,6 +83,36 @@ async function assertRestoredTabConnectionIsImmutable(): Promise<void> {
   expect(screen.queryByRole("region", { name: "生产主库 查询工作区" })).not.toBeInTheDocument();
 }
 
+/** Verifies restore failure is actionable and retry restores the original immutable tab. */
+async function assertRecoveryFailureRequiresSuccessfulRetry(): Promise<void> {
+  vi.mocked(loadWorkspace)
+    .mockRejectedValueOnce(new Error("locked"))
+    .mockResolvedValueOnce([
+      {
+        id: "restored-tab",
+        connectionId: DEVELOPMENT_PROFILE.id,
+        title: "恢复的查询",
+        sqlText: "SELECT * FROM inventory;",
+        position: 0,
+      },
+    ]);
+  render(<App />);
+
+  expect(
+    await screen.findByRole("heading", { name: "无法恢复上次工作区" }),
+  ).toBeVisible();
+  expect(saveWorkspace).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "重新恢复" }));
+
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  const productionRow = screen.getByRole("button", { name: /生产主库/ });
+  fireEvent.click(productionRow);
+  await waitFor(() => expect(productionRow).toHaveAttribute("aria-selected", "true"));
+  expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "生产主库 查询工作区" })).not.toBeInTheDocument();
+  expect(saveWorkspace).not.toHaveBeenCalled();
+}
+
 /**
  * Registers the App smoke tests with Vitest.
  * Parameters: none.
@@ -106,6 +136,7 @@ function registerAppTests(): void {
   afterEach(cleanup);
   it("renders the Pipa workspace landmarks", assertPipaWorkspaceLandmarks);
   it("keeps a restored tab bound while another sidebar connection is selected", assertRestoredTabConnectionIsImmutable);
+  it("blocks workspace replacement until an explicit recovery retry succeeds", assertRecoveryFailureRequiresSuccessfulRetry);
 }
 
 describe("App", registerAppTests);
