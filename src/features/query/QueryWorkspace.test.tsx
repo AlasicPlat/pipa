@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
+import type { QuerySessionState } from "./useQuerySession";
 import { QueryWorkspace } from "./QueryWorkspace";
 
 const sessionController = vi.hoisted(() => ({
@@ -15,7 +17,7 @@ const sessionController = vi.hoisted(() => ({
     incomplete: false,
     affectedRows: null,
     error: null,
-  },
+  } as QuerySessionState,
   run: vi.fn(),
   cancel: vi.fn(),
 }));
@@ -89,6 +91,8 @@ const WORKSPACE_PROPS = {
   tab: TAB,
   tabs: [TAB],
   persistenceError: null,
+  newQueryConnectionName: PROFILE.name,
+  onCreateQuery: vi.fn(),
   onRetryPersistence: vi.fn(async () => undefined),
   onSelectTab: vi.fn(),
   onSqlChange: vi.fn(),
@@ -143,12 +147,80 @@ function assertToolbarCursorExecution(): void {
   expect(sessionController.run).toHaveBeenCalledWith("select 2");
 }
 
+/** Verifies button and shortcut share one guarded new-query action. */
+function assertNewQueryControlsShareRunningGuard(): void {
+  sessionController.state.running = false;
+  const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  const shortcut = new KeyboardEvent("keydown", {
+    key: "t",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(shortcut);
+
+  expect(shortcut.defaultPrevented).toBe(true);
+  expect(WORKSPACE_PROPS.onCreateQuery).toHaveBeenCalledTimes(1);
+
+  sessionController.state.running = true;
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  const button = screen.getByRole("button", {
+    name: `在当前已选 MySQL 连接 ${PROFILE.name} 中新建查询`,
+  });
+  expect(button).toBeDisabled();
+  fireEvent.click(button);
+  const runningShortcut = new KeyboardEvent("keydown", {
+    key: "t",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(runningShortcut);
+  expect(runningShortcut.defaultPrevented).toBe(true);
+  expect(WORKSPACE_PROPS.onCreateQuery).toHaveBeenCalledTimes(1);
+}
+
+/** Verifies safe guidance and redacted diagnostics are progressively disclosed. */
+function assertLayeredQueryError(): void {
+  const error: AppError = {
+    code: "authentication",
+    message: "数据库拒绝了当前账号",
+    technicalDetails: "server code 1045; credential value redacted",
+    retryable: false,
+  };
+  sessionController.state.running = false;
+  sessionController.state.error = error;
+  const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+
+  expect(screen.getByText(error.message)).toBeVisible();
+  expect(screen.getByText("请检查用户名和凭据后重新连接。")).toBeVisible();
+  const details = screen.getByText("诊断详情").closest("details");
+  expect(details).not.toHaveAttribute("open");
+  expect(screen.getByText(error.technicalDetails ?? "")).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent("test-database-password");
+
+  sessionController.state.error = { ...error, technicalDetails: null };
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  expect(screen.queryByText("诊断详情")).not.toBeInTheDocument();
+
+  sessionController.state.error = {
+    code: "connection",
+    message: "连接已断开",
+    technicalDetails: null,
+    retryable: true,
+  };
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  expect(screen.getByText("请检查网络和连接状态，然后重试。")).toBeVisible();
+}
+
 /** Registers loading and toolbar scope regression tests. */
 function registerQueryWorkspaceTests(): void {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionController.state.running = true;
     sessionController.state.cancelRequested = true;
+    sessionController.state.error = null;
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.position = { lineNumber: 2, column: 4 };
   });
@@ -156,6 +228,8 @@ function registerQueryWorkspaceTests(): void {
   it("keeps cancel visible without diagnostic loading copy", assertMinimalQueryLoading);
   it("executes only Monaco's selected SQL from the toolbar", assertToolbarSelectionExecution);
   it("executes only Monaco's cursor statement from the toolbar", assertToolbarCursorExecution);
+  it("creates a query through one guarded button and shortcut path", assertNewQueryControlsShareRunningGuard);
+  it("shows actionable query errors with closed diagnostic details", assertLayeredQueryError);
 }
 
 describe("QueryWorkspace", registerQueryWorkspaceTests);

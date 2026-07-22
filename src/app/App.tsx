@@ -25,6 +25,13 @@ export function App() {
   const activeQueryProfile = connections.profiles.find(
     (profile) => profile.id === queryWorkspace.activeTab?.connectionId,
   );
+  const newQueryProfile = selectedProfile
+    ? selectedProfile.engine === "my_sql"
+      ? selectedProfile
+      : null
+    : activeQueryProfile?.engine === "my_sql"
+      ? activeQueryProfile
+      : null;
 
   /**
    * Adds and selects the saved profile before returning to the connection overview.
@@ -61,6 +68,24 @@ export function App() {
     ) {
       queryWorkspace.addTab(profile.id, "查询 1");
     }
+  }
+
+  /**
+   * Creates and activates a query bound to the explicitly selected MySQL connection.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: adds a persisted workspace tab without changing any existing tab context.
+   */
+  function handleCreateQuery(): void {
+    if (!newQueryProfile || queryWorkspace.loading || queryWorkspace.recoveryBlocked) {
+      return;
+    }
+    const queryNumber =
+      queryWorkspace.tabs.filter((tab) => tab.connectionId === newQueryProfile.id).length + 1;
+    queryWorkspace.addTab(
+      newQueryProfile.id,
+      `${newQueryProfile.name} · 查询 ${queryNumber}`,
+    );
   }
 
   /**
@@ -182,6 +207,8 @@ export function App() {
           ) : queryWorkspace.activeTab && activeQueryProfile?.engine === "my_sql" ? (
             <QueryWorkspace
               key={queryWorkspace.activeTab.id}
+              newQueryConnectionName={newQueryProfile?.name ?? null}
+              onCreateQuery={handleCreateQuery}
               onRetryPersistence={queryWorkspace.retrySave}
               onSelectTab={queryWorkspace.selectTab}
               onSqlChange={queryWorkspace.updateTabSql}

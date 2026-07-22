@@ -5,6 +5,7 @@ use pipa_core::{
     RecordQueryHistoryInput, SaveConnectionInput,
 };
 use pipa_store::{QueryHistoryEntry, WorkspaceTab as StoredWorkspaceTab};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tauri::{ipc::Channel, State};
@@ -137,9 +138,40 @@ fn save_mysql_connection_inner(
     state: &AppState,
     input: SaveConnectionInput,
 ) -> Result<ConnectionProfile, AppError> {
-    state.local_store.save_connection(&input.profile)?;
-    state.secret_store.set(input.profile.id, &input.password)?;
-    Ok(input.profile)
+    persist_mysql_connection(
+        input,
+        |connection_id, password| state.secret_store.set(connection_id, password),
+        |profile| state.local_store.save_connection(profile),
+        |connection_id| state.secret_store.delete(connection_id),
+    )
+}
+
+/// Saves one new connection across keyring and SQLite with compensating secret deletion.
+fn persist_mysql_connection(
+    input: SaveConnectionInput,
+    set_secret: impl FnOnce(Uuid, &SecretString) -> Result<(), AppError>,
+    save_profile: impl FnOnce(&ConnectionProfile) -> Result<(), AppError>,
+    delete_secret: impl FnOnce(Uuid) -> Result<(), AppError>,
+) -> Result<ConnectionProfile, AppError> {
+    let SaveConnectionInput { profile, password } = input;
+    let connection_id = profile.id;
+
+    set_secret(connection_id, &password)?;
+    if let Err(profile_error) = save_profile(&profile) {
+        if delete_secret(connection_id).is_err() {
+            return Err(AppError {
+                code: AppErrorCode::Storage,
+                message: "Could not save database connection securely".into(),
+                technical_details: Some(
+                    "credential rollback failed after profile persistence failure".into(),
+                ),
+                retryable: false,
+            });
+        }
+        return Err(profile_error);
+    }
+
+    Ok(profile)
 }
 
 /// Tests one supplied profile and password without persisting either value.
@@ -292,9 +324,9 @@ async fn forward_query_events(
 mod tests {
     use super::{
         cancel_query_inner, forward_query_events, list_connections_inner, load_workspace_inner,
-        record_query_history_inner, run_query_inner, save_mysql_connection_inner,
-        save_workspace_inner, test_mysql_connection_inner, WorkspaceTabPayload,
-        QUERY_EVENT_CHANNEL_CAPACITY,
+        persist_mysql_connection, record_query_history_inner, run_query_inner,
+        save_mysql_connection_inner, save_workspace_inner, test_mysql_connection_inner,
+        WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
     };
     use crate::state::AppState;
     use pipa_core::{
@@ -304,7 +336,7 @@ mod tests {
     use pipa_mysql::MySqlAdapter;
     use pipa_store::{LocalStore, SecretStore};
     use secrecy::{ExposeSecret, SecretString};
-    use std::{collections::HashMap, sync::Arc};
+    use std::{cell::Cell, cell::RefCell, collections::HashMap, sync::Arc};
     use tauri::ipc::{Channel, InvokeResponseBody};
     use tempfile::TempDir;
     use tokio::{sync::Mutex, time::timeout};
@@ -420,6 +452,66 @@ mod tests {
         assert!(!returned_json.contains("command-only-password"));
         let database_bytes = std::fs::read(directory.path().join("pipa.db")).unwrap();
         assert!(!String::from_utf8_lossy(&database_bytes).contains("command-only-password"));
+    }
+
+    /// Verifies a credential-write failure cannot make a profile visible in local storage.
+    #[test]
+    fn credential_failure_does_not_attempt_profile_write() {
+        let input = mysql_input("set-failure-password");
+        let profile_write_called = Cell::new(false);
+
+        let error = persist_mysql_connection(
+            input,
+            |_connection_id, _password| Err(secret_store_lock_error()),
+            |_profile| {
+                profile_write_called.set(true);
+                Ok(())
+            },
+            |_connection_id| Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error.code, AppErrorCode::Storage));
+        assert!(!profile_write_called.get());
+        assert!(!format!("{error:?}").contains("set-failure-password"));
+    }
+
+    /// Verifies profile failure removes the newly written credential and exposes no profile.
+    #[test]
+    fn profile_failure_rolls_back_new_credential() {
+        let input = mysql_input("rollback-password");
+        let connection_id = input.profile.id;
+        let secrets = RefCell::new(HashMap::<Uuid, SecretString>::new());
+        let visible_profiles = RefCell::new(Vec::<ConnectionProfile>::new());
+        let fail_profile_save = Cell::new(true);
+        let delete_called = Cell::new(false);
+
+        let error = persist_mysql_connection(
+            input,
+            |id, password| {
+                secrets.borrow_mut().insert(id, password.clone());
+                Ok(())
+            },
+            |profile| {
+                if fail_profile_save.get() {
+                    return Err(secret_store_lock_error());
+                }
+                visible_profiles.borrow_mut().push(profile.clone());
+                Ok(())
+            },
+            |id| {
+                delete_called.set(true);
+                secrets.borrow_mut().remove(&id);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error.code, AppErrorCode::Storage));
+        assert!(delete_called.get());
+        assert!(visible_profiles.borrow().is_empty());
+        assert!(!secrets.borrow().contains_key(&connection_id));
+        assert!(!format!("{error:?}").contains("rollback-password"));
     }
 
     /// Verifies the list command returns the profiles persisted by the local store.
