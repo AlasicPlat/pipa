@@ -1,5 +1,5 @@
 import { act, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
 import { QueryEditor } from "./QueryEditor";
 
@@ -130,6 +130,100 @@ async function assertNativeShortcutRegistrationAndCleanup(): Promise<void> {
 }
 
 /**
+ * Verifies repeated shortcuts from the same source are never treated as cross-source echoes.
+ * Parameters: none.
+ * @returns A promise that settles after both native-listener registrations complete.
+ * Side effects: mounts separate DOM and native editor instances and dispatches repeated shortcuts.
+ */
+async function assertSameSourceShortcutsAlwaysExecute(): Promise<void> {
+  vi.spyOn(performance, "now").mockReturnValue(1_000);
+  const domExecute = vi.fn();
+  const domEditor = render(
+    <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={domExecute} />,
+  );
+  for (let index = 0; index < 2; index += 1) {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "r",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+  expect(domExecute).toHaveBeenCalledTimes(2);
+  domEditor.unmount();
+
+  const nativeExecute = vi.fn();
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={nativeExecute} />);
+  await waitFor(() => expect(nativeEventState.handler).not.toBeNull());
+  act(() => {
+    nativeEventState.handler?.();
+    nativeEventState.handler?.();
+  });
+  expect(nativeExecute).toHaveBeenCalledTimes(2);
+}
+
+/**
+ * Verifies only opposite-source echoes inside the window are suppressed without chaining state.
+ * Parameters: none.
+ * @returns A promise that settles after native listener registration.
+ * Side effects: controls monotonic time and invokes DOM and native shortcut sources.
+ */
+async function assertCrossSourceEchoRules(): Promise<void> {
+  const now = vi.spyOn(performance, "now");
+  const onExecute = vi.fn();
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+  await waitFor(() => expect(nativeEventState.handler).not.toBeNull());
+
+  now.mockReturnValue(1_000);
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "r",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  now.mockReturnValue(1_100);
+  act(() => nativeEventState.handler?.());
+  now.mockReturnValue(1_200);
+  act(() => {
+    nativeEventState.handler?.();
+  });
+  expect(onExecute).toHaveBeenCalledTimes(1);
+
+  now.mockReturnValue(1_300);
+  act(() => nativeEventState.handler?.());
+  expect(onExecute).toHaveBeenCalledTimes(2);
+}
+
+/**
+ * Verifies native-to-DOM delivery is also deduplicated inside the echo window.
+ * Parameters: none.
+ * @returns A promise that settles after native listener registration.
+ * Side effects: invokes both shortcut sources against one editor instance.
+ */
+async function assertNativeThenDomEchoExecutesOnce(): Promise<void> {
+  vi.spyOn(performance, "now").mockReturnValue(2_000);
+  const onExecute = vi.fn();
+  render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
+  await waitFor(() => expect(nativeEventState.handler).not.toBeNull());
+
+  act(() => nativeEventState.handler?.());
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "r",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+
+  expect(onExecute).toHaveBeenCalledTimes(1);
+}
+
+/**
  * Verifies a listener that resolves after unmount is immediately disposed.
  * Parameters: none.
  * @returns A promise that settles after the delayed registration resolves.
@@ -234,8 +328,12 @@ function registerQueryEditorTests(): void {
     };
     monacoState.position = { lineNumber: 1, column: 8 };
   });
+  afterEach(() => vi.restoreAllMocks());
   it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
   it("executes one native shortcut and cleans up its listener", assertNativeShortcutRegistrationAndCleanup);
+  it("always executes repeated shortcuts from the same source", assertSameSourceShortcutsAlwaysExecute);
+  it("suppresses only cross-source echoes without updating state", assertCrossSourceEchoRules);
+  it("suppresses a native-to-DOM echo", assertNativeThenDomEchoExecutesOnce);
   it("disposes a native listener that resolves after unmount", assertPendingNativeListenerIsDisposed);
   it("ignores execute shortcuts with extra modifiers", assertModifiedShortcutsAreIgnored);
   it("executes the cursor statement without a selection", assertCapturedCursorExecution);
