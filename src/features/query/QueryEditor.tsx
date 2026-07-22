@@ -15,6 +15,12 @@ export interface QueryEditorHandle {
 }
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
+type ShortcutSource = "native" | "dom";
+
+interface ExecutedShortcut {
+  source: ShortcutSource;
+  timestamp: number;
+}
 
 const SHORTCUT_ECHO_WINDOW_MS = 250;
 
@@ -90,7 +96,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 ) {
   const theme = useMonacoTheme();
   const editorRef = useRef<MonacoEditorInstance | null>(null);
-  const lastShortcutExecutionAtRef = useRef<number | null>(null);
+  const lastExecutedShortcutRef = useRef<ExecutedShortcut | null>(null);
   const onExecuteRef = useRef(onExecute);
   onExecuteRef.current = onExecute;
 
@@ -103,20 +109,24 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 
   /**
    * Executes one native/DOM shortcut while suppressing an immediate echo from the other source.
-   * Parameters: none.
+   * @param source - Native menu or DOM keyboard source that delivered the shortcut.
    * @returns Nothing (`void`).
    * Side effects: records the shortcut time and executes the current editor scope once.
    */
-  const executeShortcutOnce = useCallback((): void => {
+  const executeShortcutOnce = useCallback((source: ShortcutSource): void => {
     if (!editorRef.current) {
       return;
     }
     const now = performance.now();
-    const lastExecutionAt = lastShortcutExecutionAtRef.current;
-    if (lastExecutionAt !== null && now - lastExecutionAt < SHORTCUT_ECHO_WINDOW_MS) {
+    const lastExecution = lastExecutedShortcutRef.current;
+    if (
+      lastExecution !== null &&
+      lastExecution.source !== source &&
+      now - lastExecution.timestamp < SHORTCUT_ECHO_WINDOW_MS
+    ) {
       return;
     }
-    lastShortcutExecutionAtRef.current = now;
+    lastExecutedShortcutRef.current = { source, timestamp: now };
     executeCurrent();
   }, [executeCurrent]);
 
@@ -139,7 +149,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
         return;
       }
       event.preventDefault();
-      executeShortcutOnce();
+      executeShortcutOnce("dom");
     }
 
     document.addEventListener("keydown", handleExecuteShortcut, true);
@@ -151,7 +161,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
     let unlisten: UnlistenFn | null = null;
 
     // Tauri registration is asynchronous, so late resolution must honor an earlier unmount.
-    void listen<void>(NATIVE_EXECUTE_QUERY_EVENT, executeShortcutOnce)
+    void listen<void>(NATIVE_EXECUTE_QUERY_EVENT, () => executeShortcutOnce("native"))
       .then((registeredUnlisten) => {
         if (disposed) {
           registeredUnlisten();
