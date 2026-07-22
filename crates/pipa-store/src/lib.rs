@@ -159,15 +159,19 @@ mod tests {
     fn connection_round_trip_excludes_password() {
         let (_directory, store) = test_store("correct horse battery staple");
         let profile = mysql_profile();
+        let password = SecretString::from("profile-roundtrip-test-password");
 
-        store.save_connection(&profile).unwrap();
+        store
+            .save_connection_with_credential(&profile, &password)
+            .unwrap();
 
         assert_eq!(
             serde_json::to_value(store.list_connections().unwrap()).unwrap(),
-            serde_json::to_value([profile]).unwrap()
+            serde_json::to_value([&profile]).unwrap()
         );
-        let bytes = std::fs::read(store.path()).unwrap();
-        assert!(!String::from_utf8_lossy(&bytes).contains("database-password"));
+        let profile_json = serde_json::to_string(&profile).unwrap();
+        assert!(!profile_json.contains("password"));
+        assert!(!profile_json.contains("profile-roundtrip-test-password"));
     }
 
     /// Verifies a connection credential round-trips while SQLCipher hides it on disk.
@@ -226,15 +230,26 @@ mod tests {
     fn saving_connection_upserts_existing_profile() {
         let (_directory, store) = test_store("upsert-key");
         let mut profile = mysql_profile();
-        store.save_connection(&profile).unwrap();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("initial-test-password"))
+            .unwrap();
         profile.name = "Renamed MySQL".into();
         profile.host = "db.internal".into();
 
-        store.save_connection(&profile).unwrap();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("updated-test-password"))
+            .unwrap();
 
         assert_eq!(
             serde_json::to_value(store.list_connections().unwrap()).unwrap(),
-            serde_json::to_value([profile]).unwrap()
+            serde_json::to_value([&profile]).unwrap()
+        );
+        assert_eq!(
+            store
+                .get_connection_credential(profile.id)
+                .unwrap()
+                .expose_secret(),
+            "updated-test-password"
         );
     }
 

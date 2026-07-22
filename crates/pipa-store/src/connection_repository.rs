@@ -7,21 +7,7 @@ use std::io;
 use uuid::Uuid;
 
 impl LocalStore {
-    /// Inserts or updates a non-secret connection profile.
-    pub fn save_connection(&self, profile: &ConnectionProfile) -> Result<(), AppError> {
-        let connection = self.connection()?;
-        upsert_connection(&connection, profile)
-            .map(|_| ())
-            .map_err(|error| {
-                storage_error(
-                    "Could not save database connection",
-                    "upsert connection profile",
-                    error,
-                )
-            })
-    }
-
-    /// Atomically inserts or updates a connection profile and its encrypted credential.
+    /// Atomically inserts or updates a connection profile and its SQLCipher-encrypted credential.
     pub fn save_connection_with_credential(
         &self,
         profile: &ConnectionProfile,
@@ -69,36 +55,6 @@ impl LocalStore {
                 error,
             )),
         }
-    }
-
-    /// Atomically imports legacy credentials for profiles already present in the main database.
-    pub fn import_connection_credentials(
-        &self,
-        credentials: &[(Uuid, SecretString)],
-    ) -> Result<(), AppError> {
-        let mut connection = self.connection()?;
-        let result = (|| -> rusqlite::Result<()> {
-            let transaction = connection.transaction()?;
-            {
-                let mut statement = transaction.prepare(
-                    "INSERT INTO connection_credentials (connection_id, password)
-                     VALUES (?1, ?2)
-                     ON CONFLICT(connection_id) DO UPDATE SET password = excluded.password",
-                )?;
-                for (connection_id, password) in credentials {
-                    statement.execute(params![connection_id, password.expose_secret()])?;
-                }
-            }
-            transaction.commit()
-        })();
-
-        result.map_err(|error| {
-            storage_error(
-                "Could not migrate database credentials",
-                "import encrypted connection credentials",
-                error,
-            )
-        })
     }
 
     /// Lists all saved non-secret connection profiles in deterministic name order.
