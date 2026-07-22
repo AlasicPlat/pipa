@@ -1,0 +1,14 @@
+[package]
+name = "pipa-redis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait.workspace = true
+pipa-core = { path = "../pipa-core" }
+secrecy.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

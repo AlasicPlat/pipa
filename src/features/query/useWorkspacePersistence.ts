@@ -16,6 +16,9 @@ interface WorkspacePersistenceController {
   saveError: string | null;
   recoveryBlocked: boolean;
   addTab: (connectionId: string, title: string) => WorkspaceTab | null;
+  closeTab: (tabId: string) => void;
+  closeTabsForConnection: (connectionId: string) => void;
+  renameConnectionTabTitles: (connectionId: string, previousName: string, nextName: string) => void;
   selectTab: (tabId: string) => void;
   updateTabSql: (tabId: string, sqlText: string) => void;
   retryLoad: () => Promise<void>;
@@ -266,6 +269,80 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
     [updateTabs],
   );
 
+  /**
+   * Removes one tab and keeps the nearest remaining tab active.
+   * @param tabId - Existing persisted workspace tab identifier.
+   * @returns Nothing (`void`).
+   * Side effects: updates in-memory tab state and schedules encrypted persistence.
+   */
+  const closeTab = useCallback(
+    (tabId: string): void => {
+      if (recoveryBlockedRef.current) {
+        return;
+      }
+      const closingIndex = tabsRef.current.findIndex((tab) => tab.id === tabId);
+      if (closingIndex === -1) {
+        return;
+      }
+      const nextTabs = tabsRef.current.filter((tab) => tab.id !== tabId);
+      updateTabs(nextTabs);
+      setActiveTabId((currentActiveTabId) => {
+        if (currentActiveTabId !== tabId) {
+          return currentActiveTabId;
+        }
+        return nextTabs[closingIndex]?.id ?? nextTabs[closingIndex - 1]?.id ?? null;
+      });
+    },
+    [updateTabs],
+  );
+
+  /**
+   * Removes every query tab bound to one deleted connection in one persisted revision.
+   * @param connectionId - Deleted connection whose query tabs can no longer execute.
+   * @returns Nothing (`void`).
+   * Side effects: updates active tab state and schedules encrypted workspace persistence.
+   */
+  const closeTabsForConnection = useCallback(
+    (connectionId: string): void => {
+      if (recoveryBlockedRef.current) {
+        return;
+      }
+      const currentTabs = tabsRef.current;
+      const nextTabs = currentTabs.filter((tab) => tab.connectionId !== connectionId);
+      if (nextTabs.length === currentTabs.length) {
+        return;
+      }
+      updateTabs(nextTabs);
+      setActiveTabId((currentActiveTabId) => {
+        const activeIndex = currentTabs.findIndex((tab) => tab.id === currentActiveTabId);
+        if (activeIndex === -1 || currentTabs[activeIndex]?.connectionId !== connectionId) {
+          return currentActiveTabId;
+        }
+        return nextTabs[Math.min(activeIndex, nextTabs.length - 1)]?.id ?? null;
+      });
+    },
+    [updateTabs],
+  );
+
+  /** Renames only generated query-title prefixes for one connection, preserving custom titles. */
+  const renameConnectionTabTitles = useCallback(
+    (connectionId: string, previousName: string, nextName: string): void => {
+      if (recoveryBlockedRef.current || previousName === nextName) {
+        return;
+      }
+      const previousPrefix = `${previousName} · `;
+      const nextTabs = tabsRef.current.map((tab) => (
+        tab.connectionId === connectionId && tab.title.startsWith(previousPrefix)
+          ? { ...tab, title: `${nextName} · ${tab.title.slice(previousPrefix.length)}` }
+          : tab
+      ));
+      if (nextTabs.some((tab, index) => tab !== tabsRef.current[index])) {
+        updateTabs(nextTabs);
+      }
+    },
+    [updateTabs],
+  );
+
   /** Selects an existing tab without changing its stored connection identifier. */
   const selectTab = useCallback((tabId: string): void => {
     if (tabsRef.current.some((tab) => tab.id === tabId)) {
@@ -301,6 +378,9 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
     saveError,
     recoveryBlocked,
     addTab,
+    closeTab,
+    closeTabsForConnection,
+    renameConnectionTabTitles,
     selectTab,
     updateTabSql,
     retryLoad: restoreWorkspace,

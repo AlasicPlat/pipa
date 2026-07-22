@@ -2,11 +2,18 @@ import { type FormEvent, useState } from "react";
 import { Database, LoaderCircle, ShieldCheck } from "lucide-react";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import type { Environment } from "../../bindings/Environment";
+import type { Engine } from "../../bindings/Engine";
 import type { SaveConnectionInput } from "../../bindings/SaveConnectionInput";
 import type { TlsMode } from "../../bindings/TlsMode";
-import { saveMySqlConnection, testMySqlConnection } from "../../lib/tauriClient";
+import {
+  saveMySqlConnection,
+  saveRedisConnection,
+  testMySqlConnection,
+  testRedisConnection,
+} from "../../lib/tauriClient";
 
 interface ConnectionFormProps {
+  engine: Extract<Engine, "my_sql" | "redis">;
   onSaved: (profile: ConnectionProfile) => void;
   onCancel: () => void;
 }
@@ -31,20 +38,21 @@ function getSubmissionErrorMessage(error: unknown): string {
 }
 
 /**
- * Renders the MySQL test-and-save flow while keeping the password in component state only.
- * @param props - Completion and cancellation callbacks owned by the workspace.
- * @returns The accessible MySQL connection form.
+ * Renders a MySQL or Redis test-and-save flow while keeping the password in memory only.
+ * @param props - Engine, completion, and cancellation callbacks owned by the workspace.
+ * @returns The accessible engine-specific connection form.
  * Side effects: tests and saves through typed Tauri commands after form submission.
  */
-export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
+export function ConnectionForm({ engine, onSaved, onCancel }: ConnectionFormProps) {
+  const isRedis = engine === "redis";
   const [name, setName] = useState("");
   const [host, setHost] = useState("127.0.0.1");
-  const [port, setPort] = useState("3306");
+  const [port, setPort] = useState(isRedis ? "6379" : "3306");
   const [username, setUsername] = useState("");
-  const [database, setDatabase] = useState("");
+  const [database, setDatabase] = useState(isRedis ? "0" : "");
   const [password, setPassword] = useState("");
   const [environment, setEnvironment] = useState<Environment>("unspecified");
-  const [tlsMode, setTlsMode] = useState<TlsMode>("preferred");
+  const [tlsMode, setTlsMode] = useState<TlsMode>(isRedis ? "disabled" : "preferred");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,7 +70,7 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
     const profile: ConnectionProfile = {
       id: crypto.randomUUID(),
       name: name.trim(),
-      engine: "my_sql",
+      engine,
       environment,
       host: host.trim(),
       port: Number(port),
@@ -73,8 +81,14 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
     const input: SaveConnectionInput = { profile, password };
 
     try {
-      await testMySqlConnection(input);
-      const savedProfile = await saveMySqlConnection(input);
+      if (isRedis) {
+        await testRedisConnection(input);
+      } else {
+        await testMySqlConnection(input);
+      }
+      const savedProfile = isRedis
+        ? await saveRedisConnection(input)
+        : await saveMySqlConnection(input);
       onSaved(savedProfile);
     } catch (submissionError: unknown) {
       setError(getSubmissionErrorMessage(submissionError));
@@ -91,8 +105,8 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
           <Database size={18} strokeWidth={1.8} />
         </span>
         <span>
-          <span className="eyebrow">MYSQL CONNECTION</span>
-          <h2 id="connection-form-title">添加 MySQL 连接</h2>
+          <span className="eyebrow">{isRedis ? "REDIS CONNECTION" : "MYSQL CONNECTION"}</span>
+          <h2 id="connection-form-title">添加 {isRedis ? "Redis" : "MySQL"} 连接</h2>
           <p>先验证连接，再将配置保存在本机。密码仅写入本机加密数据库。</p>
         </span>
       </header>
@@ -105,7 +119,7 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
               autoFocus
               maxLength={80}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如：订单生产库"
+              placeholder={isRedis ? "例如：本地缓存" : "例如：订单生产库"}
               required
               value={name}
             />
@@ -142,30 +156,34 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
               autoCapitalize="none"
               autoComplete="username"
               onChange={(event) => setUsername(event.target.value)}
-              required
+              required={!isRedis}
               spellCheck={false}
               value={username}
             />
           </label>
 
           <label className="field">
-            <span>密码</span>
+            <span>密码 {isRedis ? <small>可选</small> : null}</span>
             <input
               autoComplete="new-password"
               onChange={(event) => setPassword(event.target.value)}
-              required
+              required={!isRedis}
               type="password"
               value={password}
             />
           </label>
 
           <label className="field field--wide">
-            <span>默认数据库 <small>可选</small></span>
+            <span>{isRedis ? "数据库编号" : "默认数据库"} <small>{isRedis ? "0-15" : "可选"}</small></span>
             <input
-              aria-label="默认数据库"
+              aria-label={isRedis ? "数据库编号" : "默认数据库"}
               autoCapitalize="none"
               onChange={(event) => setDatabase(event.target.value)}
+              inputMode={isRedis ? "numeric" : undefined}
+              max={isRedis ? 15 : undefined}
+              min={isRedis ? 0 : undefined}
               spellCheck={false}
+              type={isRedis ? "number" : "text"}
               value={database}
             />
           </label>
@@ -184,10 +202,13 @@ export function ConnectionForm({ onSaved, onCancel }: ConnectionFormProps) {
 
           <label className="field">
             <span>TLS</span>
-            <select onChange={(event) => setTlsMode(event.target.value as TlsMode)} value={tlsMode}>
+            <select disabled={isRedis} onChange={(event) => setTlsMode(event.target.value as TlsMode)} value={tlsMode}>
+              {isRedis ? <option value="disabled">当前版本仅支持非 TLS Redis</option> : null}
+              {!isRedis ? <>
               <option value="preferred">优先</option>
               <option value="required">必须</option>
               <option value="disabled">关闭</option>
+              </> : null}
             </select>
           </label>
         </div>

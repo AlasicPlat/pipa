@@ -1,7 +1,7 @@
 use crate::{storage_error, LocalStore};
 use chrono::{SecondsFormat, Utc};
 use pipa_core::{AppError, AppErrorCode, ConnectionProfile, Engine, Environment, TlsMode};
-use rusqlite::{params, types::Type, Connection, Error as SqlError};
+use rusqlite::{params, types::Type, Connection, Error as SqlError, Row};
 use secrecy::{ExposeSecret, SecretString};
 use std::io;
 use uuid::Uuid;
@@ -33,6 +33,94 @@ impl LocalStore {
                 error,
             )
         })
+    }
+
+    /// Atomically removes a connection, its credential, workspace tabs, and query history.
+    pub fn delete_connection(&self, connection_id: Uuid) -> Result<(), AppError> {
+        let mut connection = self.connection()?;
+        let result = (|| -> rusqlite::Result<()> {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "DELETE FROM workspace_tabs WHERE connection_id = ?1",
+                [connection_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM query_history WHERE connection_id = ?1",
+                [connection_id],
+            )?;
+            transaction.execute("DELETE FROM connections WHERE id = ?1", [connection_id])?;
+            transaction.commit()
+        })();
+
+        result.map_err(|error| {
+            storage_error(
+                "Could not delete database connection",
+                "delete connection and related local data transaction",
+                error,
+            )
+        })
+    }
+
+    /// Renames one saved connection without reading or replacing its encrypted credential.
+    pub fn rename_connection(
+        &self,
+        connection_id: Uuid,
+        name: &str,
+    ) -> Result<ConnectionProfile, AppError> {
+        let mut connection = self.connection()?;
+        let result = (|| -> rusqlite::Result<Option<ConnectionProfile>> {
+            let transaction = connection.transaction()?;
+            let changed = transaction.execute(
+                "UPDATE connections SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    name,
+                    Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
+                    connection_id
+                ],
+            )?;
+            let profile = if changed == 0 {
+                None
+            } else {
+                Some(transaction.query_row(
+                    "SELECT id, engine, name, environment, host, port, username, database_name,
+                            tls_mode
+                     FROM connections
+                     WHERE id = ?1",
+                    [connection_id],
+                    connection_profile_from_row,
+                )?)
+            };
+            transaction.commit()?;
+            Ok(profile)
+        })()
+        .map_err(|error| {
+            storage_error(
+                "Could not rename database connection",
+                "rename connection profile transaction",
+                error,
+            )
+        })?;
+
+        result.ok_or_else(connection_not_found_error)
+    }
+
+    /// Loads one saved non-secret connection profile by its stable identifier.
+    pub fn get_connection(&self, connection_id: Uuid) -> Result<ConnectionProfile, AppError> {
+        match self.connection()?.query_row(
+            "SELECT id, engine, name, environment, host, port, username, database_name, tls_mode
+             FROM connections
+             WHERE id = ?1",
+            [connection_id],
+            connection_profile_from_row,
+        ) {
+            Ok(profile) => Ok(profile),
+            Err(SqlError::QueryReturnedNoRows) => Err(connection_not_found_error()),
+            Err(error) => Err(storage_error(
+                "Could not read database connection",
+                "read connection profile",
+                error,
+            )),
+        }
     }
 
     /// Loads one database credential from the SQLCipher-encrypted main database.
@@ -75,22 +163,7 @@ impl LocalStore {
                 )
             })?;
         let profiles = statement
-            .query_map([], |row| {
-                Ok(ConnectionProfile {
-                    id: row.get(0)?,
-                    engine: parse_engine(row.get::<_, String>(1)?)
-                        .map_err(|value| invalid_value_error(1, "engine", value))?,
-                    name: row.get(2)?,
-                    environment: parse_environment(row.get::<_, String>(3)?)
-                        .map_err(|value| invalid_value_error(3, "environment", value))?,
-                    host: row.get(4)?,
-                    port: row.get(5)?,
-                    username: row.get(6)?,
-                    database: row.get(7)?,
-                    tls_mode: parse_tls_mode(row.get::<_, String>(8)?)
-                        .map_err(|value| invalid_value_error(8, "TLS mode", value))?,
-                })
-            })
+            .query_map([], connection_profile_from_row)
             .and_then(Iterator::collect)
             .map_err(|error| {
                 storage_error(
@@ -101,6 +174,34 @@ impl LocalStore {
             })?;
 
         Ok(profiles)
+    }
+}
+
+/// Maps one persisted profile row while preserving stable enum validation errors.
+fn connection_profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
+    Ok(ConnectionProfile {
+        id: row.get(0)?,
+        engine: parse_engine(row.get::<_, String>(1)?)
+            .map_err(|value| invalid_value_error(1, "engine", value))?,
+        name: row.get(2)?,
+        environment: parse_environment(row.get::<_, String>(3)?)
+            .map_err(|value| invalid_value_error(3, "environment", value))?,
+        host: row.get(4)?,
+        port: row.get(5)?,
+        username: row.get(6)?,
+        database: row.get(7)?,
+        tls_mode: parse_tls_mode(row.get::<_, String>(8)?)
+            .map_err(|value| invalid_value_error(8, "TLS mode", value))?,
+    })
+}
+
+/// Builds the stable error returned when a saved connection identifier does not exist.
+fn connection_not_found_error() -> AppError {
+    AppError {
+        code: AppErrorCode::NotFound,
+        message: "Database connection was not found".into(),
+        technical_details: None,
+        retryable: false,
     }
 }
 

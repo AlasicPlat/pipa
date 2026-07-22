@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pipa-core", "crates/pipa-mysql", "crates/pipa-store", "src-tauri"]
+members = ["crates/pipa-core", "crates/pipa-mysql", "crates/pipa-redis", "crates/pipa-store", "src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -18,9 +18,10 @@ sqlx-core = { version = "=0.9.0", default-features = false, features = ["_rt-tok
 sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["rsa", "chrono", "bigdecimal", "json", "uuid"] }
 tauri = "2.11.5"
 tauri-build = "2.6.3"
+tauri-plugin-clipboard-manager = "2.3.2"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 ts-rs = { version = "12.0.1", features = ["uuid-impl", "serde-json-impl"] }
 uuid = { version = "1.23.4", features = ["v4", "serde"] }

@@ -1,13 +1,16 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
+import { matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import type { ResolvedTheme } from "../preferences/theme";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
   sql: string;
   onSqlChange: (sql: string) => void;
   onExecute: (sql: string) => void;
+  theme?: ResolvedTheme;
 }
 
 export interface QueryEditorHandle {
@@ -25,29 +28,18 @@ interface ExecutedShortcut {
 const SHORTCUT_ECHO_WINDOW_MS = 250;
 
 /**
- * Tracks the operating-system color preference for Monaco without owning application theme state.
- * Parameters: none.
- * @returns Monaco's matching built-in light or dark theme name.
- * Side effects: subscribes to the system color-scheme media query while mounted.
+ * Returns whether a keyboard event requests selection-first SQL execution.
+ * @param event - Captured browser keyboard event.
+ * @returns `true` when the event matches the current configured execution binding.
+ * Side effects: none.
  */
-function useMonacoTheme(): "vs" | "vs-dark" {
-  const [theme, setTheme] = useState<"vs" | "vs-dark">(() =>
-    typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "vs-dark"
-      : "vs",
-  );
+function isExecuteShortcut(event: KeyboardEvent, binding: string): boolean {
+  return matchesShortcut(event, binding);
+}
 
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") {
-      return undefined;
-    }
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const updateTheme = () => setTheme(media.matches ? "vs-dark" : "vs");
-    media.addEventListener("change", updateTheme);
-    return () => media.removeEventListener("change", updateTheme);
-  }, []);
-
-  return theme;
+/** Returns whether the SQL-editor-only select-all shortcut was pressed. */
+function isSelectCurrentSqlShortcut(event: KeyboardEvent, binding: string): boolean {
+  return matchesShortcut(event, binding);
 }
 
 /**
@@ -91,10 +83,10 @@ function executeEditorScope(editor: MonacoEditorInstance, onExecute: (sql: strin
  * Side effects: registers one temporary document shortcut and the shared toolbar execute handle.
  */
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function QueryEditor(
-  { sql, onSqlChange, onExecute },
+  { sql, onSqlChange, onExecute, theme = "light" },
   forwardedRef,
 ) {
-  const theme = useMonacoTheme();
+  const shortcuts = useShortcutSettings();
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const lastExecutedShortcutRef = useRef<ExecutedShortcut | null>(null);
   const onExecuteRef = useRef(onExecute);
@@ -114,7 +106,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
    * Side effects: records the shortcut time and executes the current editor scope once.
    */
   const executeShortcutOnce = useCallback((source: ShortcutSource): void => {
-    if (!editorRef.current) {
+    if (!editorRef.current || document.querySelector("[aria-modal='true']")) {
       return;
     }
     const now = performance.now();
@@ -138,14 +130,26 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
   }, []);
 
   useEffect(() => {
-    /** Executes the product shortcut directly before the WebView or Monaco can consume it. */
+    /** Executes configured SQL actions before the WebView can consume their key events. */
     function handleExecuteShortcut(event: KeyboardEvent): void {
-      const isExecuteShortcut =
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "r";
-      if (!isExecuteShortcut) {
+      if (document.querySelector("[aria-modal='true']")) {
+        return;
+      }
+      if (isSelectCurrentSqlShortcut(event, shortcuts.bindings.selectSql) && editorRef.current?.hasTextFocus()) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          event.preventDefault();
+          editorRef.current.setSelection(model.getFullModelRange());
+          editorRef.current.focus();
+        }
+        return;
+      }
+      if (matchesShortcut(event, shortcuts.bindings.find) && editorRef.current?.hasTextFocus()) {
+        event.preventDefault();
+        void editorRef.current.getAction("actions.find")?.run();
+        return;
+      }
+      if (!isExecuteShortcut(event, shortcuts.bindings.executeQuery)) {
         return;
       }
       event.preventDefault();
@@ -154,7 +158,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 
     document.addEventListener("keydown", handleExecuteShortcut, true);
     return () => document.removeEventListener("keydown", handleExecuteShortcut, true);
-  }, [executeShortcutOnce]);
+  }, [executeShortcutOnce, shortcuts.bindings.executeQuery, shortcuts.bindings.find, shortcuts.bindings.selectSql]);
 
   useEffect(() => {
     let disposed = false;
@@ -203,7 +207,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
           scrollBeyondLastLine: false,
           tabSize: 2,
         }}
-        theme={theme}
+        theme={theme === "dark" ? "vs-dark" : "vs"}
         value={sql}
       />
     </div>

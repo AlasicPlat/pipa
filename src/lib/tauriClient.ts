@@ -13,6 +13,16 @@ export interface WorkspaceTabPayload {
 }
 
 /**
+ * Keeps the native desktop execute-query menu aligned with the configured web shortcut.
+ * @param accelerator - Valid Tauri menu accelerator such as `CmdOrCtrl+Enter`.
+ * @returns A promise that resolves after the operating-system menu is updated.
+ * Side effects: invokes the Tauri `set_execute_query_accelerator` command.
+ */
+export function setExecuteQueryAccelerator(accelerator: string): Promise<void> {
+  return invoke<void>("set_execute_query_accelerator", { accelerator });
+}
+
+/**
  * Loads every saved non-secret connection profile from the local desktop backend.
  * Parameters: none.
  * @returns A promise containing the saved connection profiles.
@@ -20,6 +30,40 @@ export interface WorkspaceTabPayload {
  */
 export function listConnections(): Promise<ConnectionProfile[]> {
   return invoke<ConnectionProfile[]>("list_connections");
+}
+
+/**
+ * Permanently deletes one connection and its related encrypted local data.
+ * @param connectionId - Stable identifier of the connection to remove.
+ * @returns A promise that resolves after the idempotent delete transaction commits.
+ * Side effects: invokes the Tauri `delete_connection` command.
+ */
+export function deleteConnection(connectionId: string): Promise<void> {
+  return invoke<void>("delete_connection", { connectionId });
+}
+
+/**
+ * Renames one saved connection while leaving its encrypted credential untouched.
+ * @param connectionId - Stable identifier of the connection to rename.
+ * @param name - User-visible name; the backend trims and validates it.
+ * @returns A promise containing the renamed non-secret profile.
+ * Side effects: invokes the Tauri `rename_connection` command.
+ */
+export function renameConnection(
+  connectionId: string,
+  name: string,
+): Promise<ConnectionProfile> {
+  return invoke<ConnectionProfile>("rename_connection", { connectionId, name });
+}
+
+/**
+ * Re-tests one saved connection with its credential read only by the desktop backend.
+ * @param connectionId - Stable identifier of the connection to test again.
+ * @returns A promise that resolves when the existing profile is reachable.
+ * Side effects: invokes the Tauri `reconnect_connection` command without receiving a password.
+ */
+export function reconnectConnection(connectionId: string): Promise<void> {
+  return invoke<void>("reconnect_connection", { connectionId });
 }
 
 /**
@@ -40,6 +84,16 @@ export function testMySqlConnection(input: SaveConnectionInput): Promise<void> {
  */
 export function saveMySqlConnection(input: SaveConnectionInput): Promise<ConnectionProfile> {
   return invoke<ConnectionProfile>("save_mysql_connection", { input });
+}
+
+/** Tests a Redis profile and ephemeral password without persisting either value. */
+export function testRedisConnection(input: SaveConnectionInput): Promise<void> {
+  return invoke<void>("test_redis_connection", { input });
+}
+
+/** Saves one backend-confirmed Redis profile and its encrypted local credential. */
+export function saveRedisConnection(input: SaveConnectionInput): Promise<ConnectionProfile> {
+  return invoke<ConnectionProfile>("save_redis_connection", { input });
 }
 
 /**

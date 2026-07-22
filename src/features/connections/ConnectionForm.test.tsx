@@ -1,12 +1,19 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
-import { saveMySqlConnection, testMySqlConnection } from "../../lib/tauriClient";
+import {
+  saveMySqlConnection,
+  saveRedisConnection,
+  testMySqlConnection,
+  testRedisConnection,
+} from "../../lib/tauriClient";
 import { ConnectionForm } from "./ConnectionForm";
 
 vi.mock("../../lib/tauriClient", () => ({
   saveMySqlConnection: vi.fn(),
+  saveRedisConnection: vi.fn(),
   testMySqlConnection: vi.fn(),
+  testRedisConnection: vi.fn(),
 }));
 
 /**
@@ -42,7 +49,7 @@ async function assertTestThenSaveFlow(): Promise<void> {
   });
   const onSaved = vi.fn();
 
-  render(<ConnectionForm onSaved={onSaved} onCancel={vi.fn()} />);
+  render(<ConnectionForm engine="my_sql" onSaved={onSaved} onCancel={vi.fn()} />);
   expect(screen.getByText(/密码仅写入本机加密数据库/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: savedProfile.name } });
   fireEvent.change(screen.getByLabelText("主机"), { target: { value: savedProfile.host } });
@@ -96,7 +103,7 @@ async function assertFailedTestClearsPassword(): Promise<void> {
     tlsMode: "preferred",
   });
 
-  render(<ConnectionForm onSaved={vi.fn()} onCancel={vi.fn()} />);
+  render(<ConnectionForm engine="my_sql" onSaved={vi.fn()} onCancel={vi.fn()} />);
   fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: "拒绝连接" } });
   fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "root" } });
   fireEvent.change(screen.getByLabelText("密码"), { target: { value: "temporary-password" } });
@@ -105,6 +112,41 @@ async function assertFailedTestClearsPassword(): Promise<void> {
   expect(await screen.findByRole("alert")).toHaveTextContent("连接被拒绝");
   expect(saveMySqlConnection).not.toHaveBeenCalled();
   expect(screen.getByLabelText("密码")).toHaveValue("");
+}
+
+/** Verifies Redis uses its engine defaults and supports passwordless local instances. */
+async function assertRedisTestThenSaveFlow(): Promise<void> {
+  const savedProfile: ConnectionProfile = {
+    id: "ba4a3230-36cb-4f39-aa4d-48be04c202b8",
+    name: "本地缓存",
+    engine: "redis",
+    environment: "development",
+    host: "127.0.0.1",
+    port: 6379,
+    username: "",
+    database: "0",
+    tlsMode: "disabled",
+  };
+  vi.mocked(testRedisConnection).mockResolvedValue();
+  vi.mocked(saveRedisConnection).mockResolvedValue(savedProfile);
+  const onSaved = vi.fn();
+
+  render(<ConnectionForm engine="redis" onSaved={onSaved} onCancel={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: savedProfile.name } });
+  fireEvent.change(screen.getByLabelText("环境"), { target: { value: "development" } });
+  fireEvent.click(screen.getByRole("button", { name: "测试并保存" }));
+
+  await waitFor(() => expect(onSaved).toHaveBeenCalledWith(savedProfile));
+  expect(testRedisConnection).toHaveBeenCalledWith(expect.objectContaining({
+    profile: expect.objectContaining({
+      engine: "redis",
+      port: 6379,
+      database: "0",
+      tlsMode: "disabled",
+    }),
+    password: "",
+  }));
+  expect(saveRedisConnection).toHaveBeenCalledTimes(1);
 }
 
 /**
@@ -118,6 +160,7 @@ function registerConnectionFormTests(): void {
   afterEach(cleanup);
   it("tests before saving and clears its ephemeral password", assertTestThenSaveFlow);
   it("clears its password when connection testing fails", assertFailedTestClearsPassword);
+  it("tests and saves a passwordless Redis connection", assertRedisTestThenSaveFlow);
 }
 
 describe("ConnectionForm", registerConnectionFormTests);

@@ -1,0 +1,83 @@
+.theme-toggle {
+  position: relative;
+}
+
+.theme-toggle__button {
+  white-space: nowrap;
+}
+
+.theme-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 232px;
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  box-shadow: 0 14px 34px color-mix(in srgb, #000000 24%, transparent);
+}
+
+.theme-menu__heading {
+  padding: 5px 7px 6px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 740;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.theme-menu .theme-menu__option {
+  display: grid;
+  width: 100%;
+  min-height: 42px;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.theme-menu .theme-menu__option:hover,
+.theme-menu .theme-menu__option:focus-visible {
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.theme-menu .theme-menu__option:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
+}
+
+.theme-menu__copy {
+  display: grid;
+  min-width: 0;
+}
+
+.theme-menu__label {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.4;
+}
+
+.theme-menu__description {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-menu__check {
+  color: var(--focus-ring);
+}

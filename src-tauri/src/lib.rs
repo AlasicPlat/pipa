@@ -14,7 +14,7 @@ const EXECUTE_QUERY_MENU_ID: &str = "pipa.execute-query";
 #[cfg(any(target_os = "macos", test))]
 const EXECUTE_QUERY_EVENT: &str = "pipa://execute-query";
 #[cfg(any(target_os = "macos", test))]
-const EXECUTE_QUERY_ACCELERATOR: &str = "CmdOrCtrl+R";
+const EXECUTE_QUERY_ACCELERATOR: &str = "CmdOrCtrl+Enter";
 /// Tauri's default macOS menu places View at index 3 and Window/Help after it.
 #[cfg(any(target_os = "macos", test))]
 const QUERY_MENU_INSERTION_INDEX_AFTER_VIEW: usize = 4;
@@ -32,6 +32,35 @@ const QUERY_MENU_INSERTION_INDEX_AFTER_VIEW: usize = 4;
 #[cfg(any(target_os = "macos", test))]
 fn is_execute_query_menu(menu_id: &str) -> bool {
     menu_id == EXECUTE_QUERY_MENU_ID
+}
+
+/// Synchronizes the native macOS query-menu accelerator with the frontend preference.
+///
+/// # Parameters
+/// `app` is the active Tauri application handle and `accelerator` uses Tauri menu syntax.
+///
+/// # Returns
+/// Returns `Ok(())` after the menu item is updated, or a contextual error string.
+///
+/// # Side effects
+/// Replaces the operating-system accelerator attached to the execute-query menu item on macOS.
+#[tauri::command]
+fn set_execute_query_accelerator(app: tauri::AppHandle, accelerator: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let menu = app
+            .menu()
+            .ok_or_else(|| "Pipa native application menu is unavailable".to_owned())?;
+        let item = menu
+            .get(EXECUTE_QUERY_MENU_ID)
+            .and_then(|item| item.as_menuitem().cloned())
+            .ok_or_else(|| "Pipa execute-query menu item is unavailable".to_owned())?;
+        item.set_accelerator(Some(accelerator.trim()))
+            .map_err(|error| format!("Pipa execute-query accelerator update failed: {error}"))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, accelerator);
+    Ok(())
 }
 
 /// Starts the Pipa desktop application and owns the Tauri runtime lifecycle.
@@ -80,15 +109,22 @@ pub fn run() {
         });
 
     builder
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             app.manage(state::AppState::initialize(&app_data_dir)?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_execute_query_accelerator,
             commands::list_connections,
+            commands::delete_connection,
+            commands::rename_connection,
+            commands::reconnect_connection,
             commands::save_mysql_connection,
             commands::test_mysql_connection,
+            commands::save_redis_connection,
+            commands::test_redis_connection,
             commands::run_query,
             commands::cancel_query,
             commands::load_workspace,
@@ -111,7 +147,7 @@ mod tests {
     fn native_execute_query_contract_is_stable() {
         assert_eq!(EXECUTE_QUERY_MENU_ID, "pipa.execute-query");
         assert_eq!(EXECUTE_QUERY_EVENT, "pipa://execute-query");
-        assert_eq!(EXECUTE_QUERY_ACCELERATOR, "CmdOrCtrl+R");
+        assert_eq!(EXECUTE_QUERY_ACCELERATOR, "CmdOrCtrl+Enter");
         assert_eq!(QUERY_MENU_INSERTION_INDEX_AFTER_VIEW, 4);
         assert!(is_execute_query_menu(EXECUTE_QUERY_MENU_ID));
         assert!(!is_execute_query_menu("pipa.new-query"));

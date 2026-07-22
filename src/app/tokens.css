@@ -1,25 +1,64 @@
-:root {
-  color-scheme: light dark;
-  --surface-canvas: #f4f5f7;
-  --surface-panel: #ffffff;
-  --surface-muted: #e8eaed;
-  --text-primary: #202124;
-  --text-secondary: #5f6368;
-  --focus-ring: #1a73e8;
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface-canvas: #f3f4f6;
+  --surface-panel: #fbfbfc;
+  --surface-muted: #f6f7f8;
+  --surface-raised: #ffffff;
+  --surface-hover: #eef1f4;
+  --surface-selected: #e8f1f7;
+  --text-primary: #24272b;
+  --text-secondary: #606870;
+  --text-tertiary: #858c94;
+  --border-subtle: #e1e3e6;
+  --border-strong: #c9cdd2;
+  --focus-ring: #2879ad;
   --space-1: 8px;
-  --accent-mysql: #4479a1;
-  --accent-postgresql: #336791;
-  --accent-mongodb: #47a248;
-  --accent-redis: #dc382d;
+  --accent-mysql: #337ca6;
+  --accent-postgresql: #356f9c;
+  --accent-mongodb: #3d9145;
+  --accent-redis: #cf3e35;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-canvas: #151719;
+  --surface-panel: #1d1f22;
+  --surface-muted: #292c30;
+  --surface-raised: #24272a;
+  --surface-hover: #30343a;
+  --surface-selected: #213747;
+  --text-primary: #eef1f4;
+  --text-secondary: #afb6be;
+  --text-tertiary: #858e98;
+  --border-subtle: #35393e;
+  --border-strong: #4b5158;
+  --focus-ring: #78b7f4;
+  --accent-mysql: #67a6cf;
+  --accent-postgresql: #6e9fcb;
+  --accent-mongodb: #62b46c;
+  --accent-redis: #f06c63;
+}
+
+/* Preserve the system preference before the startup script has resolved it. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --surface-canvas: #18191b;
-    --surface-panel: #222326;
-    --surface-muted: #303136;
-    --text-primary: #f1f3f4;
-    --text-secondary: #bdc1c6;
-    --focus-ring: #8ab4f8;
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --surface-canvas: #151719;
+    --surface-panel: #1d1f22;
+    --surface-muted: #292c30;
+    --surface-raised: #24272a;
+    --surface-hover: #30343a;
+    --surface-selected: #213747;
+    --text-primary: #eef1f4;
+    --text-secondary: #afb6be;
+    --text-tertiary: #858e98;
+    --border-subtle: #35393e;
+    --border-strong: #4b5158;
+    --focus-ring: #78b7f4;
+    --accent-mysql: #67a6cf;
+    --accent-postgresql: #6e9fcb;
+    --accent-mongodb: #62b46c;
+    --accent-redis: #f06c63;
   }
 }
