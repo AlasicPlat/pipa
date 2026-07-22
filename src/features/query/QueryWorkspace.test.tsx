@@ -231,12 +231,31 @@ function assertLayeredQueryError(): void {
   expect(screen.getByText("请检查网络和连接状态，然后重试。")).toBeVisible();
 }
 
+/** Verifies an empty canceled query has a terminal state without changing the initial empty copy. */
+function assertCanceledEmptyQueryState(): void {
+  sessionController.state.running = false;
+  sessionController.state.incomplete = true;
+  const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+
+  expect(screen.getByText("查询已取消")).toBeVisible();
+  expect(screen.queryByText("执行查询后，结果会显示在这里。")).not.toBeInTheDocument();
+
+  sessionController.state.incomplete = false;
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  expect(screen.getByText("执行查询后，结果会显示在这里。")).toBeVisible();
+  expect(screen.queryByText("查询已取消")).not.toBeInTheDocument();
+}
+
 /** Registers loading and toolbar scope regression tests. */
 function registerQueryWorkspaceTests(): void {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionController.state.running = true;
     sessionController.state.cancelRequested = true;
+    sessionController.state.incomplete = false;
+    sessionController.state.columns = [];
+    sessionController.state.rows = [];
+    sessionController.state.affectedRows = null;
     sessionController.state.error = null;
     monacoState.sql = "select 1;\nselect 2;";
     monacoState.position = { lineNumber: 2, column: 4 };
@@ -248,6 +267,7 @@ function registerQueryWorkspaceTests(): void {
   it("does not start a second query from the shortcut while running", assertRunningSessionIgnoresExecuteShortcut);
   it("creates a query through one guarded button and shortcut path", assertNewQueryControlsShareRunningGuard);
   it("shows actionable query errors with closed diagnostic details", assertLayeredQueryError);
+  it("shows a terminal state for an empty canceled query", assertCanceledEmptyQueryState);
 }
 
 describe("QueryWorkspace", registerQueryWorkspaceTests);
