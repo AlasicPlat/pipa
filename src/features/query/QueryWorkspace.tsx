@@ -1,11 +1,13 @@
-import { Play, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Copy, Download, Play, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { ResolvedTheme } from "../preferences/theme";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
+import { downloadCsv, serializeResultAsCsv, serializeResultAsTsv } from "./resultExport";
 import { useQuerySession } from "./useQuerySession";
 import type { WorkspaceTab } from "./useWorkspacePersistence";
 
@@ -86,6 +88,8 @@ export function QueryWorkspace({
   const shortcuts = useShortcutSettings();
   const session = useQuerySession(profile.id);
   const queryEditorRef = useRef<QueryEditorHandle>(null);
+  const [resultActionFeedback, setResultActionFeedback] = useState<string | null>(null);
+  const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.
@@ -148,6 +152,54 @@ export function QueryWorkspace({
     void onRetryPersistence();
   }
 
+  /**
+   * Copies every loaded result row to the system clipboard as TSV with headers.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: writes clipboard text through the Tauri clipboard plugin.
+   */
+  function handleCopyAllResults(): void {
+    if (!hasResultRows) {
+      return;
+    }
+    const tsv = serializeResultAsTsv(session.state.columns, session.state.rows);
+    void writeText(tsv)
+      .then(() => {
+        setResultActionFeedback(`已复制 ${session.state.rows.length} 行`);
+      })
+      .catch((error: unknown) => {
+        console.error(
+          "Pipa failed to copy query results",
+          error instanceof Error ? error.message : "unknown clipboard error",
+        );
+        setResultActionFeedback("复制失败");
+      });
+  }
+
+  /**
+   * Downloads every loaded result row as a CSV file.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: triggers a local CSV download in the desktop webview.
+   */
+  function handleExportCsv(): void {
+    if (!hasResultRows) {
+      return;
+    }
+    const csv = serializeResultAsCsv(session.state.columns, session.state.rows);
+    const safeTitle = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
+    downloadCsv(csv, `${safeTitle}-results.csv`);
+    setResultActionFeedback(`已导出 ${session.state.rows.length} 行`);
+  }
+
+  useEffect(() => {
+    if (!resultActionFeedback) {
+      return;
+    }
+    const timer = window.setTimeout(() => setResultActionFeedback(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [resultActionFeedback]);
+
   return (
     <section className="query-workspace" aria-label={`${profile.name} 查询工作区`}>
       <header className="query-context">
@@ -195,23 +247,52 @@ export function QueryWorkspace({
 
       <section className="query-results" aria-label="结果区域">
         <header className="query-results__header">
-          <span>结果</span>
-          {session.state.running ? (
-            <span className="query-loading" role="status">
-              <span className="loading-spinner" aria-hidden="true" />
-              查询中…
-              <button
-                disabled={session.state.cancelRequested}
-                onClick={handleCancel}
-                title={`取消当前查询（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
-                type="button"
-              >
-                <X size={12} aria-hidden="true" />
-                取消
-                <kbd>{getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}</kbd>
-              </button>
-            </span>
-          ) : null}
+          <span>
+            结果
+            {session.state.rows.length > 0 ? ` · ${session.state.rows.length} 行` : ""}
+            {session.state.incomplete ? " · 不完整" : ""}
+          </span>
+          <span className="query-results__actions">
+            {resultActionFeedback ? (
+              <span className="query-results__feedback" role="status">{resultActionFeedback}</span>
+            ) : null}
+            {hasResultRows ? (
+              <>
+                <button
+                  onClick={handleCopyAllResults}
+                  title="复制全部结果（含表头，TSV）"
+                  type="button"
+                >
+                  <Copy size={12} aria-hidden="true" />
+                  复制全部
+                </button>
+                <button
+                  onClick={handleExportCsv}
+                  title="导出全部结果为 CSV"
+                  type="button"
+                >
+                  <Download size={12} aria-hidden="true" />
+                  导出 CSV
+                </button>
+              </>
+            ) : null}
+            {session.state.running ? (
+              <span className="query-loading" role="status">
+                <span className="loading-spinner" aria-hidden="true" />
+                查询中…
+                <button
+                  disabled={session.state.cancelRequested}
+                  onClick={handleCancel}
+                  title={`取消当前查询（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
+                  type="button"
+                >
+                  <X size={12} aria-hidden="true" />
+                  取消
+                  <kbd>{getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}</kbd>
+                </button>
+              </span>
+            ) : null}
+          </span>
         </header>
 
         {session.state.error && !session.state.running ? (
@@ -234,6 +315,7 @@ export function QueryWorkspace({
             rows={session.state.rows}
             running={session.state.running}
             incomplete={session.state.incomplete}
+            onCopyAll={handleCopyAllResults}
           />
         ) : null}
 

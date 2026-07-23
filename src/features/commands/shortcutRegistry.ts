@@ -5,6 +5,7 @@ export type ShortcutScope = "global" | "workspace" | "sql" | "contextual" | "tab
 export type ShortcutActionId =
   | "commandPalette"
   | "shortcutHelp"
+  | "toggleSidebar"
   | "newQuery"
   | "closeWorkspace"
   | "nextWorkspace"
@@ -74,6 +75,15 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     searchTerms: ["设置", "keyboard", "hotkey"],
   },
   {
+    id: "toggleSidebar",
+    scope: "global",
+    group: "workspace",
+    action: "切换连接侧边栏",
+    description: "收起或展开左侧连接导航，写作时腾出工作区",
+    defaultBinding: "Mod+B",
+    searchTerms: ["收起", "展开", "sidebar", "panel"],
+  },
+  {
     id: "newQuery",
     scope: "workspace",
     group: "workspace",
@@ -111,7 +121,7 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     group: "sql",
     action: "执行 SQL",
     description: "执行选中 SQL；无选区时执行当前语句",
-    defaultBinding: "Mod+Enter",
+    defaultBinding: "Mod+R",
   },
   {
     id: "cancelQuery",

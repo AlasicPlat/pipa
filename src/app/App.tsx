@@ -14,11 +14,13 @@ import {
   type ShortcutActionId,
   useShortcutSettings,
 } from "../features/commands/shortcutRegistry";
+import { handleScopedSelectAll } from "../features/commands/scopedSelectAll";
 import { ConnectionForm } from "../features/connections/ConnectionForm";
 import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { ConnectionTypePicker } from "../features/connections/ConnectionTypePicker";
 import { useConnections } from "../features/connections/useConnections";
 import { ThemeToggle } from "../features/preferences/ThemeToggle";
+import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/preferences/sidebarLayout";
 import { useThemePreference } from "../features/preferences/theme";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
 import { useWorkspacePersistence } from "../features/query/useWorkspacePersistence";
@@ -74,9 +76,12 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [shortcutDialogView, setShortcutDialogView] = useState<ShortcutDialogView>("help");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  const [focusConnectionId, setFocusConnectionId] = useState<string | null>(null);
   const [tableCatalog, setTableCatalog] = useState<Record<string, string[]>>({});
   const [recentItemTimestamps, setRecentItemTimestamps] = useState<Record<string, number>>({});
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const selectedProfile = connections.profiles.find(
     (profile) => profile.id === connections.selectedConnectionId,
   );
@@ -89,6 +94,7 @@ export function App() {
     .filter((tab) => dirtyTableTabIds.has(tab.id))
     .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
   const activeTableProfile = connections.profiles.find((profile) => profile.id === activeTableTab?.connectionId);
+  const workspaceContextProfile = activeTableProfile ?? activeQueryProfile ?? selectedProfile ?? null;
   const newQueryProfile = selectedProfile
     ? selectedProfile.engine === "my_sql" ? selectedProfile : null
     : activeTableProfile?.engine === "my_sql"
@@ -133,6 +139,14 @@ export function App() {
       detail: "修改组合键、检查冲突或恢复默认",
       keywords: ["keyboard", "hotkey", "偏好", "修改"],
       lastUsedAt: recentItemTimestamps["command:shortcut-settings"],
+    },
+    {
+      id: "command:toggle-sidebar",
+      type: "command",
+      label: sidebarCollapsed ? "展开连接侧边栏" : "收起连接侧边栏",
+      detail: shortcutLabel("toggleSidebar"),
+      keywords: ["sidebar", "收起", "展开", "panel"],
+      lastUsedAt: recentItemTimestamps["command:toggle-sidebar"],
     },
     ...(newQueryProfile ? [{
       id: "command:new-query",
@@ -349,16 +363,55 @@ export function App() {
     });
   }
 
+  /**
+   * Toggles connection-sidebar visibility while keeping the panel mounted.
+   * @param nextCollapsed - Explicit collapsed state, or the inverse of the current state when omitted.
+   * @returns Nothing (`void`).
+   * Side effects: updates React state, persists the preference, and may move focus out of the panel.
+   */
+  function handleToggleSidebar(nextCollapsed?: boolean): void {
+    const collapsed = nextCollapsed ?? !sidebarCollapsed;
+    setSidebarCollapsed(collapsed);
+    persistSidebarCollapsed(collapsed);
+    if (collapsed) {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && activeElement.closest(".connection-panel")) {
+        sidebarToggleRef.current?.focus();
+      }
+    }
+  }
+
+  /** Ensures the connection sidebar is visible before navigation that depends on it. */
+  function ensureSidebarExpanded(): void {
+    if (sidebarCollapsed) {
+      handleToggleSidebar(false);
+    }
+  }
+
+  /**
+   * Expands the sidebar and scrolls the given connection into view.
+   * @param connectionId - Saved connection to reveal in the navigator.
+   * @returns Nothing (`void`).
+   * Side effects: expands the panel, selects the connection, and requests sidebar focus.
+   */
+  function handleRevealConnection(connectionId: string): void {
+    ensureSidebarExpanded();
+    handleSelectConnection(connectionId);
+    setFocusConnectionId(connectionId);
+  }
+
   /** Runs the command or navigation represented by one selected palette item. */
   function handleCommandPaletteSelect(item: CommandPaletteItem): void {
     markPaletteItemRecent(item.id);
     if (item.type === "connection") {
+      ensureSidebarExpanded();
       handleSelectConnection(item.id.slice("connection:".length));
       return;
     }
     if (item.type === "table") {
       const [connectionId, ...tableNameParts] = item.id.slice("table:".length).split(":");
       if (connectionId && tableNameParts.length > 0) {
+        ensureSidebarExpanded();
         handleOpenTable(connectionId, tableNameParts.join(":"));
       }
       return;
@@ -397,6 +450,9 @@ export function App() {
         break;
       case "command:shortcut-settings":
         openShortcutDialog("settings");
+        break;
+      case "command:toggle-sidebar":
+        handleToggleSidebar();
         break;
       case "command:execute-sql":
         dispatchScopedShortcut("executeQuery");
@@ -773,6 +829,9 @@ export function App() {
       ) {
         return;
       }
+      if (handleScopedSelectAll(event, (candidate) => matchesShortcut(candidate, "Mod+A"))) {
+        return;
+      }
       if (matchesShortcut(event, shortcuts.bindings.commandPalette)) {
         event.preventDefault();
         openCommandPalette();
@@ -781,6 +840,11 @@ export function App() {
       if (matchesShortcut(event, shortcuts.bindings.shortcutHelp)) {
         event.preventDefault();
         openShortcutDialog("help");
+        return;
+      }
+      if (matchesShortcut(event, shortcuts.bindings.toggleSidebar)) {
+        event.preventDefault();
+        handleToggleSidebar();
         return;
       }
       if (matchesShortcut(event, shortcuts.bindings.newQuery)) {
@@ -921,20 +985,50 @@ export function App() {
   }
 
   return (
-    <div className="app-shell" role="application" aria-label="Pipa 数据库工作台">
+    <div
+      className={`app-shell${sidebarCollapsed ? " app-shell--sidebar-collapsed" : ""}`}
+      role="application"
+      aria-label="Pipa 数据库工作台"
+    >
       <aside className="activity-rail" aria-label="主功能">
         <span className="product-mark" aria-label="Pipa">P</span>
-        <span className="activity-rail__active" aria-label="连接">
+        <button
+          aria-controls="connection-panel"
+          aria-expanded={!sidebarCollapsed}
+          aria-label={sidebarCollapsed ? "展开连接侧边栏" : "收起连接侧边栏"}
+          className={`activity-rail__toggle${sidebarCollapsed ? "" : " is-active"}`}
+          onClick={() => handleToggleSidebar()}
+          ref={sidebarToggleRef}
+          title={`连接侧边栏（${shortcutLabel("toggleSidebar")}）`}
+          type="button"
+        >
           <PanelLeft size={18} strokeWidth={1.8} aria-hidden="true" />
-        </span>
+        </button>
       </aside>
-      <nav className="connection-panel" aria-label="数据库连接">
+      <nav
+        aria-hidden={sidebarCollapsed || undefined}
+        aria-label="数据库连接"
+        className="connection-panel"
+        id="connection-panel"
+        inert={sidebarCollapsed}
+      >
         <header className="connection-panel__header">
           <span>
             <span className="eyebrow">LOCAL DATABASE TOOL</span>
             <h1>Pipa</h1>
           </span>
-          <span className="connection-panel__status" title="所有配置均保存在本机">本机</span>
+          <span className="connection-panel__actions">
+            <span className="connection-panel__status" title="所有配置均保存在本机">本机</span>
+            <button
+              aria-label="从面板收起侧边栏"
+              className="connection-panel__collapse"
+              onClick={() => handleToggleSidebar(true)}
+              title={`收起连接侧边栏（${shortcutLabel("toggleSidebar")}）`}
+              type="button"
+            >
+              <PanelLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </span>
         </header>
 
         {connections.loading ? <p className="panel-status">正在读取本地连接…</p> : null}
@@ -950,8 +1044,10 @@ export function App() {
         <ConnectionSidebar
           discoverTables={commandPaletteOpen}
           dirtyTables={dirtyTables}
+          focusConnectionId={focusConnectionId}
           onAddConnection={handleAddConnection}
           onCopyConfig={(profile) => void handleCopyConnectionConfig(profile)}
+          onFocusConnectionHandled={() => setFocusConnectionId(null)}
           onOpenTable={handleOpenTable}
           onReconnect={(profile) => void handleReconnectConnection(profile)}
           onRequestDelete={handleRequestDeleteConnection}
@@ -961,11 +1057,25 @@ export function App() {
           profiles={connections.profiles}
           reconnectingConnectionId={reconnectingConnectionId}
           selectedConnectionId={connections.selectedConnectionId}
+          tableCatalog={tableCatalog}
         />
       </nav>
       <main className="workspace" aria-label="查询工作区">
         <header className="workspace__topbar">
-          <span>连接工作区</span>
+          {sidebarCollapsed && workspaceContextProfile ? (
+            <button
+              aria-label={`当前连接 ${workspaceContextProfile.name} · ${workspaceContextProfile.database ?? "未指定数据库"}`}
+              className="workspace__topbar-context"
+              onClick={() => handleRevealConnection(workspaceContextProfile.id)}
+              title="展开侧边栏并定位到当前连接"
+              type="button"
+            >
+              <strong>{workspaceContextProfile.name}</strong>
+              <span>{workspaceContextProfile.database ?? "未指定数据库"}</span>
+            </button>
+          ) : (
+            <span>连接工作区</span>
+          )}
           <span className="workspace__topbar-actions">
             <button onClick={openCommandPalette} title={`打开命令面板（${shortcutLabel("commandPalette")}）`} type="button">
               <CommandIcon size={13} aria-hidden="true" />

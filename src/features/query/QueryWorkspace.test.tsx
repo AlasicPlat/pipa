@@ -41,6 +41,12 @@ const monacoState = vi.hoisted(() => ({
 
 vi.mock("./useQuerySession", () => ({ useQuerySession: () => sessionController }));
 vi.mock("./ResultGrid", () => ({ ResultGrid: () => <div aria-label="查询结果" /> }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => vi.fn()),
+}));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  writeText: vi.fn(async () => undefined),
+}));
 vi.mock("@monaco-editor/react", () => ({
   default: (props: { onMount: (editor: unknown, monaco: unknown) => void }) => {
     /** Converts Monaco line/column coordinates to a UTF-16 test offset. */
@@ -133,9 +139,9 @@ function assertToolbarSelectionExecution(): void {
   const executeButton = screen.getByRole("button", { name: /执行/ });
   expect(executeButton).toHaveAttribute(
     "title",
-    "执行选中 SQL 或当前语句（Ctrl/Cmd + Enter）",
+    "执行选中 SQL 或当前语句（Ctrl/Cmd + R）",
   );
-  expect(screen.getByText("Ctrl/Cmd + Enter")).toBeVisible();
+  expect(screen.getByText("Ctrl/Cmd + R")).toBeVisible();
   fireEvent.click(executeButton);
   expect(sessionController.run).toHaveBeenCalledWith("select 1");
 }
@@ -160,7 +166,7 @@ function assertRunningSessionIgnoresExecuteShortcut(): void {
   sessionController.state.running = true;
   render(<QueryWorkspace {...WORKSPACE_PROPS} />);
   const shortcut = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -260,6 +266,7 @@ function assertCanceledEmptyQueryState(): void {
 function registerQueryWorkspaceTests(): void {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAllShortcutBindings();
     sessionController.state.running = true;
     sessionController.state.cancelRequested = true;
     sessionController.state.incomplete = false;
