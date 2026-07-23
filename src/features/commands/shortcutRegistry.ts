@@ -14,6 +14,8 @@ export type ShortcutActionId =
   | "cancelQuery"
   | "selectSql"
   | "find"
+  | "copyResultSelection"
+  | "viewResultCell"
   | "selectRows"
   | "saveTable";
 
@@ -146,18 +148,36 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
     scope: "contextual",
     group: "workspace",
     action: "搜索当前区域",
-    description: "搜索当前聚焦的 SQL、表树或数据网格",
+    description: "搜索当前聚焦的 SQL、表树、查询结果或表数据",
     defaultBinding: "Mod+F",
-    searchTerms: ["查找", "过滤"],
+    searchTerms: ["查找", "过滤", "结果"],
+  },
+  {
+    id: "copyResultSelection",
+    scope: "sql",
+    group: "sql",
+    action: "复制选中结果",
+    description: "复制查询结果中当前选中的单元格；全选后复制全部",
+    defaultBinding: "Mod+C",
+    searchTerms: ["剪贴板", "拷贝", "单元格"],
+  },
+  {
+    id: "viewResultCell",
+    scope: "sql",
+    group: "sql",
+    action: "查看完整单元格",
+    description: "打开查询结果中当前单元格的完整内容（长文本/JSON）",
+    defaultBinding: "F2",
+    searchTerms: ["详情", "弹窗", "展开"],
   },
   {
     id: "selectRows",
     scope: "table",
     group: "table",
-    action: "选择当前页全部行",
-    description: "仅选择当前已加载页，不跨分页",
+    action: "选择全部行",
+    description: "表数据选当前页；查询结果选全部已加载行",
     defaultBinding: "Mod+A",
-    searchTerms: ["全选"],
+    searchTerms: ["全选", "结果"],
   },
   {
     id: "saveTable",

@@ -1,5 +1,14 @@
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
+import { quoteIdentifier } from "../tables/tableSql";
+
+/** Inclusive rectangular selection within a result grid. */
+export interface ResultSelectionRect {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+}
 
 /**
  * Converts a transport-safe cell into a plain clipboard/export string.
@@ -30,6 +39,49 @@ export function cellValueToPlainText(cell: CellValue | undefined): string {
 }
 
 /**
+ * Converts a cell into a JSON-serializable value, keeping large integers as strings.
+ * @param cell - Optional result cell.
+ * @returns A JSON-safe value; binary stays as its transport string.
+ * Side effects: none.
+ */
+export function cellValueToJsonValue(cell: CellValue | undefined): unknown {
+  if (!cell || cell.kind === "null") {
+    return null;
+  }
+  switch (cell.kind) {
+    case "boolean":
+    case "float":
+    case "json":
+      return cell.value;
+    case "integer":
+    case "decimal":
+    case "text":
+    case "date_time":
+    case "binary":
+      return cell.value;
+  }
+}
+
+/**
+ * Formats a cell for the full-value viewer (pretty JSON when applicable).
+ * @param cell - Optional result cell.
+ * @returns Human-readable full cell text.
+ * Side effects: none.
+ */
+export function cellValueToViewerText(cell: CellValue | undefined): string {
+  if (!cell || cell.kind === "null") {
+    return "NULL";
+  }
+  if (cell.kind === "json") {
+    return JSON.stringify(cell.value, null, 2);
+  }
+  if (cell.kind === "binary") {
+    return cell.value;
+  }
+  return cellValueToPlainText(cell);
+}
+
+/**
  * Escapes one CSV field using RFC 4180 quoting rules.
  * @param value - Raw field text.
  * @returns A CSV-safe field that may be wrapped in double quotes.
@@ -40,6 +92,360 @@ function escapeCsvField(value: string): string {
     return value;
   }
   return `"${value.replace(/"/gu, "\"\"")}"`;
+}
+
+/**
+ * Escapes a Markdown table cell, collapsing newlines.
+ * @param value - Raw cell text.
+ * @returns Pipe-safe Markdown cell text.
+ * Side effects: none.
+ */
+function escapeMarkdownCell(value: string): string {
+  return value.replace(/\|/gu, "\\|").replace(/\r?\n/gu, " ");
+}
+
+/**
+ * Quotes a MySQL string literal using SQL-standard doubled apostrophes.
+ * @param value - Untrusted literal text.
+ * @returns A safely quoted SQL string literal.
+ * Side effects: none.
+ */
+function quotedString(value: string): string {
+  return `'${value.split("'").join("''")}'`;
+}
+
+/**
+ * Formats a transport cell as a MySQL literal for INSERT / IN lists.
+ * @param cell - Optional result cell.
+ * @param databaseType - Native column type from the result schema.
+ * @returns A safe SQL literal.
+ * Side effects: none.
+ */
+export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType: string): string {
+  if (!cell || cell.kind === "null") {
+    return "NULL";
+  }
+
+  switch (cell.kind) {
+    case "boolean":
+      return cell.value ? "1" : "0";
+    case "integer":
+    case "decimal":
+      return cell.value;
+    case "float": {
+      const normalizedType = databaseType.toLowerCase();
+      if (/^(float|double|real|decimal|numeric)/u.test(normalizedType)) {
+        return String(cell.value);
+      }
+      return quotedString(String(cell.value));
+    }
+    case "json":
+      return quotedString(JSON.stringify(cell.value));
+    case "binary":
+      return quotedString(cell.value);
+    case "text":
+    case "date_time": {
+      const normalizedType = databaseType.toLowerCase();
+      if (
+        /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit)/u.test(
+          normalizedType,
+        ) &&
+        /^-?(?:\d+|\d*\.\d+)$/u.test(cell.value.trim())
+      ) {
+        return cell.value.trim();
+      }
+      return quotedString(cell.value);
+    }
+  }
+}
+
+/**
+ * Normalizes a selection rectangle so start <= end on both axes.
+ * @param selection - Possibly unordered selection anchors.
+ * @returns Inclusive bounds with sorted corners.
+ * Side effects: none.
+ */
+export function normalizeSelection(selection: ResultSelectionRect): ResultSelectionRect {
+  return {
+    startRow: Math.min(selection.startRow, selection.endRow),
+    startCol: Math.min(selection.startCol, selection.endCol),
+    endRow: Math.max(selection.startRow, selection.endRow),
+    endCol: Math.max(selection.startCol, selection.endCol),
+  };
+}
+
+/**
+ * Returns a short Chinese label describing the active selection.
+ * @param selection - Normalized selection, or null when empty.
+ * @param allSelected - Whether the entire loaded result set is selected.
+ * @param columnCount - Total columns in the grid.
+ * @returns Status text such as `已选 3 个单元格`, or null when nothing is selected.
+ * Side effects: none.
+ */
+export function describeSelection(
+  selection: ResultSelectionRect | null,
+  allSelected: boolean,
+  columnCount: number,
+): string | null {
+  if (!selection) {
+    return null;
+  }
+  const bounds = normalizeSelection(selection);
+  const rowCount = bounds.endRow - bounds.startRow + 1;
+  const selectedColumns = bounds.endCol - bounds.startCol + 1;
+  const cellCount = rowCount * selectedColumns;
+  if (allSelected) {
+    return `已选全部 ${rowCount} 行`;
+  }
+  if (selectedColumns === columnCount && columnCount > 0) {
+    return rowCount === 1 ? "已选 1 行" : `已选 ${rowCount} 行`;
+  }
+  if (rowCount > 1 && selectedColumns === 1) {
+    return `已选 ${rowCount} 个单元格（1 列）`;
+  }
+  if (cellCount === 1) {
+    return "已选 1 个单元格";
+  }
+  return `已选 ${cellCount} 个单元格`;
+}
+
+/**
+ * Returns column indexes treated as primary-key `id` columns for INSERT copy.
+ * Query result metadata has no PK flag, so only exact `id` names are recognized.
+ * @param columns - Result schema.
+ * @returns Zero-based indexes of columns named `id` (case-insensitive).
+ * Side effects: none.
+ */
+export function primaryKeyColumnIndexes(columns: readonly QueryColumn[]): number[] {
+  return columns.flatMap((column, index) => (column.name.toLowerCase() === "id" ? [index] : []));
+}
+
+/**
+ * Formats a possibly qualified table name as a backtick-quoted MySQL target.
+ * @param tableName - Bare table, `db.table`, or already-quoted fragments.
+ * @returns Identifier suitable for `INSERT INTO …`.
+ * Side effects: none.
+ */
+export function formatInsertTableTarget(tableName: string): string {
+  const parts = tableName
+    .split(".")
+    .map((part) => part.trim().replace(/^`+|`+$/gu, ""))
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    return quoteIdentifier("your_table");
+  }
+  return parts.map((part) => quoteIdentifier(part)).join(".");
+}
+
+/**
+ * Best-effort extraction of the first FROM target in a SQL script.
+ * @param sql - Editor SQL that produced the result set.
+ * @returns `db.table` / `table`, or `your_table` when parsing fails.
+ * Side effects: none.
+ */
+export function inferTableNameFromSql(sql: string): string {
+  const stripped = sql
+    .replace(/\/\*[\s\S]*?\*\//gu, " ")
+    .replace(/--[^\n]*/gu, " ")
+    .replace(/#[^\n]*/gu, " ");
+  const match =
+    /\bfrom\s+(`[^`]+`|[A-Za-z_][\w$]*)(?:\s*\.\s*(`[^`]+`|[A-Za-z_][\w$]*))?/iu.exec(stripped);
+  if (!match) {
+    return "your_table";
+  }
+  const left = match[1]?.replace(/`/gu, "") ?? "your_table";
+  const right = match[2]?.replace(/`/gu, "");
+  return right ? `${left}.${right}` : left;
+}
+
+export interface SerializeSelectionAsTsvOptions {
+  /** When true, prepend selected column names (SQL aliases when present). */
+  includeHeaders?: boolean;
+}
+
+/**
+ * Serializes a rectangular cell selection as TSV.
+ * @param columns - Result schema; `name` is the alias when the query used `AS`.
+ * @param rows - Loaded result rows.
+ * @param selection - Inclusive cell rectangle to copy.
+ * @param options - Whether to include a header row of field names/aliases.
+ * @returns Clipboard text for the selected cells, optionally with headers.
+ * Side effects: none.
+ */
+export function serializeSelectionAsTsv(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  selection: ResultSelectionRect,
+  options: SerializeSelectionAsTsvOptions = {},
+): string {
+  const bounds = normalizeSelection(selection);
+  const lines: string[] = [];
+  if (options.includeHeaders) {
+    const headers: string[] = [];
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      headers.push((columns[columnIndex]?.name ?? "").replace(/\t/gu, " "));
+    }
+    lines.push(headers.join("\t"));
+  }
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    const cells: string[] = [];
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      cells.push(cellValueToPlainText(rows[rowIndex]?.[columnIndex]).replace(/\t/gu, " "));
+    }
+    lines.push(cells.join("\t"));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Serializes a rectangular selection as CSV, optionally with field-name headers.
+ * @param columns - Result schema.
+ * @param rows - Loaded result rows.
+ * @param selection - Inclusive cell rectangle to copy.
+ * @param options - Whether to include a header row.
+ * @returns Clipboard-friendly CSV for the selection.
+ * Side effects: none.
+ */
+export function serializeSelectionAsCsv(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  selection: ResultSelectionRect,
+  options: SerializeSelectionAsTsvOptions = {},
+): string {
+  const bounds = normalizeSelection(selection);
+  const lines: string[] = [];
+  if (options.includeHeaders) {
+    const headers: string[] = [];
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      headers.push(escapeCsvField(columns[columnIndex]?.name ?? ""));
+    }
+    lines.push(headers.join(","));
+  }
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    const cells: string[] = [];
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      cells.push(escapeCsvField(cellValueToPlainText(rows[rowIndex]?.[columnIndex])));
+    }
+    lines.push(cells.join(","));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Serializes a selection as JSON objects keyed by field name / alias.
+ * @param columns - Result schema.
+ * @param rows - Loaded result rows.
+ * @param selection - Inclusive cell rectangle to copy.
+ * @returns Pretty-printed JSON: one value, one object, or an array of objects.
+ * Side effects: none.
+ */
+export function serializeSelectionAsJson(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  selection: ResultSelectionRect,
+): string {
+  const bounds = normalizeSelection(selection);
+  const columnIndexes: number[] = [];
+  for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+    columnIndexes.push(columnIndex);
+  }
+
+  if (bounds.startRow === bounds.endRow && columnIndexes.length === 1) {
+    const columnIndex = columnIndexes[0] ?? 0;
+    return JSON.stringify(cellValueToJsonValue(rows[bounds.startRow]?.[columnIndex]), null, 2);
+  }
+
+  const objects: Record<string, unknown>[] = [];
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    const record: Record<string, unknown> = {};
+    for (const columnIndex of columnIndexes) {
+      const name = columns[columnIndex]?.name ?? `column_${columnIndex}`;
+      record[name] = cellValueToJsonValue(rows[rowIndex]?.[columnIndex]);
+    }
+    objects.push(record);
+  }
+  return JSON.stringify(objects.length === 1 ? objects[0] : objects, null, 2);
+}
+
+/**
+ * Serializes a selection as a Markdown table (always includes header aliases).
+ * @param columns - Result schema.
+ * @param rows - Loaded result rows.
+ * @param selection - Inclusive cell rectangle to copy.
+ * @returns A GitHub-flavored Markdown table.
+ * Side effects: none.
+ */
+export function serializeSelectionAsMarkdown(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  selection: ResultSelectionRect,
+): string {
+  const bounds = normalizeSelection(selection);
+  const headers: string[] = [];
+  for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+    headers.push(escapeMarkdownCell(columns[columnIndex]?.name ?? ""));
+  }
+  const separator = headers.map(() => "---");
+  const body: string[] = [];
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    const cells: string[] = [];
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      cells.push(escapeMarkdownCell(cellValueToPlainText(rows[rowIndex]?.[columnIndex])));
+    }
+    body.push(`| ${cells.join(" | ")} |`);
+  }
+  return [`| ${headers.join(" | ")} |`, `| ${separator.join(" | ")} |`, ...body].join("\n");
+}
+
+/**
+ * Builds a deduplicated SQL `IN (...)` list from the selected cells.
+ * @param columns - Result schema (for literal typing).
+ * @param rows - Loaded result rows.
+ * @param selection - Inclusive cell rectangle to copy.
+ * @returns An `IN (...)` fragment ready to paste into a WHERE clause.
+ * Side effects: none.
+ */
+export function serializeSelectionAsInList(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  selection: ResultSelectionRect,
+): string {
+  const bounds = normalizeSelection(selection);
+  const literals: string[] = [];
+  const seen = new Set<string>();
+  for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
+    for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+      const literal = cellValueToSqlLiteral(
+        rows[rowIndex]?.[columnIndex],
+        columns[columnIndex]?.databaseType ?? "",
+      );
+      if (seen.has(literal)) {
+        continue;
+      }
+      seen.add(literal);
+      literals.push(literal);
+    }
+  }
+  return `IN (${literals.join(", ")})`;
+}
+
+/**
+ * Copies selected column names / aliases as a tab-separated header line.
+ * @param columns - Result schema.
+ * @param selection - Inclusive selection (column span is used).
+ * @returns Field names for the selected columns.
+ * Side effects: none.
+ */
+export function serializeSelectionColumnNames(
+  columns: QueryColumn[],
+  selection: ResultSelectionRect,
+): string {
+  const bounds = normalizeSelection(selection);
+  const names: string[] = [];
+  for (let columnIndex = bounds.startCol; columnIndex <= bounds.endCol; columnIndex += 1) {
+    names.push(columns[columnIndex]?.name ?? "");
+  }
+  return names.join("\t");
 }
 
 /**
@@ -72,6 +478,49 @@ export function serializeResultAsCsv(columns: QueryColumn[], rows: CellValue[][]
   return [header, ...body].join("\n");
 }
 
+export interface SerializeRowsAsInsertOptions {
+  tableName: string;
+  includePrimaryKey: boolean;
+  rowIndexes?: readonly number[];
+}
+
+/**
+ * Builds one INSERT statement per selected result row.
+ * @param columns - Result schema.
+ * @param rows - Loaded result rows.
+ * @param options - Target table, whether to keep `id` columns, and optional row indexes.
+ * @returns Newline-joined INSERT statements, or an empty string when no columns remain.
+ * Side effects: none.
+ */
+export function serializeRowsAsInsert(
+  columns: QueryColumn[],
+  rows: CellValue[][],
+  options: SerializeRowsAsInsertOptions,
+): string {
+  const pkIndexes = new Set(primaryKeyColumnIndexes(columns));
+  const columnIndexes = columns
+    .map((_, index) => index)
+    .filter((index) => options.includePrimaryKey || !pkIndexes.has(index));
+  if (columnIndexes.length === 0) {
+    return "";
+  }
+
+  const target = formatInsertTableTarget(options.tableName);
+  const columnList = columnIndexes.map((index) => quoteIdentifier(columns[index]?.name ?? "")).join(", ");
+  const indexes = options.rowIndexes ?? rows.map((_, index) => index);
+
+  return indexes
+    .map((rowIndex) => {
+      const values = columnIndexes
+        .map((columnIndex) =>
+          cellValueToSqlLiteral(rows[rowIndex]?.[columnIndex], columns[columnIndex]?.databaseType ?? ""),
+        )
+        .join(", ");
+      return `INSERT INTO ${target} (${columnList}) VALUES (${values});`;
+    })
+    .join("\n");
+}
+
 /**
  * Triggers a browser/Tauri download for the provided CSV text.
  * @param csv - Serialized CSV document.
@@ -80,7 +529,19 @@ export function serializeResultAsCsv(columns: QueryColumn[], rows: CellValue[][]
  * Side effects: creates a temporary object URL and clicks a download anchor.
  */
 export function downloadCsv(csv: string, fileName: string): void {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  downloadTextFile(csv, fileName, "text/csv;charset=utf-8");
+}
+
+/**
+ * Triggers a browser/Tauri download for arbitrary text content.
+ * @param content - File body.
+ * @param fileName - Suggested download file name.
+ * @param mimeType - MIME type for the Blob.
+ * @returns Nothing (`void`).
+ * Side effects: creates a temporary object URL and clicks a download anchor.
+ */
+export function downloadTextFile(content: string, fileName: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
