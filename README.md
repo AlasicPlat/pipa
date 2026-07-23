@@ -15,10 +15,9 @@
   [下载 Intel 芯片版](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg)
 </div>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://alasicplat.github.io/images/pipa-dark.png" />
-  <img src="https://alasicplat.github.io/images/pipa-light.png" alt="Pipa 数据库连接与查询工作区" />
-</picture>
+<p align="center">
+  <img src="https://alasicplat.github.io/images/pipa-cover.png" width="100%" alt="Pipa 数据库连接与查询工作区" />
+</p>
 
 ## Pipa 是什么
 
@@ -26,8 +25,8 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 
 ## 当前能力
 
-- 测试、保存、重命名和整理数据库连接。
-- 在绑定连接的查询标签中编写与执行 SQL。
+- 创建、测试、重命名和整理 MySQL、Redis 连接。
+- 在绑定 MySQL 连接的查询标签中编写与执行 SQL。
 - 执行选中 SQL 或光标所在语句，并可取消运行中的查询。
 - 流式展示查询结果，保留大整数和精确小数的原始语义。
 - 复制结果或导出 CSV。
@@ -51,6 +50,8 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 | Intel 芯片 | [下载 `Pipa-macOS-x64.dmg`](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg) |
 
 下载后打开 DMG，将 Pipa 拖入“应用程序”文件夹即可。历史版本与更新说明可在 [Releases](https://github.com/AlasicPlat/pipa/releases) 查看。
+
+当前 v0.2.4 的两个安装包均已完成 Developer ID 签名并通过 Apple 公证。
 
 ## 本地数据与隐私
 
