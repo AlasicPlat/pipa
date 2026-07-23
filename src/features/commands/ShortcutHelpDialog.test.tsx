@@ -20,7 +20,7 @@ function assertOpenState(): void {
   expect(screen.getByRole("heading", { name: "连接与表树" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "表数据工作台" })).toBeVisible();
   expect(screen.getByText("执行 SQL")).toBeVisible();
-  expect(screen.getByLabelText("Ctrl/Cmd + Enter").querySelectorAll("kbd")).toHaveLength(2);
+  expect(screen.getByLabelText("Ctrl/Cmd + R").querySelectorAll("kbd")).toHaveLength(2);
 }
 
 /** Verifies fuzzy discovery terms filter both commands and their containing groups. */
