@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
-import { cellValueToPlainText, serializeResultAsCsv, serializeResultAsTsv } from "./resultExport";
+import {
+  cellValueToPlainText,
+  cellValueToSqlLiteral,
+  describeSelection,
+  inferTableNameFromSql,
+  primaryKeyColumnIndexes,
+  serializeResultAsCsv,
+  serializeResultAsTsv,
+  serializeRowsAsInsert,
+  serializeSelectionAsInList,
+  serializeSelectionAsJson,
+  serializeSelectionAsMarkdown,
+  serializeSelectionAsTsv,
+} from "./resultExport";
 
 const COLUMNS: QueryColumn[] = [
   { name: "id", databaseType: "BIGINT", nullable: false },
@@ -45,5 +58,118 @@ describe("resultExport", () => {
     expect(serializeResultAsCsv(COLUMNS, quotedRows)).toBe(
       "id,note,payload\n3,\"a, \"\"b\"\"\",\"line\nbreak\"",
     );
+  });
+
+  it("serializes only the selected rectangle as TSV without headers", () => {
+    expect(
+      serializeSelectionAsTsv(COLUMNS, ROWS, {
+        startRow: 0,
+        startCol: 1,
+        endRow: 1,
+        endCol: 1,
+      }),
+    ).toBe("hello world\nNULL");
+  });
+
+  it("serializes a selection with field names / aliases as the header row", () => {
+    const aliased: QueryColumn[] = [
+      { name: "order_id", databaseType: "BIGINT", nullable: false },
+      { name: "label", databaseType: "TEXT", nullable: true },
+      { name: "payload", databaseType: "JSON", nullable: true },
+    ];
+    expect(
+      serializeSelectionAsTsv(
+        aliased,
+        ROWS,
+        { startRow: 0, startCol: 0, endRow: 0, endCol: 1 },
+        { includeHeaders: true },
+      ),
+    ).toBe("order_id\tlabel\n1\thello world");
+  });
+
+  it("formats SQL literals for INSERT statements", () => {
+    expect(cellValueToSqlLiteral({ kind: "null" }, "TEXT")).toBe("NULL");
+    expect(cellValueToSqlLiteral({ kind: "boolean", value: true }, "TINYINT")).toBe("1");
+    expect(cellValueToSqlLiteral({ kind: "integer", value: "9" }, "BIGINT")).toBe("9");
+    expect(cellValueToSqlLiteral({ kind: "text", value: "O'Reilly" }, "VARCHAR")).toBe("'O''Reilly'");
+    expect(cellValueToSqlLiteral({ kind: "json", value: { a: 1 } }, "JSON")).toBe("'{\"a\":1}'");
+  });
+
+  it("infers table names from FROM clauses", () => {
+    expect(inferTableNameFromSql("SELECT * FROM orders WHERE id = 1")).toBe("orders");
+    expect(inferTableNameFromSql("select a from `shop`.`order_items` o")).toBe("shop.order_items");
+    expect(inferTableNameFromSql("SELECT 1")).toBe("your_table");
+  });
+
+  it("identifies id columns as primary-key candidates", () => {
+    expect(primaryKeyColumnIndexes(COLUMNS)).toEqual([0]);
+    expect(primaryKeyColumnIndexes([{ name: "userId", databaseType: "INT", nullable: false }])).toEqual([]);
+  });
+
+  it("serializes selected rows as INSERT with optional id omission", () => {
+    expect(
+      serializeRowsAsInsert(COLUMNS, ROWS, {
+        tableName: "demo.orders",
+        includePrimaryKey: true,
+        rowIndexes: [0],
+      }),
+    ).toBe(
+      "INSERT INTO `demo`.`orders` (`id`, `note`, `payload`) VALUES (1, 'hello\tworld', '{\"ok\":true}');",
+    );
+
+    expect(
+      serializeRowsAsInsert(COLUMNS, ROWS, {
+        tableName: "orders",
+        includePrimaryKey: false,
+        rowIndexes: [0, 1],
+      }),
+    ).toBe(
+      [
+        "INSERT INTO `orders` (`note`, `payload`) VALUES ('hello\tworld', '{\"ok\":true}');",
+        "INSERT INTO `orders` (`note`, `payload`) VALUES (NULL, 'AAEC');",
+      ].join("\n"),
+    );
+  });
+
+  it("serializes selections as JSON, Markdown, and IN lists", () => {
+    expect(
+      serializeSelectionAsJson(COLUMNS, ROWS, {
+        startRow: 0,
+        startCol: 0,
+        endRow: 0,
+        endCol: 1,
+      }),
+    ).toBe(JSON.stringify({ id: "1", note: "hello\tworld" }, null, 2));
+
+    expect(
+      serializeSelectionAsMarkdown(COLUMNS, ROWS, {
+        startRow: 0,
+        startCol: 0,
+        endRow: 0,
+        endCol: 1,
+      }),
+    ).toBe("| id | note |\n| --- | --- |\n| 1 | hello\tworld |");
+
+    expect(
+      serializeSelectionAsInList(COLUMNS, ROWS, {
+        startRow: 0,
+        startCol: 0,
+        endRow: 1,
+        endCol: 0,
+      }),
+    ).toBe("IN (1, 2)");
+  });
+
+  it("describes selection status for the results header", () => {
+    expect(describeSelection(null, false, 3)).toBeNull();
+    expect(
+      describeSelection({ startRow: 0, startCol: 0, endRow: 0, endCol: 0 }, false, 3),
+    ).toBe("已选 1 个单元格");
+    expect(
+      describeSelection({ startRow: 0, startCol: 0, endRow: 1, endCol: 2 }, false, 3),
+    ).toBe("已选 2 行");
+    expect(
+      describeSelection({ startRow: 0, startCol: 0, endRow: 1, endCol: 2 }, true, 3),
+    ).toBe("已选全部 2 行");
   });
 });

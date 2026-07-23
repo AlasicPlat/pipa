@@ -20,6 +20,8 @@ function assertOpenState(): void {
   expect(screen.getByRole("heading", { name: "连接与表树" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "表数据工作台" })).toBeVisible();
   expect(screen.getByText("执行 SQL")).toBeVisible();
+  expect(screen.getByText("复制选中结果")).toBeVisible();
+  expect(screen.getByText("查看完整单元格")).toBeVisible();
   expect(screen.getByLabelText("Ctrl/Cmd + R").querySelectorAll("kbd")).toHaveLength(2);
 }
 
@@ -30,7 +32,7 @@ function assertSearchFiltering(): void {
 
   fireEvent.change(search, { target: { value: "右键" } });
   expect(screen.getByText("打开上下文菜单")).toBeVisible();
-  expect(screen.queryByRole("heading", { name: "SQL 查询" })).not.toBeInTheDocument();
+  expect(screen.getAllByText("打开结果上下文菜单").length).toBeGreaterThan(0);
 
   fireEvent.change(search, { target: { value: "不存在的操作" } });
   expect(screen.getByText("没有匹配的快捷键")).toBeVisible();

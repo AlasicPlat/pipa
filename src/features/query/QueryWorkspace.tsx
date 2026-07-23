@@ -1,13 +1,21 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Copy, Download, Play, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Copy, Download, Play, Search, X } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { ResolvedTheme } from "../preferences/theme";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
-import { downloadCsv, serializeResultAsCsv, serializeResultAsTsv } from "./resultExport";
+import {
+  downloadTextFile,
+  inferTableNameFromSql,
+  serializeResultAsCsv,
+  serializeResultAsTsv,
+  serializeRowsAsInsert,
+  serializeSelectionAsJson,
+  serializeSelectionAsMarkdown,
+} from "./resultExport";
 import { useQuerySession } from "./useQuerySession";
 import type { WorkspaceTab } from "./useWorkspacePersistence";
 
@@ -88,8 +96,14 @@ export function QueryWorkspace({
   const shortcuts = useShortcutSettings();
   const session = useQuerySession(profile.id);
   const queryEditorRef = useRef<QueryEditorHandle>(null);
+  const resultSearchInputRef = useRef<HTMLInputElement>(null);
   const [resultActionFeedback, setResultActionFeedback] = useState<string | null>(null);
+  const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
+  const [resultSearch, setResultSearch] = useState("");
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
+  const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
+  const inferredTableName = inferTableNameFromSql(tab.sqlText);
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.
@@ -153,6 +167,31 @@ export function QueryWorkspace({
   }
 
   /**
+   * Writes clipboard text and surfaces short result-area feedback.
+   * @param text - Serialized clipboard payload.
+   * @param feedback - Transient status shown above the result grid.
+   * @returns Nothing (`void`).
+   * Side effects: writes clipboard text through the Tauri clipboard plugin.
+   */
+  function handleCopyText(text: string, feedback: string): void {
+    if (!text) {
+      setResultActionFeedback(feedback || "复制失败");
+      return;
+    }
+    void writeText(text)
+      .then(() => {
+        setResultActionFeedback(feedback);
+      })
+      .catch((error: unknown) => {
+        console.error(
+          "Pipa failed to copy query results",
+          error instanceof Error ? error.message : "unknown clipboard error",
+        );
+        setResultActionFeedback("复制失败");
+      });
+  }
+
+  /**
    * Copies every loaded result row to the system clipboard as TSV with headers.
    * Parameters: none.
    * @returns Nothing (`void`).
@@ -162,18 +201,10 @@ export function QueryWorkspace({
     if (!hasResultRows) {
       return;
     }
-    const tsv = serializeResultAsTsv(session.state.columns, session.state.rows);
-    void writeText(tsv)
-      .then(() => {
-        setResultActionFeedback(`已复制 ${session.state.rows.length} 行`);
-      })
-      .catch((error: unknown) => {
-        console.error(
-          "Pipa failed to copy query results",
-          error instanceof Error ? error.message : "unknown clipboard error",
-        );
-        setResultActionFeedback("复制失败");
-      });
+    handleCopyText(
+      serializeResultAsTsv(session.state.columns, session.state.rows),
+      `已复制 ${session.state.rows.length} 行`,
+    );
   }
 
   /**
@@ -186,11 +217,88 @@ export function QueryWorkspace({
     if (!hasResultRows) {
       return;
     }
-    const csv = serializeResultAsCsv(session.state.columns, session.state.rows);
-    const safeTitle = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
-    downloadCsv(csv, `${safeTitle}-results.csv`);
-    setResultActionFeedback(`已导出 ${session.state.rows.length} 行`);
+    setExportMenuOpen(false);
+    downloadTextFile(
+      serializeResultAsCsv(session.state.columns, session.state.rows),
+      `${exportBaseName}-results.csv`,
+      "text/csv;charset=utf-8",
+    );
+    setResultActionFeedback(`已导出 CSV · ${session.state.rows.length} 行`);
   }
+
+  /**
+   * Downloads every loaded result row as pretty-printed JSON.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: triggers a local JSON download in the desktop webview.
+   */
+  function handleExportJson(): void {
+    if (!hasResultRows) {
+      return;
+    }
+    setExportMenuOpen(false);
+    const selection = {
+      startRow: 0,
+      startCol: 0,
+      endRow: session.state.rows.length - 1,
+      endCol: session.state.columns.length - 1,
+    };
+    downloadTextFile(
+      serializeSelectionAsJson(session.state.columns, session.state.rows, selection),
+      `${exportBaseName}-results.json`,
+      "application/json;charset=utf-8",
+    );
+    setResultActionFeedback(`已导出 JSON · ${session.state.rows.length} 行`);
+  }
+
+  /**
+   * Downloads every loaded result row as a Markdown table.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: triggers a local Markdown download in the desktop webview.
+   */
+  function handleExportMarkdown(): void {
+    if (!hasResultRows) {
+      return;
+    }
+    setExportMenuOpen(false);
+    const selection = {
+      startRow: 0,
+      startCol: 0,
+      endRow: session.state.rows.length - 1,
+      endCol: session.state.columns.length - 1,
+    };
+    downloadTextFile(
+      serializeSelectionAsMarkdown(session.state.columns, session.state.rows, selection),
+      `${exportBaseName}-results.md`,
+      "text/markdown;charset=utf-8",
+    );
+    setResultActionFeedback(`已导出 Markdown · ${session.state.rows.length} 行`);
+  }
+
+  /**
+   * Downloads every loaded result row as INSERT statements.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: triggers a local SQL download in the desktop webview.
+   */
+  function handleExportSql(): void {
+    if (!hasResultRows) {
+      return;
+    }
+    setExportMenuOpen(false);
+    const sql = serializeRowsAsInsert(session.state.columns, session.state.rows, {
+      tableName: inferredTableName,
+      includePrimaryKey: true,
+    });
+    downloadTextFile(sql, `${exportBaseName}-results.sql`, "application/sql;charset=utf-8");
+    setResultActionFeedback(`已导出 SQL · ${session.state.rows.length} 行`);
+  }
+
+  useEffect(() => {
+    setResultSearch("");
+    setExportMenuOpen(false);
+  }, [session.state.columns, tab.id]);
 
   useEffect(() => {
     if (!resultActionFeedback) {
@@ -200,6 +308,35 @@ export function QueryWorkspace({
     return () => window.clearTimeout(timer);
   }, [resultActionFeedback]);
 
+  useEffect(() => {
+    if (!exportMenuOpen) {
+      return;
+    }
+    /** Closes the export menu when clicking outside it. */
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".query-export-menu")) {
+        setExportMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [exportMenuOpen]);
+
+  /**
+   * Focuses the result search box when Mod+F is used inside the results region.
+   * @param event - Keyboard event from the results section.
+   * @returns Nothing (`void`).
+   * Side effects: focuses and selects the result search input.
+   */
+  function handleResultsKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
+    if (!matchesShortcut(event, shortcuts.bindings.find) || !hasResultRows) {
+      return;
+    }
+    event.preventDefault();
+    resultSearchInputRef.current?.focus();
+    resultSearchInputRef.current?.select();
+  }
   return (
     <section className="query-workspace" aria-label={`${profile.name} 查询工作区`}>
       <header className="query-context">
@@ -245,11 +382,12 @@ export function QueryWorkspace({
         />
       </div>
 
-      <section className="query-results" aria-label="结果区域">
+      <section className="query-results" aria-label="结果区域" onKeyDown={handleResultsKeyDown}>
         <header className="query-results__header">
           <span>
             结果
             {session.state.rows.length > 0 ? ` · ${session.state.rows.length} 行` : ""}
+            {selectionStatus ? ` · ${selectionStatus}` : ""}
             {session.state.incomplete ? " · 不完整" : ""}
           </span>
           <span className="query-results__actions">
@@ -258,6 +396,18 @@ export function QueryWorkspace({
             ) : null}
             {hasResultRows ? (
               <>
+                <label className="query-result-search">
+                  <Search size={12} aria-hidden="true" />
+                  <input
+                    aria-label="搜索结果"
+                    onChange={(event) => setResultSearch(event.target.value)}
+                    placeholder="搜索结果"
+                    ref={resultSearchInputRef}
+                    title={`搜索当前结果（${getShortcutKeyLabels(shortcuts.bindings.find).join(" + ")}）`}
+                    type="search"
+                    value={resultSearch}
+                  />
+                </label>
                 <button
                   onClick={handleCopyAllResults}
                   title="复制全部结果（含表头，TSV）"
@@ -266,14 +416,34 @@ export function QueryWorkspace({
                   <Copy size={12} aria-hidden="true" />
                   复制全部
                 </button>
-                <button
-                  onClick={handleExportCsv}
-                  title="导出全部结果为 CSV"
-                  type="button"
-                >
-                  <Download size={12} aria-hidden="true" />
-                  导出 CSV
-                </button>
+                <div className="query-export-menu">
+                  <button
+                    aria-expanded={exportMenuOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setExportMenuOpen((open) => !open)}
+                    title="导出全部结果"
+                    type="button"
+                  >
+                    <Download size={12} aria-hidden="true" />
+                    导出
+                  </button>
+                  {exportMenuOpen ? (
+                    <div aria-label="导出格式" className="query-export-menu__panel" role="menu">
+                      <button onClick={handleExportCsv} role="menuitem" type="button">
+                        导出 CSV
+                      </button>
+                      <button onClick={handleExportJson} role="menuitem" type="button">
+                        导出 JSON
+                      </button>
+                      <button onClick={handleExportMarkdown} role="menuitem" type="button">
+                        导出 Markdown
+                      </button>
+                      <button onClick={handleExportSql} role="menuitem" type="button">
+                        导出 SQL INSERT
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </>
             ) : null}
             {session.state.running ? (
@@ -315,7 +485,11 @@ export function QueryWorkspace({
             rows={session.state.rows}
             running={session.state.running}
             incomplete={session.state.incomplete}
+            searchQuery={resultSearch}
+            tableName={inferredTableName}
             onCopyAll={handleCopyAllResults}
+            onCopyText={handleCopyText}
+            onSelectionChange={setSelectionStatus}
           />
         ) : null}
 

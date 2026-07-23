@@ -43,7 +43,12 @@ const FIXED_SHORTCUT_GROUPS: Readonly<Record<string, readonly FixedShortcutItem[
   workspace: [
     { action: "退出当前操作", description: "逐层关闭菜单、弹窗、编辑或选择", keys: ["Escape"], searchTerms: ["Esc"] },
   ],
-  sql: [],
+  sql: [
+    { action: "在结果中移动选区", description: "在查询结果单元格之间移动焦点", keys: ["↑", "↓", "←", "→"], searchTerms: ["方向键", "结果", "导航"] },
+    { action: "扩展结果选区", description: "从锚点扩展矩形选区", keys: ["Shift", "↑/↓/←/→"], searchTerms: ["方向键", "连续选择", "结果"] },
+    { action: "打开结果上下文菜单", description: "复制格式、选中行列等次要操作", keys: ["Shift", "F10"], searchTerms: ["右键", "菜单", "结果"] },
+    { action: "清除结果选区", description: "关闭菜单后再次按下清除单元格选择", keys: ["Escape"], searchTerms: ["Esc", "结果"] },
+  ],
   tree: [
     { action: "移动焦点", description: "在连接和数据表之间移动", keys: ["↑", "↓"], searchTerms: ["方向键", "上下"] },
     { action: "展开或收起连接", description: "展开连接或返回上一级", keys: ["→", "←"], searchTerms: ["方向键", "左右"] },
