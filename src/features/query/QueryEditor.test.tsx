@@ -85,7 +85,7 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
     <QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />,
   );
   const controlShortcut = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     ctrlKey: true,
     bubbles: true,
     cancelable: true,
@@ -98,7 +98,7 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
 
   render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
   const commandShortcut = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -129,7 +129,7 @@ function assertConfiguredExecuteShortcutReplacesDefault(): void {
     cancelable: true,
   });
   const previousDefault = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -170,7 +170,7 @@ function assertModalBlocksEditorShortcuts(): void {
     </>,
   );
   const shortcut = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -203,7 +203,7 @@ async function assertNativeShortcutRegistrationAndCleanup(): Promise<void> {
 
   act(() => nativeEventState.handler?.());
   const echoedDomShortcut = new KeyboardEvent("keydown", {
-    key: "Enter",
+    key: "r",
     metaKey: true,
     bubbles: true,
     cancelable: true,
@@ -232,7 +232,7 @@ async function assertSameSourceShortcutsAlwaysExecute(): Promise<void> {
   for (let index = 0; index < 2; index += 1) {
     document.dispatchEvent(
       new KeyboardEvent("keydown", {
-        key: "Enter",
+        key: "r",
         ctrlKey: true,
         bubbles: true,
         cancelable: true,
@@ -267,7 +267,7 @@ async function assertCrossSourceEchoRules(): Promise<void> {
   now.mockReturnValue(1_000);
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "Enter",
+      key: "r",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -301,7 +301,7 @@ async function assertNativeThenDomEchoExecutesOnce(): Promise<void> {
   act(() => nativeEventState.handler?.());
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "Enter",
+      key: "r",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -351,7 +351,7 @@ function assertModifiedShortcutsAreIgnored(): void {
   render(<QueryEditor sql={monacoState.sql} onSqlChange={vi.fn()} onExecute={onExecute} />);
   const shortcuts = [
     new KeyboardEvent("keydown", {
-      key: "Enter",
+      key: "r",
       ctrlKey: true,
       altKey: true,
       bubbles: true,
@@ -386,7 +386,7 @@ function assertCapturedCursorExecution(): void {
 
   document.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key: "Enter",
+      key: "r",
       ctrlKey: true,
       bubbles: true,
       cancelable: true,
@@ -453,7 +453,7 @@ function registerQueryEditorTests(): void {
     resetAllShortcutBindings();
     vi.restoreAllMocks();
   });
-  it("executes Ctrl/Cmd + Enter once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
   it("replaces the default execution binding after customization", assertConfiguredExecuteShortcutReplacesDefault);
   it("opens Monaco find with the configured contextual binding", assertConfiguredFindShortcutRunsMonacoAction);
   it("does not leak modal key recording into the SQL editor", assertModalBlocksEditorShortcuts);

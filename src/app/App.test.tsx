@@ -193,7 +193,7 @@ async function assertGlobalAddSupportsRedis(): Promise<void> {
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "添加连接" }));
   expect(screen.getByRole("heading", { name: "选择数据库类型" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: /Redis/ }));
+  fireEvent.click(screen.getByRole("button", { name: /连接测试与本地凭据保存/ }));
   expect(screen.getByRole("heading", { name: "添加 Redis 连接" })).toBeVisible();
   expect(screen.getByLabelText("端口")).toHaveValue(6379);
   expect(screen.getByLabelText("数据库编号")).toHaveValue(0);
@@ -305,6 +305,79 @@ async function assertGlobalCommandPalette(): Promise<void> {
   expect(screen.getByRole("dialog", { name: "快捷键帮助" })).toBeVisible();
 }
 
+/** Verifies the connection sidebar toggles, persists, and stays mounted while collapsed. */
+async function assertSidebarCollapseToggleAndPersistence(): Promise<void> {
+  const { unmount } = render(<App />);
+  await screen.findByRole("button", { name: /生产主库/ });
+  const shell = screen.getByRole("application", { name: "Pipa 数据库工作台" });
+  const toggle = screen.getByRole("button", { name: "收起连接侧边栏" });
+
+  expect(shell).not.toHaveClass("app-shell--sidebar-collapsed");
+  fireEvent.click(toggle);
+  expect(shell).toHaveClass("app-shell--sidebar-collapsed");
+  expect(window.localStorage.getItem("pipa.sidebar-collapsed.v1")).toBe("1");
+  expect(document.getElementById("connection-panel")).toBeTruthy();
+  expect(document.querySelector(`[data-connection-id="${PRODUCTION_PROFILE.id}"]`)).toBeTruthy();
+
+  fireEvent.keyDown(document, { key: "b", metaKey: true });
+  expect(shell).not.toHaveClass("app-shell--sidebar-collapsed");
+  expect(window.localStorage.getItem("pipa.sidebar-collapsed.v1")).toBe("0");
+
+  fireEvent.keyDown(document, { key: "b", metaKey: true });
+  expect(shell).toHaveClass("app-shell--sidebar-collapsed");
+  unmount();
+
+  render(<App />);
+  expect(screen.getByRole("application", { name: "Pipa 数据库工作台" })).toHaveClass(
+    "app-shell--sidebar-collapsed",
+  );
+  expect(screen.getByRole("button", { name: "展开连接侧边栏" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+}
+
+/** Verifies the collapsed topbar context chip expands and selects the active connection. */
+async function assertCollapsedContextBarRevealsConnection(): Promise<void> {
+  window.localStorage.setItem("pipa.sidebar-collapsed.v1", "1");
+  render(<App />);
+  const shell = await screen.findByRole("application", { name: "Pipa 数据库工作台" });
+  expect(shell).toHaveClass("app-shell--sidebar-collapsed");
+
+  const contextChip = await screen.findByRole("button", {
+    name: "当前连接 开发主库 · pipa_dev",
+  });
+  fireEvent.click(contextChip);
+
+  await waitFor(() => expect(shell).not.toHaveClass("app-shell--sidebar-collapsed"));
+  await waitFor(() => expect(document.querySelector(
+    `[data-connection-id="${DEVELOPMENT_PROFILE.id}"]`,
+  )).toHaveAttribute("aria-selected", "true"));
+  await waitFor(() => expect(document.activeElement).toHaveAttribute(
+    "data-connection-id",
+    DEVELOPMENT_PROFILE.id,
+  ));
+}
+
+/** Verifies opening a connection from the palette expands a collapsed sidebar. */
+async function assertPaletteNavigationExpandsSidebar(): Promise<void> {
+  window.localStorage.setItem("pipa.sidebar-collapsed.v1", "1");
+  render(<App />);
+  const shell = await screen.findByRole("application", { name: "Pipa 数据库工作台" });
+  expect(shell).toHaveClass("app-shell--sidebar-collapsed");
+
+  fireEvent.keyDown(document, { key: "p", metaKey: true, shiftKey: true });
+  const search = screen.getByRole("combobox", { name: /搜索连接/ });
+  fireEvent.change(search, { target: { value: "生产主库" } });
+  fireEvent.keyDown(search, { key: "Enter" });
+
+  await waitFor(() => expect(shell).not.toHaveClass("app-shell--sidebar-collapsed"));
+  await waitFor(() => expect(document.querySelector(
+    `[data-connection-id="${PRODUCTION_PROFILE.id}"]`,
+  )).toHaveAttribute("aria-selected", "true"));
+  expect(window.localStorage.getItem("pipa.sidebar-collapsed.v1")).toBe("0");
+}
+
 /** Verifies rename, safe config copy, and backend-owned reconnect stay in the connection menu. */
 async function assertSecondaryConnectionActions(): Promise<void> {
   clipboardState.writeText.mockResolvedValue(undefined);
@@ -387,6 +460,9 @@ function registerAppTests(): void {
   it("switches and persists the selected interface appearance", assertThemeSwitching);
   it("opens shortcut settings from the persistent topbar entry", assertShortcutSettingsEntry);
   it("opens and searches the global command palette", assertGlobalCommandPalette);
+  it("collapses the connection sidebar and restores the preference", assertSidebarCollapseToggleAndPersistence);
+  it("reveals the active connection from the collapsed context chip", assertCollapsedContextBarRevealsConnection);
+  it("expands a collapsed sidebar when the palette opens a connection", assertPaletteNavigationExpandsSidebar);
   it("renames, copies, and reconnects from the connection context menu", assertSecondaryConnectionActions);
 }
 

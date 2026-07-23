@@ -4,14 +4,21 @@ import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import type { Engine } from "../../bindings/Engine";
 import type { Environment } from "../../bindings/Environment";
-import { matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import {
+  loadEngineSectionCollapseOverrides,
+  persistEngineSectionCollapseOverrides,
+} from "../preferences/sidebarLayout";
 import { useQuerySession } from "../query/useQuerySession";
 
 interface ConnectionSidebarProps {
   discoverTables?: boolean;
   dirtyTables?: readonly { connectionId: string; tableName: string }[];
+  focusConnectionId?: string | null;
   profiles: ConnectionProfile[];
   selectedConnectionId: string | null;
+  tableCatalog?: Readonly<Record<string, readonly string[]>>;
+  onFocusConnectionHandled?: () => void;
   onSelectConnection: (id: string) => void;
   onAddConnection: () => void;
   onCopyConfig?: (profile: ConnectionProfile) => void;
@@ -34,11 +41,29 @@ interface ConnectionDrawerProps {
   expanded: boolean;
   profile: ConnectionProfile;
   selected: boolean;
+  tableFilter: string;
   onOpenTable?: (connectionId: string, tableName: string) => void;
   onOpenContextMenu: (profile: ConnectionProfile, x: number, y: number) => void;
   onSelect: (connectionId: string) => void;
   onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
   onToggle: (connectionId: string) => void;
+}
+
+/**
+ * Returns whether a connection's identity fields match a normalized navigator query.
+ * @param profile - Saved connection profile.
+ * @param normalizedQuery - Lowercased trimmed search text.
+ * @returns `true` when name, host, port, or database contains the query.
+ * Side effects: none.
+ */
+function connectionIdentityMatches(profile: ConnectionProfile, normalizedQuery: string): boolean {
+  if (!normalizedQuery) {
+    return true;
+  }
+  return [profile.name, profile.host, String(profile.port), profile.database ?? ""]
+    .join(" ")
+    .toLocaleLowerCase()
+    .includes(normalizedQuery);
 }
 
 interface ConnectionContextMenuState {
@@ -103,6 +128,7 @@ function ConnectionDrawer({
   expanded,
   profile,
   selected,
+  tableFilter,
   onOpenTable,
   onOpenContextMenu,
   onSelect,
@@ -112,10 +138,10 @@ function ConnectionDrawer({
   const tables = useQuerySession(profile.id, { recordHistory: false });
   const connectionButtonRef = useRef<HTMLButtonElement>(null);
   const canExplore = profile.engine === "my_sql" && Boolean(profile.database);
-  const [tableFilter, setTableFilter] = useState("");
   const [selectedTableName, setSelectedTableName] = useState<string | null>(null);
+  const normalizedTableFilter = tableFilter.trim().toLocaleLowerCase();
   const visibleTableRows = tables.state.rows.filter((row) =>
-    cellText(row[0]).toLocaleLowerCase().includes(tableFilter.trim().toLocaleLowerCase()),
+    cellText(row[0]).toLocaleLowerCase().includes(normalizedTableFilter),
   );
 
   useEffect(() => {
@@ -330,18 +356,6 @@ function ConnectionDrawer({
               )}
             </button>
           </header>
-          {canExplore && !tables.state.error ? (
-            <label className="table-tree-search">
-              <Search size={12} aria-hidden="true" />
-              <input
-                aria-label={`搜索 ${profile.name} 数据表`}
-                onChange={(event) => setTableFilter(event.target.value)}
-                placeholder="按表名筛选"
-                type="search"
-                value={tableFilter}
-              />
-            </label>
-          ) : null}
           {!profile.database ? (
             <p className="connection-drawer__status">请先在连接中指定数据库。</p>
           ) : tables.state.error ? (
@@ -403,8 +417,11 @@ function ConnectionDrawer({
 export function ConnectionSidebar({
   discoverTables = false,
   dirtyTables = [],
+  focusConnectionId = null,
   profiles,
   selectedConnectionId,
+  tableCatalog = {},
+  onFocusConnectionHandled,
   onSelectConnection,
   onAddConnection,
   onCopyConfig,
@@ -417,9 +434,55 @@ export function ConnectionSidebar({
 }: ConnectionSidebarProps) {
   const shortcuts = useShortcutSettings();
   const [expandedConnectionIds, setExpandedConnectionIds] = useState<Set<string>>(new Set());
+  const [engineCollapseOverrides, setEngineCollapseOverrides] = useState<Map<Engine, boolean>>(
+    loadEngineSectionCollapseOverrides,
+  );
+  const [navigatorFilter, setNavigatorFilter] = useState("");
   const [contextMenu, setContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const contextMenuItemRef = useRef<HTMLButtonElement>(null);
+  const navigatorSearchRef = useRef<HTMLInputElement>(null);
   const contextProfile = profiles.find((profile) => profile.id === contextMenu?.profileId) ?? null;
+  const focusProfile = focusConnectionId
+    ? profiles.find((profile) => profile.id === focusConnectionId) ?? null
+    : null;
+  const normalizedNavigatorFilter = navigatorFilter.trim().toLocaleLowerCase();
+
+  useEffect(() => {
+    if (!focusConnectionId) {
+      return;
+    }
+    if (focusProfile) {
+      setEngineCollapseOverrides((current) => {
+        if (current.get(focusProfile.engine) === false) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(focusProfile.engine, false);
+        persistEngineSectionCollapseOverrides(next);
+        return next;
+      });
+    }
+    setExpandedConnectionIds((current) => {
+      if (current.has(focusConnectionId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(focusConnectionId);
+      return next;
+    });
+    // Wait a frame so the panel can leave `inert` before focusing the row.
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const trigger = document.querySelector<HTMLButtonElement>(
+          `.connection-row[data-connection-id="${focusConnectionId}"]`,
+        );
+        trigger?.focus();
+        trigger?.scrollIntoView?.({ block: "nearest" });
+        onFocusConnectionHandled?.();
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusConnectionId, focusProfile, onFocusConnectionHandled]);
 
   useEffect(() => {
     if (!contextMenu) {
@@ -484,6 +547,49 @@ export function ConnectionSidebar({
     });
   }
 
+  /**
+   * Returns whether an engine section should render collapsed.
+   * Empty groups collapse by default; search hits and locate-focus force open.
+   * @param engine - Engine group identifier.
+   * @param totalCount - Saved connections for that engine.
+   * @param visibleCount - Connections still visible under the navigator filter.
+   * @returns `true` when the section body should be hidden.
+   * Side effects: none.
+   */
+  function isEngineSectionCollapsed(
+    engine: Engine,
+    totalCount: number,
+    visibleCount: number,
+  ): boolean {
+    if (normalizedNavigatorFilter && visibleCount > 0) {
+      return false;
+    }
+    if (focusProfile?.engine === engine) {
+      return false;
+    }
+    const override = engineCollapseOverrides.get(engine);
+    if (override !== undefined) {
+      return override;
+    }
+    return totalCount === 0;
+  }
+
+  /**
+   * Toggles one engine section and remembers the choice across sessions.
+   * @param engine - Engine group to collapse or expand.
+   * @param currentlyCollapsed - Current effective collapsed state before the click.
+   * @returns Nothing (`void`).
+   * Side effects: updates React state and persists the override map.
+   */
+  function handleToggleEngineSection(engine: Engine, currentlyCollapsed: boolean): void {
+    setEngineCollapseOverrides((current) => {
+      const next = new Map(current);
+      next.set(engine, !currentlyCollapsed);
+      persistEngineSectionCollapseOverrides(next);
+      return next;
+    });
+  }
+
   /** Opens the compact action menu within the visible application viewport. */
   function handleOpenContextMenu(profile: ConnectionProfile, x: number, y: number): void {
     const menuWidth = 190;
@@ -495,81 +601,132 @@ export function ConnectionSidebar({
     });
   }
 
-  /** Focuses table filtering for the expanded connection that currently owns sidebar context. */
+  /**
+   * Returns catalog table names under one connection that match the navigator query.
+   * @param connectionId - Saved connection identifier.
+   * @returns Matching table names from the already-loaded catalog.
+   * Side effects: none.
+   */
+  function matchingCatalogTables(connectionId: string): readonly string[] {
+    if (!normalizedNavigatorFilter) {
+      return [];
+    }
+    return (tableCatalog[connectionId] ?? []).filter((tableName) => (
+      tableName.toLocaleLowerCase().includes(normalizedNavigatorFilter)
+    ));
+  }
+
+  /**
+   * Returns whether one connection should remain visible under the current navigator filter.
+   * @param profile - Candidate connection.
+   * @returns `true` when identity or loaded table names match.
+   * Side effects: none.
+   */
+  function profileVisibleInNavigator(profile: ConnectionProfile): boolean {
+    if (!normalizedNavigatorFilter) {
+      return true;
+    }
+    return connectionIdentityMatches(profile, normalizedNavigatorFilter)
+      || matchingCatalogTables(profile.id).length > 0;
+  }
+
+  /** Focuses the sidebar-wide navigator search from the contextual find shortcut. */
   function handleSidebarKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (!matchesShortcut(event, shortcuts.bindings.find)) {
       return;
     }
-
-    const eventTarget = event.target instanceof Element ? event.target : null;
-    const focusedDrawer = eventTarget?.closest<HTMLElement>(".connection-drawer") ?? null;
-    const selectedDrawer = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>(".connection-row[data-connection-id]"),
-    )
-      .find((button) => button.dataset.connectionId === selectedConnectionId)
-      ?.closest<HTMLElement>(".connection-drawer") ?? null;
-    const searchInput = (focusedDrawer ?? selectedDrawer)?.querySelector<HTMLInputElement>(
-      ".table-tree-search input",
-    );
-    if (!searchInput) {
-      return;
-    }
-
     event.preventDefault();
-    searchInput.focus();
-    searchInput.select();
+    navigatorSearchRef.current?.focus();
+    navigatorSearchRef.current?.select();
   }
 
   return (
     <div className="connection-groups" onKeyDown={handleSidebarKeyDown}>
+      <label className="connection-navigator-search">
+        <Search size={12} aria-hidden="true" />
+        <input
+          aria-label="搜索连接或已加载的数据表"
+          onChange={(event) => setNavigatorFilter(event.target.value)}
+          placeholder="搜索连接或表"
+          ref={navigatorSearchRef}
+          title={`搜索连接或表（${getShortcutKeyLabels(shortcuts.bindings.find).join(" + ")}）`}
+          type="search"
+          value={navigatorFilter}
+        />
+      </label>
       <button className="connection-add-global" onClick={onAddConnection} type="button">
         <Plus size={14} aria-hidden="true" />
         添加连接
       </button>
       {ENGINE_GROUPS.map(({ engine, label }) => {
         const engineProfiles = profiles.filter((profile) => profile.engine === engine);
+        const visibleProfiles = engineProfiles.filter(profileVisibleInNavigator);
+        const sectionCollapsed = isEngineSectionCollapsed(
+          engine,
+          engineProfiles.length,
+          visibleProfiles.length,
+        );
 
         return (
           <section
-            className={`engine-section engine-section--${engine}`}
+            className={`engine-section engine-section--${engine}${sectionCollapsed ? " is-collapsed" : ""}`}
             aria-label={`${label} 连接`}
             key={engine}
           >
-            <header className="engine-section__header">
-              <span className="engine-section__identity">
-                <span className="engine-section__indicator" aria-hidden="true" />
-                <h2>{label}</h2>
-                <span className="engine-section__count" aria-label={`${engineProfiles.length} 个连接`}>
-                  {engineProfiles.length}
+            <h2 className="engine-section__heading">
+              <button
+                aria-controls={`engine-section-body-${engine}`}
+                aria-expanded={!sectionCollapsed}
+                aria-label={`${sectionCollapsed ? "展开" : "收起"} ${label} 连接分组`}
+                className="engine-section__toggle"
+                onClick={() => handleToggleEngineSection(engine, sectionCollapsed)}
+                type="button"
+              >
+                <span className="engine-section__identity">
+                  <span className="engine-section__indicator" aria-hidden="true" />
+                  <span className="engine-section__label">{label}</span>
+                  <span className="engine-section__count" aria-label={`${engineProfiles.length} 个连接`}>
+                    {engineProfiles.length}
+                  </span>
                 </span>
-              </span>
-            </header>
+                <ChevronRight className="engine-section__chevron" size={14} aria-hidden="true" />
+              </button>
+            </h2>
 
-            {engineProfiles.length === 0 ? (
-              <p className="engine-section__empty">暂无连接</p>
-            ) : (
-              <div className="connection-list" aria-label={`${label} 已保存连接`}>
-                {engineProfiles.map((profile) => (
-                  <ConnectionDrawer
-                    discoverTables={discoverTables}
-                    dirtyTableNames={new Set(
-                      dirtyTables
-                        .filter((table) => table.connectionId === profile.id)
-                        .map((table) => table.tableName),
-                    )}
-                    expanded={expandedConnectionIds.has(profile.id)}
-                    key={profile.id}
-                    onOpenTable={onOpenTable}
-                    onOpenContextMenu={handleOpenContextMenu}
-                    onSelect={onSelectConnection}
-                    onTablesLoaded={onTablesLoaded}
-                    onToggle={handleToggleConnection}
-                    profile={profile}
-                    selected={selectedConnectionId === profile.id}
-                  />
-                ))}
-              </div>
-            )}
+            <div className="engine-section__body" id={`engine-section-body-${engine}`} hidden={sectionCollapsed}>
+              {engineProfiles.length === 0 ? (
+                <p className="engine-section__empty">暂无连接</p>
+              ) : visibleProfiles.length === 0 ? (
+                <p className="engine-section__empty">无匹配连接或表</p>
+              ) : (
+                <div className="connection-list" aria-label={`${label} 已保存连接`}>
+                  {visibleProfiles.map((profile) => {
+                    const catalogTableMatches = matchingCatalogTables(profile.id);
+                    const forceExpandForTableMatch = catalogTableMatches.length > 0;
+                    return (
+                      <ConnectionDrawer
+                        discoverTables={discoverTables}
+                        dirtyTableNames={new Set(
+                          dirtyTables
+                            .filter((table) => table.connectionId === profile.id)
+                            .map((table) => table.tableName),
+                        )}
+                        expanded={forceExpandForTableMatch || expandedConnectionIds.has(profile.id)}
+                        key={profile.id}
+                        onOpenTable={onOpenTable}
+                        onOpenContextMenu={handleOpenContextMenu}
+                        onSelect={onSelectConnection}
+                        onTablesLoaded={onTablesLoaded}
+                        onToggle={handleToggleConnection}
+                        profile={profile}
+                        selected={selectedConnectionId === profile.id}
+                        tableFilter={normalizedNavigatorFilter}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </section>
         );
       })}

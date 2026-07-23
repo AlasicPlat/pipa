@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
 import { ResultGrid } from "./ResultGrid";
@@ -61,7 +61,34 @@ function assertMinimalStreamingFeedback(): void {
   expect(screen.queryByText(/行|耗时|阶段|连接中/)).not.toBeInTheDocument();
 }
 
+/**
+ * Verifies select-all then copy shortcuts operate on the in-memory result set.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: focuses the result grid and dispatches keyboard shortcuts.
+ */
+function assertSelectAllThenCopyShortcut(): void {
+  const onCopyAll = vi.fn();
+  render(
+    <ResultGrid
+      columns={COLUMNS}
+      rows={[ROW]}
+      running={false}
+      incomplete={false}
+      onCopyAll={onCopyAll}
+    />,
+  );
+  const grid = screen.getByRole("table", { name: "查询结果" });
+  grid.focus();
+  fireEvent.keyDown(grid, { key: "a", metaKey: true });
+  expect(grid).toHaveClass("result-grid--selected");
+  fireEvent.keyDown(grid, { key: "c", metaKey: true });
+  expect(onCopyAll).toHaveBeenCalledTimes(1);
+}
+
 describe("ResultGrid", () => {
+  afterEach(cleanup);
   it("virtualizes rows and renders lossless cell values", assertLosslessVirtualRows);
   it("shows only minimal bottom streaming feedback", assertMinimalStreamingFeedback);
+  it("copies all rows after select-all", assertSelectAllThenCopyShortcut);
 });

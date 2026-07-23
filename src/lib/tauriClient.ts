@@ -14,7 +14,7 @@ export interface WorkspaceTabPayload {
 
 /**
  * Keeps the native desktop execute-query menu aligned with the configured web shortcut.
- * @param accelerator - Valid Tauri menu accelerator such as `CmdOrCtrl+Enter`.
+ * @param accelerator - Valid Tauri menu accelerator such as `CmdOrCtrl+R`.
  * @returns A promise that resolves after the operating-system menu is updated.
  * Side effects: invokes the Tauri `set_execute_query_accelerator` command.
  */

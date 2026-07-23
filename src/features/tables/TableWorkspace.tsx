@@ -19,6 +19,7 @@ import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import { useQuerySession } from "../query/useQuerySession";
+import { SelectableSqlBlock } from "./SelectableSqlBlock";
 import {
   buildDdlStatements,
   buildDmlStatements,
@@ -666,7 +667,21 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
           </section>
         ) : null}
 
-        {database && activeView === "ddl" ? <section className="raw-ddl" aria-label="原始 DDL">{ddlSession.state.running && !rawDdl ? <p className="table-state">正在读取 DDL…</p> : ddlSession.state.error ? <p className="table-state table-state--error">无法读取 DDL：{ddlSession.state.error.message}</p> : <pre>{rawDdl || "数据库未返回 CREATE TABLE 语句。"}</pre>}</section> : null}
+        {database && activeView === "ddl" ? (
+          <section className="raw-ddl" aria-label="原始 DDL">
+            {ddlSession.state.running && !rawDdl ? (
+              <p className="table-state">正在读取 DDL…</p>
+            ) : ddlSession.state.error ? (
+              <p className="table-state table-state--error">无法读取 DDL：{ddlSession.state.error.message}</p>
+            ) : (
+              <SelectableSqlBlock
+                ariaLabel={`${tableName} 原始 DDL`}
+                className="raw-ddl__text"
+                value={rawDdl || "数据库未返回 CREATE TABLE 语句。"}
+              />
+            )}
+          </section>
+        ) : null}
       </div>
     </section>
   );
@@ -679,5 +694,10 @@ interface SqlPreviewProps {
 
 /** Renders the exact native SQL represented by a local change set. */
 function SqlPreview({ title, sql }: SqlPreviewProps) {
-  return <details className="sql-preview" open><summary>{title}</summary><pre>{sql}</pre></details>;
+  return (
+    <details className="sql-preview" open>
+      <summary>{title}</summary>
+      <SelectableSqlBlock ariaLabel={title} className="sql-preview__text" value={sql} />
+    </details>
+  );
 }

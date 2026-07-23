@@ -14,7 +14,7 @@ const EXECUTE_QUERY_MENU_ID: &str = "pipa.execute-query";
 #[cfg(any(target_os = "macos", test))]
 const EXECUTE_QUERY_EVENT: &str = "pipa://execute-query";
 #[cfg(any(target_os = "macos", test))]
-const EXECUTE_QUERY_ACCELERATOR: &str = "CmdOrCtrl+Enter";
+const EXECUTE_QUERY_ACCELERATOR: &str = "CmdOrCtrl+R";
 /// Tauri's default macOS menu places View at index 3 and Window/Help after it.
 #[cfg(any(target_os = "macos", test))]
 const QUERY_MENU_INSERTION_INDEX_AFTER_VIEW: usize = 4;
@@ -147,7 +147,7 @@ mod tests {
     fn native_execute_query_contract_is_stable() {
         assert_eq!(EXECUTE_QUERY_MENU_ID, "pipa.execute-query");
         assert_eq!(EXECUTE_QUERY_EVENT, "pipa://execute-query");
-        assert_eq!(EXECUTE_QUERY_ACCELERATOR, "CmdOrCtrl+Enter");
+        assert_eq!(EXECUTE_QUERY_ACCELERATOR, "CmdOrCtrl+R");
         assert_eq!(QUERY_MENU_INSERTION_INDEX_AFTER_VIEW, 4);
         assert!(is_execute_query_menu(EXECUTE_QUERY_MENU_ID));
         assert!(!is_execute_query_menu("pipa.new-query"));
