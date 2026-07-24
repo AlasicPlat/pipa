@@ -6,6 +6,7 @@ import {
   deleteConnection,
   listConnections,
   loadWorkspace,
+  mcpSetConnectionScope,
   reconnectConnection,
   recordQueryHistory,
   renameConnection,
@@ -15,6 +16,7 @@ import {
   testMySqlConnection,
   type WorkspaceTabPayload,
 } from "./tauriClient";
+import { EMPTY_MCP_SNAPSHOT } from "../features/mcp/types";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -107,6 +109,18 @@ async function assertNativeAcceleratorCommand(): Promise<void> {
   });
 }
 
+/** Verifies MCP connection-scope settings use explicit camel-case IPC fields. */
+async function assertMcpConnectionScopeCommand(): Promise<void> {
+  vi.mocked(invoke).mockResolvedValueOnce(EMPTY_MCP_SNAPSHOT);
+
+  await expect(mcpSetConnectionScope(true, PROFILE.id)).resolves.toEqual(EMPTY_MCP_SNAPSHOT);
+
+  expect(invoke).toHaveBeenCalledWith("mcp_set_connection_scope", {
+    restrictToConnection: true,
+    targetConnectionId: PROFILE.id,
+  });
+}
+
 /**
  * Registers typed connection IPC contract tests.
  * Parameters: none.
@@ -118,6 +132,7 @@ function registerTauriClientTests(): void {
   it("uses the exact connection command contract", assertExactConnectionCommands);
   it("uses the exact safe workspace command contracts", assertExactWorkspaceCommands);
   it("updates the native execute-query accelerator", assertNativeAcceleratorCommand);
+  it("updates the MCP connection scope", assertMcpConnectionScopeCommand);
 }
 
 describe("tauriClient", registerTauriClientTests);

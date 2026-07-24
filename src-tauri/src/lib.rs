@@ -1,5 +1,6 @@
 mod bootstrap;
 mod commands;
+mod mcp;
 mod state;
 
 use tauri::Manager;
@@ -112,7 +113,34 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
-            app.manage(state::AppState::initialize(&app_data_dir)?);
+            let app_state = state::AppState::initialize(&app_data_dir)?;
+            let auto_start = {
+                // Block briefly on the async mutex only for the enabled flag read.
+                app_state
+                    .mcp_server
+                    .try_lock()
+                    .map(|guard| guard.settings().enabled)
+                    .unwrap_or(false)
+            };
+            if auto_start {
+                let handle = app_state.mcp_server.clone();
+                let deps = app_state.mcp_deps();
+                let port = handle
+                    .try_lock()
+                    .map(|guard| guard.port())
+                    .unwrap_or(mcp::DEFAULT_MCP_PORT);
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = mcp::start_mcp_server(handle, deps, port).await {
+                        eprintln!("Pipa MCP auto-start failed on 127.0.0.1:{port}: {error:?}");
+                    }
+                });
+            }
+            let queue = app_state.mcp_queue.clone();
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                queue.set_app_handle(app_handle).await;
+            });
+            app.manage(app_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -130,6 +158,15 @@ pub fn run() {
             commands::load_workspace,
             commands::save_workspace,
             commands::record_query_history,
+            mcp::mcp_get_snapshot,
+            mcp::mcp_start,
+            mcp::mcp_stop,
+            mcp::mcp_set_port,
+            mcp::mcp_set_connection_scope,
+            mcp::mcp_regenerate_token,
+            mcp::mcp_execute_proposal,
+            mcp::mcp_dismiss_proposal,
+            mcp::mcp_run_manual_sql,
         ])
         .run(tauri::generate_context!())
         .expect("Pipa could not start because secure local storage is unavailable");

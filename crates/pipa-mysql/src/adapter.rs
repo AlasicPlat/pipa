@@ -27,6 +27,18 @@ impl MySqlAdapter {
     pub const fn new() -> Self {
         Self
     }
+
+    /// Executes one MCP-approved query in a server-enforced read-only session.
+    pub async fn query_readonly(
+        &self,
+        profile: &ConnectionProfile,
+        password: SecretString,
+        request: QueryRequest,
+        events: mpsc::Sender<QueryEvent>,
+        cancellation: CancellationToken,
+    ) -> Result<(), AppError> {
+        execute_query(profile, password, request, events, cancellation, true).await
+    }
 }
 
 impl Default for MySqlAdapter {
@@ -71,99 +83,64 @@ impl DatabaseAdapter for MySqlAdapter {
         events: mpsc::Sender<QueryEvent>,
         cancellation: CancellationToken,
     ) -> Result<(), AppError> {
-        let query_id = request.query_id;
-        let pool = create_pool(profile, &password);
-        let mut connection = pool
-            .acquire()
+        execute_query(profile, password, request, events, cancellation, false).await
+    }
+}
+
+/// Executes a query with optional database-enforced read-only session semantics.
+async fn execute_query(
+    profile: &ConnectionProfile,
+    password: SecretString,
+    request: QueryRequest,
+    events: mpsc::Sender<QueryEvent>,
+    cancellation: CancellationToken,
+    read_only: bool,
+) -> Result<(), AppError> {
+    let query_id = request.query_id;
+    let pool = create_pool(profile, &password);
+    let mut connection = pool
+        .acquire()
+        .await
+        .map_err(|error| map_connection_error(&error, password.expose_secret()))?;
+
+    send_event(&events, QueryEvent::Started { query_id }).await?;
+    if read_only {
+        if let Err(error) = raw_sql(AssertSqlSafe("SET SESSION TRANSACTION READ ONLY"))
+            .execute(&mut *connection)
             .await
-            .map_err(|error| map_connection_error(&error, password.expose_secret()))?;
+        {
+            send_query_failure(&events, query_id, &error, password.expose_secret()).await?;
+            return Ok(());
+        }
+    }
 
-        send_event(&events, QueryEvent::Started { query_id }).await?;
+    // QueryRequest contains the user's complete editor SQL, not interpolated application data.
+    let mut rows = raw_sql(AssertSqlSafe(request.sql)).fetch_many(&mut *connection);
+    let mut schema_sent = false;
+    let mut current_result_has_rows = false;
+    let mut completed_row_result = false;
+    let mut batch = Vec::with_capacity(MAX_BATCH_ROWS);
+    let mut affected_rows = 0_u64;
 
-        // QueryRequest contains the user's complete editor SQL, not interpolated application data.
-        let mut rows = raw_sql(AssertSqlSafe(request.sql)).fetch_many(&mut *connection);
-        let mut schema_sent = false;
-        let mut current_result_has_rows = false;
-        let mut completed_row_result = false;
-        let mut batch = Vec::with_capacity(MAX_BATCH_ROWS);
-        let mut affected_rows = 0_u64;
+    loop {
+        let next = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                drop(rows);
+                // The connection has already been removed from the pool even if shutdown fails.
+                let _close_result = connection.close().await;
+                send_event(&events, QueryEvent::Canceled { query_id }).await?;
+                return Ok(());
+            }
+            next = rows.try_next() => next,
+        };
 
-        loop {
-            let next = tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => {
-                    drop(rows);
-                    // The connection has already been removed from the pool even if shutdown fails.
-                    let _close_result = connection.close().await;
-                    send_event(&events, QueryEvent::Canceled { query_id }).await?;
-                    return Ok(());
-                }
-                next = rows.try_next() => next,
-            };
-
-            match next {
-                Ok(Some(Either::Left(result))) => {
-                    affected_rows = affected_rows.saturating_add(result.rows_affected());
-                    // SQLx emits QueryResult after a statement's rows, making this the set boundary.
-                    if current_result_has_rows {
-                        if !batch.is_empty() {
-                            send_event(
-                                &events,
-                                QueryEvent::Batch {
-                                    query_id,
-                                    rows: std::mem::take(&mut batch),
-                                },
-                            )
-                            .await?;
-                        }
-                        current_result_has_rows = false;
-                        completed_row_result = true;
-                    }
-                }
-                Ok(Some(Either::Right(row))) => {
-                    // QueryEvent has one schema, so later row-producing sets cannot be represented.
-                    if completed_row_result {
-                        drop(rows);
-                        send_event(
-                            &events,
-                            QueryEvent::Failed {
-                                query_id,
-                                error: AppError {
-                                    code: AppErrorCode::Query,
-                                    message: "Multiple result sets are not supported".into(),
-                                    technical_details: None,
-                                    retryable: false,
-                                },
-                            },
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-                    current_result_has_rows = true;
-
-                    if !schema_sent {
-                        send_event(
-                            &events,
-                            QueryEvent::Schema {
-                                query_id,
-                                columns: query_columns(&row),
-                            },
-                        )
-                        .await?;
-                        schema_sent = true;
-                    }
-
-                    match convert_row(&row) {
-                        Ok(row) => batch.push(row),
-                        Err(error) => {
-                            drop(rows);
-                            send_query_failure(&events, query_id, &error, password.expose_secret())
-                                .await?;
-                            return Ok(());
-                        }
-                    }
-
-                    if batch.len() == MAX_BATCH_ROWS {
+        match next {
+            Ok(Some(Either::Left(result))) => {
+                affected_rows = affected_rows.saturating_add(result.rows_affected());
+                // SQLx emits QueryResult after a statement's rows, making this the set boundary.
+                if current_result_has_rows {
+                    if !batch.is_empty() {
                         send_event(
                             &events,
                             QueryEvent::Batch {
@@ -173,36 +150,101 @@ impl DatabaseAdapter for MySqlAdapter {
                         )
                         .await?;
                     }
-                }
-                Ok(None) => break,
-                Err(error) => {
-                    drop(rows);
-                    send_query_failure(&events, query_id, &error, password.expose_secret()).await?;
-                    return Ok(());
+                    current_result_has_rows = false;
+                    completed_row_result = true;
                 }
             }
-        }
+            Ok(Some(Either::Right(row))) => {
+                // QueryEvent has one schema, so later row-producing sets cannot be represented.
+                if completed_row_result {
+                    drop(rows);
+                    send_event(
+                        &events,
+                        QueryEvent::Failed {
+                            query_id,
+                            error: AppError {
+                                code: AppErrorCode::Query,
+                                message: "Multiple result sets are not supported".into(),
+                                technical_details: None,
+                                retryable: false,
+                            },
+                        },
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                current_result_has_rows = true;
 
-        drop(rows);
-        if !batch.is_empty() {
-            send_event(
-                &events,
-                QueryEvent::Batch {
-                    query_id,
-                    rows: batch,
-                },
-            )
-            .await?;
+                if !schema_sent {
+                    send_event(
+                        &events,
+                        QueryEvent::Schema {
+                            query_id,
+                            columns: query_columns(&row),
+                        },
+                    )
+                    .await?;
+                    schema_sent = true;
+                }
+
+                match convert_row(&row) {
+                    Ok(row) => batch.push(row),
+                    Err(error) => {
+                        drop(rows);
+                        send_query_failure(&events, query_id, &error, password.expose_secret())
+                            .await?;
+                        return Ok(());
+                    }
+                }
+
+                if batch.len() == MAX_BATCH_ROWS {
+                    send_event(
+                        &events,
+                        QueryEvent::Batch {
+                            query_id,
+                            rows: std::mem::take(&mut batch),
+                        },
+                    )
+                    .await?;
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                drop(rows);
+                send_query_failure(&events, query_id, &error, password.expose_secret()).await?;
+                return Ok(());
+            }
         }
+    }
+
+    drop(rows);
+    if !batch.is_empty() {
         send_event(
             &events,
-            QueryEvent::Completed {
+            QueryEvent::Batch {
                 query_id,
-                affected_rows,
+                rows: batch,
             },
         )
-        .await
+        .await?;
     }
+    if read_only {
+        if let Err(error) = raw_sql(AssertSqlSafe("SET SESSION TRANSACTION READ WRITE"))
+            .execute(&mut *connection)
+            .await
+        {
+            send_query_failure(&events, query_id, &error, password.expose_secret()).await?;
+            return Ok(());
+        }
+    }
+    send_event(
+        &events,
+        QueryEvent::Completed {
+            query_id,
+            affected_rows,
+        },
+    )
+    .await
 }
 
 /// Builds profile-derived SQLx options and a lazy one-connection pool.

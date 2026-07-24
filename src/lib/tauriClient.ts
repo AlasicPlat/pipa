@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { RecordQueryHistoryInput } from "../bindings/RecordQueryHistoryInput";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
+import type { McpPanelSnapshot } from "../features/mcp/types";
 
 /** Exact non-secret workspace-tab payload shared with the Rust persistence command. */
 export interface WorkspaceTabPayload {
@@ -124,4 +125,61 @@ export function saveWorkspace(tabs: WorkspaceTabPayload[]): Promise<void> {
  */
 export function recordQueryHistory(input: RecordQueryHistoryInput): Promise<void> {
   return invoke<void>("record_query_history", { input });
+}
+
+/** Loads the current MCP server status, proposals, and activity log. */
+export function mcpGetSnapshot(): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_get_snapshot");
+}
+
+/** Starts the loopback Streamable HTTP MCP server. */
+export function mcpStart(): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_start");
+}
+
+/** Stops the MCP HTTP server. */
+export function mcpStop(): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_stop");
+}
+
+/** Updates the preferred MCP port (restarts when already running). */
+export function mcpSetPort(port: number): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_set_port", { port });
+}
+
+/**
+ * Updates the optional single-connection MCP access boundary.
+ * @param restrictToConnection - Whether MCP tools may use only the selected target.
+ * @param targetConnectionId - Saved connection retained as the target, or null when unset.
+ * @returns The refreshed MCP panel snapshot.
+ * Side effects: persists encrypted local MCP settings and updates live MCP sessions.
+ */
+export function mcpSetConnectionScope(
+  restrictToConnection: boolean,
+  targetConnectionId: string | null,
+): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_set_connection_scope", {
+    restrictToConnection,
+    targetConnectionId,
+  });
+}
+
+/** Regenerates the bearer token by restarting MCP. */
+export function mcpRegenerateToken(): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_regenerate_token");
+}
+
+/** Executes a pending MCP SQL proposal after user confirmation. */
+export function mcpExecuteProposal(proposalId: string): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_execute_proposal", { proposalId });
+}
+
+/** Dismisses a pending MCP SQL proposal without executing it. */
+export function mcpDismissProposal(proposalId: string): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_dismiss_proposal", { proposalId });
+}
+
+/** Runs arbitrary SQL from the MCP panel (UI privileges; not MCP-gated). */
+export function mcpRunManualSql(connectionId: string, sql: string): Promise<McpPanelSnapshot> {
+  return invoke<McpPanelSnapshot>("mcp_run_manual_sql", { connectionId, sql });
 }

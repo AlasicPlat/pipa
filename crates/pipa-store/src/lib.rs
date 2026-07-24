@@ -3,6 +3,7 @@
 #![warn(missing_docs)]
 
 mod connection_repository;
+mod settings_repository;
 mod workspace_repository;
 
 use pipa_core::{AppError, AppErrorCode};
@@ -13,6 +14,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+pub use settings_repository::McpSettings;
 pub use workspace_repository::{QueryHistoryEntry, WorkspaceTab};
 
 /// Encrypted SQLite storage for local application data and database credentials.
@@ -66,6 +68,10 @@ impl LocalStore {
                        connection_id TEXT NOT NULL,
                        sql_text TEXT NOT NULL,
                        executed_at TEXT NOT NULL
+                     );
+                     CREATE TABLE IF NOT EXISTS app_settings (
+                       key TEXT PRIMARY KEY,
+                       value TEXT NOT NULL
                      );",
                 )
             })
@@ -110,7 +116,7 @@ impl fmt::Debug for LocalStore {
 }
 
 /// Converts an implementation error into a stable storage error without secret inputs.
-fn storage_error(
+pub(crate) fn storage_error(
     message: &'static str,
     operation: &'static str,
     source: impl fmt::Display,

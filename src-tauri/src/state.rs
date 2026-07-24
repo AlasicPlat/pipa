@@ -1,4 +1,8 @@
 use crate::bootstrap::{try_path_exists, BootstrapStore};
+use crate::mcp::{
+    initial_mcp_settings, shared_connection_scope, McpDeps, McpQueue, McpServerHandle,
+    SharedMcpConnectionScope, SharedMcpServer,
+};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use pipa_core::{AppError, AppErrorCode};
 use pipa_mysql::MySqlAdapter;
@@ -27,6 +31,12 @@ pub struct AppState {
     pub redis: Arc<RedisAdapter>,
     /// Cancellation tokens for currently running queries.
     pub cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    /// In-process MCP HTTP server handle.
+    pub mcp_server: SharedMcpServer,
+    /// MCP proposal queue and activity log.
+    pub mcp_queue: McpQueue,
+    /// Live MCP connection visibility and authorization boundary.
+    pub mcp_connection_scope: SharedMcpConnectionScope,
 }
 
 impl AppState {
@@ -45,13 +55,28 @@ impl AppState {
                 )
             })
         })?;
+        let mcp_settings = initial_mcp_settings(&local_store);
+        let mcp_connection_scope = shared_connection_scope(&mcp_settings);
 
         Ok(Self {
             local_store: Arc::new(local_store),
             mysql: Arc::new(MySqlAdapter::new()),
             redis: Arc::new(RedisAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            mcp_server: Arc::new(Mutex::new(McpServerHandle::from_settings(mcp_settings))),
+            mcp_queue: McpQueue::new(),
+            mcp_connection_scope,
         })
+    }
+
+    /// Clones dependencies needed by the MCP HTTP tool surface.
+    pub fn mcp_deps(&self) -> McpDeps {
+        McpDeps {
+            local_store: self.local_store.clone(),
+            mysql: self.mysql.clone(),
+            queue: self.mcp_queue.clone(),
+            connection_scope: self.mcp_connection_scope.clone(),
+        }
     }
 }
 
