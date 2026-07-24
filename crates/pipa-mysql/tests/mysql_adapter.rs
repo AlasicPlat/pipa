@@ -281,6 +281,78 @@ async fn invalid_sql_emits_stable_failed_event() {
     ));
 }
 
+/// Verifies the MCP adapter path rejects writes even after syntactic approval.
+#[tokio::test]
+async fn readonly_query_uses_a_database_enforced_session() {
+    let profile = test_profile();
+    let table_name = format!("pipa_readonly_{}", Uuid::new_v4().simple());
+    let ddl_table_name = format!("pipa_readonly_ddl_{}", Uuid::new_v4().simple());
+    let setup_events = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("CREATE TABLE `{table_name}` (id INT)"),
+    )
+    .await;
+    assert!(matches!(
+        setup_events.last(),
+        Some(QueryEvent::Completed { .. })
+    ));
+
+    let query_id = Uuid::new_v4();
+    let events = run_readonly_query(
+        &profile,
+        query_id,
+        &format!("INSERT INTO `{table_name}` VALUES (1)"),
+    )
+    .await;
+
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                QueryEvent::Started { query_id: started },
+                QueryEvent::Failed {
+                    query_id: failed,
+                    ..
+                }
+            ] if *started == query_id && *failed == query_id
+        ),
+        "unexpected read-only event stream: {events:?}"
+    );
+
+    let ddl_query_id = Uuid::new_v4();
+    let ddl_events = run_readonly_query(
+        &profile,
+        ddl_query_id,
+        &format!("CREATE TABLE `{ddl_table_name}` (id INT)"),
+    )
+    .await;
+    assert!(
+        matches!(
+            ddl_events.as_slice(),
+            [
+                QueryEvent::Started { query_id: started },
+                QueryEvent::Failed {
+                    query_id: failed,
+                    ..
+                }
+            ] if *started == ddl_query_id && *failed == ddl_query_id
+        ),
+        "unexpected read-only DDL event stream: {ddl_events:?}"
+    );
+
+    let cleanup_events = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE IF EXISTS `{table_name}`, `{ddl_table_name}`"),
+    )
+    .await;
+    assert!(matches!(
+        cleanup_events.last(),
+        Some(QueryEvent::Completed { .. })
+    ));
+}
+
 /// Verifies authentication failures use a stable category and redact the supplied password.
 #[tokio::test]
 async fn authentication_errors_are_stable_and_redacted() {
@@ -316,6 +388,35 @@ async fn run_query(profile: &ConnectionProfile, query_id: Uuid, sql: &str) -> Ve
         )
         .await
         .expect("query should complete through its event stream");
+
+    let mut events = Vec::new();
+    while let Some(event) = events_rx.recv().await {
+        events.push(event);
+    }
+    events
+}
+
+/// Runs one read-only integration query and collects every emitted event.
+async fn run_readonly_query(
+    profile: &ConnectionProfile,
+    query_id: Uuid,
+    sql: &str,
+) -> Vec<QueryEvent> {
+    let (events_tx, mut events_rx) = mpsc::channel(16);
+    MySqlAdapter::new()
+        .query_readonly(
+            profile,
+            SecretString::from("pipa_test_password"),
+            QueryRequest {
+                query_id,
+                connection_id: profile.id,
+                sql: sql.into(),
+            },
+            events_tx,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("read-only query should complete through its event stream");
 
     let mut events = Vec::new();
     while let Some(event) = events_rx.recv().await {

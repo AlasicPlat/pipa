@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Command as CommandIcon, Database, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Command as CommandIcon, Database, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Trash2 } from "lucide-react";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { Engine } from "../bindings/Engine";
 import { CommandPalette, type CommandPaletteItem } from "../features/commands/CommandPalette";
@@ -19,6 +19,7 @@ import { ConnectionForm } from "../features/connections/ConnectionForm";
 import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { ConnectionTypePicker } from "../features/connections/ConnectionTypePicker";
 import { useConnections } from "../features/connections/useConnections";
+import { McpPanel } from "../features/mcp/McpPanel";
 import { ThemeToggle } from "../features/preferences/ThemeToggle";
 import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/preferences/sidebarLayout";
 import { useThemePreference } from "../features/preferences/theme";
@@ -76,6 +77,7 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [shortcutDialogView, setShortcutDialogView] = useState<ShortcutDialogView>("help");
+  const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [focusConnectionId, setFocusConnectionId] = useState<string | null>(null);
   const [tableCatalog, setTableCatalog] = useState<Record<string, string[]>>({});
@@ -123,6 +125,14 @@ export function App() {
       detail: "选择 MySQL 或 Redis",
       keywords: ["新建连接", "mysql", "redis"],
       lastUsedAt: recentItemTimestamps["command:add-connection"],
+    },
+    {
+      id: "command:open-mcp",
+      type: "command",
+      label: "打开 MCP 控制台",
+      detail: "启停 MCP、查看执行日志并确认写 SQL",
+      keywords: ["mcp", "ai", "只读", "propose"],
+      lastUsedAt: recentItemTimestamps["command:open-mcp"],
     },
     {
       id: "command:shortcut-help",
@@ -444,6 +454,9 @@ export function App() {
         break;
       case "command:previous-workspace":
         cycleWorkspaceTabs(true);
+        break;
+      case "command:open-mcp":
+        setMcpPanelOpen(true);
         break;
       case "command:shortcut-help":
         openShortcutDialog("help");
@@ -1086,6 +1099,15 @@ export function App() {
               <Keyboard size={14} aria-hidden="true" />
               快捷键
             </button>
+            <button
+              aria-label="打开 MCP 控制台"
+              onClick={() => setMcpPanelOpen(true)}
+              title="MCP 控制台"
+              type="button"
+            >
+              <Server size={14} aria-hidden="true" />
+              MCP
+            </button>
             <ThemeToggle preference={theme.preference} onChange={theme.setPreference} />
             <span className="workspace__scope">本地会话</span>
           </span>
@@ -1221,6 +1243,11 @@ export function App() {
         initialView={shortcutDialogView}
         onClose={() => setShortcutHelpOpen(false)}
         open={shortcutHelpOpen}
+      />
+      <McpPanel
+        onClose={() => setMcpPanelOpen(false)}
+        open={mcpPanelOpen}
+        profiles={connections.profiles}
       />
       {renameCandidate ? (
         <div
