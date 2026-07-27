@@ -12,7 +12,7 @@
 
   [下载 Apple 芯片版](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-arm64.dmg)
   ·
-  [下载 Intel 芯片版（v0.2.4）](https://github.com/AlasicPlat/pipa/releases/download/v0.2.4/Pipa-macOS-x64.dmg)
+  [下载 Intel 芯片版](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg)
 </div>
 
 <p align="center">
@@ -59,11 +59,11 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 | Mac 类型 | 安装包 |
 | --- | --- |
 | Apple 芯片（M1 / M2 / M3 / M4 等） | [下载 `Pipa-macOS-arm64.dmg`](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-arm64.dmg) |
-| Intel 芯片 | [下载 v0.2.4 `Pipa-macOS-x64.dmg`](https://github.com/AlasicPlat/pipa/releases/download/v0.2.4/Pipa-macOS-x64.dmg) |
+| Intel 芯片 | [下载 `Pipa-macOS-x64.dmg`](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg) |
 
 下载后打开 DMG，将 Pipa 拖入“应用程序”文件夹即可。历史版本与更新说明可在 [Releases](https://github.com/AlasicPlat/pipa/releases) 查看。
 
-v0.2.5 Apple 芯片版为未签名构建，首次打开时请在 Finder 中右键应用并选择“打开”。Intel 芯片版当前停留在 v0.2.4，已完成 Developer ID 签名并通过 Apple 公证。
+当前 v0.2.5 的两个安装包均已完成 Developer ID 签名并通过 Apple 公证。
 
 ## 本地数据与隐私
 
