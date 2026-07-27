@@ -15,6 +15,7 @@ interface WorkspaceTabsProps {
   busyQueryTabId: string | null;
   dirtyTableTabIds: ReadonlySet<string>;
   newQueryConnectionName: string | null;
+  newQueryEngine?: "my_sql" | "redis" | null;
   queryTabs: WorkspaceTab[];
   tableTabs: OpenTableTab[];
   onCloseQuery: (tabId: string) => void;
@@ -36,6 +37,7 @@ export function WorkspaceTabs({
   busyQueryTabId,
   dirtyTableTabIds,
   newQueryConnectionName,
+  newQueryEngine = "my_sql",
   queryTabs,
   tableTabs,
   onCloseQuery,
@@ -47,6 +49,7 @@ export function WorkspaceTabs({
   const shortcuts = useShortcutSettings();
   const closeShortcut = getShortcutKeyLabels(shortcuts.bindings.closeWorkspace).join(" + ");
   const newQueryShortcut = getShortcutKeyLabels(shortcuts.bindings.newQuery).join(" + ");
+  const newQueryKind = newQueryEngine === "redis" ? "Redis 工作区" : "SQL 查询";
   return (
     <div className="query-tabs-bar">
       <div className="query-tabs" role="tablist" aria-label="工作区标签">
@@ -113,7 +116,7 @@ export function WorkspaceTabs({
       <button
         aria-label={
           newQueryConnectionName
-            ? `在当前已选 MySQL 连接 ${newQueryConnectionName} 中新建查询`
+            ? `在当前已选 ${newQueryEngine === "redis" ? "Redis" : "MySQL"} 连接 ${newQueryConnectionName} 中新建${newQueryEngine === "redis" ? "工作区" : "查询"}`
             : "请选择 MySQL 连接后新建查询"
         }
         className="query-new-button"
@@ -123,7 +126,7 @@ export function WorkspaceTabs({
         type="button"
       >
         <Plus size={13} aria-hidden="true" />
-        <span>新建 SQL</span>
+        <span>新建 {newQueryKind}</span>
         <kbd>{newQueryShortcut}</kbd>
       </button>
     </div>

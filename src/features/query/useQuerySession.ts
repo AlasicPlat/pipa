@@ -35,6 +35,8 @@ interface QuerySessionController {
 interface QuerySessionOptions {
   /** Whether successful query starts should appear in user query history. */
   recordHistory?: boolean;
+  /** Optional Redis database selected for every execution in this session. */
+  database?: string | null;
 }
 
 /**
@@ -149,7 +151,7 @@ function toAppError(error: unknown): AppError {
 
 /**
  * Owns one connection-bound query run, ordered channel delivery, and one-shot cancellation.
- * @param connectionId - Saved MySQL connection fixed to this workspace instance.
+ * @param connectionId - Saved executable connection fixed to this workspace instance.
  * @param options - Optional behavior for internal metadata queries.
  * @returns Current state and asynchronous run/cancel commands.
  * Side effects: invokes exact Tauri query commands; never sends credentials to the frontend.
@@ -159,6 +161,7 @@ export function useQuerySession(
   options: QuerySessionOptions = {},
 ): QuerySessionController {
   const recordHistoryEnabled = options.recordHistory ?? true;
+  const database = options.database ?? null;
   const [state, dispatch] = useReducer(
     querySessionReducer,
     undefined,
@@ -169,8 +172,8 @@ export function useQuerySession(
   const historyRecordedQueryIdRef = useRef<string | null>(null);
 
   /**
-   * Starts SQL only when this workspace has no active query.
-   * @param sql - Already selected and trimmed SQL text.
+   * Starts engine-native text only when this workspace has no active execution.
+   * @param sql - Already selected and trimmed SQL or Redis command text.
    * @returns A promise that resolves after the backend accepts or rejects startup.
    * Side effects: creates an event channel, subscribes before IPC, and updates session state.
    */
@@ -181,7 +184,7 @@ export function useQuerySession(
       }
 
       const queryId = crypto.randomUUID();
-      const request: QueryRequest = { queryId, connectionId, sql };
+      const request: QueryRequest = { queryId, connectionId, sql, database };
       const onEvent = new Channel<QueryEvent>();
       activeQueryIdRef.current = queryId;
       cancelRequestedRef.current = false;
@@ -224,7 +227,7 @@ export function useQuerySession(
         }
       }
     },
-    [connectionId, recordHistoryEnabled],
+    [connectionId, database, recordHistoryEnabled],
   );
 
   /**

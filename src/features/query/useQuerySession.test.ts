@@ -158,7 +158,7 @@ async function assertChannelAndCancellationContract(): Promise<void> {
     }
     return undefined;
   });
-  const hook = renderHook(() => useQuerySession("connection-1"));
+  const hook = renderHook(() => useQuerySession("connection-1", { database: "2" }));
 
   await act(async () => {
     await Promise.all([hook.result.current.run("select 1"), hook.result.current.run("select 2")]);
@@ -166,7 +166,11 @@ async function assertChannelAndCancellationContract(): Promise<void> {
 
   expect(invoke).toHaveBeenCalledTimes(1);
   expect(invoke).toHaveBeenCalledWith("run_query", {
-    request: expect.objectContaining({ connectionId: "connection-1", sql: "select 1" }),
+    request: expect.objectContaining({
+      connectionId: "connection-1",
+      sql: "select 1",
+      database: "2",
+    }),
     onEvent: channelState.instances[0],
   });
   expect(hook.result.current.state.running).toBe(true);

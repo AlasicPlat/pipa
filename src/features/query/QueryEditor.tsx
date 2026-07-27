@@ -7,6 +7,7 @@ import type { ResolvedTheme } from "../preferences/theme";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
+  engine?: "my_sql" | "redis";
   sql: string;
   onSqlChange: (sql: string) => void;
   onExecute: (sql: string) => void;
@@ -46,10 +47,15 @@ function isSelectCurrentSqlShortcut(event: KeyboardEvent, binding: string): bool
  * Executes Monaco's current scope using the one selection-first scanner path.
  * @param editor - Mounted Monaco editor that owns selection, cursor, and current buffer state.
  * @param onExecute - Callback receiving only the selected or cursor-containing statement.
+ * @param engine - Native syntax used to resolve an unselected execution scope.
  * @returns Nothing (`void`).
  * Side effects: reads Monaco state and invokes `onExecute` for a non-empty scope.
  */
-function executeEditorScope(editor: MonacoEditorInstance, onExecute: (sql: string) => void): void {
+function executeEditorScope(
+  editor: MonacoEditorInstance,
+  onExecute: (sql: string) => void,
+  engine: QueryEditorProps["engine"],
+): void {
   const model = editor.getModel();
   const position = editor.getPosition();
   if (!model || !position) {
@@ -69,21 +75,26 @@ function executeEditorScope(editor: MonacoEditorInstance, onExecute: (sql: strin
         }),
       }
     : null;
-  const sql = sqlToExecute(editor.getValue(), selection, model.getOffsetAt(position));
+  const selectedText = selection
+    ? editor.getValue().slice(selection.start, selection.end).trim()
+    : "";
+  const sql = engine === "redis"
+    ? (selectedText || model.getLineContent(position.lineNumber)).trim().replace(/;$/u, "").trim()
+    : sqlToExecute(editor.getValue(), selection, model.getOffsetAt(position));
   if (sql) {
     onExecute(sql);
   }
 }
 
 /**
- * Renders the MySQL editor and executes the desktop shortcut in capture phase.
+ * Renders an engine-native command editor and executes the desktop shortcut in capture phase.
  * @param props - Controlled SQL value plus edit and execute callbacks.
  * @param forwardedRef - Imperative handle used by the visible toolbar execute control.
  * @returns The query-editor element.
  * Side effects: registers one temporary document shortcut and the shared toolbar execute handle.
  */
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function QueryEditor(
-  { sql, onSqlChange, onExecute, theme = "light" },
+  { engine = "my_sql", sql, onSqlChange, onExecute, theme = "light" },
   forwardedRef,
 ) {
   const shortcuts = useShortcutSettings();
@@ -95,9 +106,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
   /** Executes the same selection/cursor scope for keyboard and toolbar callers. */
   const executeCurrent = useCallback((): void => {
     if (editorRef.current) {
-      executeEditorScope(editorRef.current, onExecuteRef.current);
+      executeEditorScope(editorRef.current, onExecuteRef.current, engine);
     }
-  }, []);
+  }, [engine]);
 
   /**
    * Executes one native/DOM shortcut while suppressing an immediate echo from the other source.
@@ -189,14 +200,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
   }, [executeShortcutOnce]);
 
   return (
-    <div className="query-editor" aria-label="SQL 编辑器">
+    <div className="query-editor" aria-label={engine === "redis" ? "Redis 命令编辑器" : "SQL 编辑器"}>
       <Editor
-        language="sql"
+        language={engine === "redis" ? "plaintext" : "sql"}
         onChange={(value) => onSqlChange(value ?? "")}
         onMount={handleMount}
         options={{
           accessibilityPageSize: 20,
-          ariaLabel: "MySQL 查询编辑器",
+          ariaLabel: engine === "redis" ? "Redis 命令编辑器" : "MySQL 查询编辑器",
           automaticLayout: true,
           fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
           fontSize: 13,

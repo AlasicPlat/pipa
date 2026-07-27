@@ -6,6 +6,7 @@ import {
   resetAllShortcutBindings,
   updateShortcutBinding,
 } from "../features/commands/shortcutRegistry";
+import { executeQueryOnce } from "../features/query/executeQueryOnce";
 import {
   deleteConnection,
   listConnections,
@@ -55,6 +56,17 @@ vi.mock("../features/query/useQuerySession", () => ({
   }),
 }));
 
+vi.mock("../features/query/executeQueryOnce", () => ({
+  executeQueryOnce: vi.fn().mockResolvedValue({
+    columns: [
+      { name: "cursor", databaseType: "REDIS CURSOR", nullable: null },
+      { name: "key", databaseType: "REDIS VALUE", nullable: null },
+    ],
+    rows: [[{ kind: "integer", value: "0" }, { kind: "null" }]],
+    affectedRows: 0,
+  }),
+}));
+
 vi.mock("@monaco-editor/react", () => ({
   default: () => <div aria-label="SQL 编辑器" />,
 }));
@@ -87,6 +99,16 @@ const MONGODB_PROFILE: ConnectionProfile = {
   engine: "mongo_db",
   port: 27017,
   database: "documents",
+};
+
+const REDIS_PROFILE: ConnectionProfile = {
+  ...DEVELOPMENT_PROFILE,
+  id: "connection-redis",
+  name: "本地缓存",
+  engine: "redis",
+  port: 6379,
+  database: "0",
+  tlsMode: "disabled",
 };
 
 /**
@@ -196,7 +218,84 @@ async function assertGlobalAddSupportsRedis(): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: /连接测试与本地凭据保存/ }));
   expect(screen.getByRole("heading", { name: "添加 Redis 连接" })).toBeVisible();
   expect(screen.getByLabelText("端口")).toHaveValue(6379);
-  expect(screen.getByLabelText("数据库编号")).toHaveValue(0);
+  expect(screen.getByLabelText("默认数据库")).toHaveValue(null);
+}
+
+/** Verifies a saved Redis connection opens the key browser and retains the native workbench. */
+async function assertRedisConnectionCreatesCommandWorkspace(): Promise<void> {
+  render(<App />);
+  const redisRow = await screen.findByRole("button", { name: /本地缓存/ });
+  fireEvent.click(redisRow);
+  fireEvent.click(screen.getByRole("button", {
+    name: "在当前已选 Redis 连接 本地缓存 中新建工作区",
+  }));
+
+  expect(await screen.findByRole("tab", { name: "本地缓存 · Redis 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("region", { name: "Redis 工作区" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "键浏览器" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("searchbox", { name: "搜索 Redis 键" })).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "命令工作台" }));
+  expect(screen.getByRole("region", { name: "本地缓存 查询工作区" })).toBeVisible();
+  expect(screen.getByLabelText("Redis 常用命令")).toBeVisible();
+}
+
+/** Verifies database expansion switches both the sidebar scan and the Redis workspace context. */
+async function assertRedisDatabaseSelectionScopesWorkspace(): Promise<void> {
+  vi.mocked(executeQueryOnce).mockImplementation(async (_connectionId, command) => (
+    command === "INFO keyspace"
+      ? {
+          columns: [{ name: "value", databaseType: "REDIS VALUE", nullable: null }],
+          rows: [[{
+            kind: "text",
+            value: "# Keyspace\r\ndb0:keys=1,expires=0,avg_ttl=0\r\ndb2:keys=3,expires=0,avg_ttl=0\r\n",
+          }]],
+          affectedRows: 0,
+        }
+      : {
+          columns: [
+            { name: "cursor", databaseType: "REDIS CURSOR", nullable: null },
+            { name: "key", databaseType: "REDIS VALUE", nullable: null },
+          ],
+          rows: [[{ kind: "integer", value: "0" }, { kind: "text", value: "cache:user:1" }]],
+          affectedRows: 0,
+        }
+  ));
+  render(<App />);
+  const redisRow = await screen.findByRole("button", { name: /本地缓存/ });
+
+  fireEvent.doubleClick(redisRow);
+  const database = await screen.findByRole("treeitem", { name: /DB 2/u });
+  fireEvent.doubleClick(database);
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    REDIS_PROFILE.id,
+    'SCAN 0 MATCH "*" COUNT 500',
+    "2",
+  ));
+  expect(screen.getAllByRole("tab")).toHaveLength(1);
+
+  fireEvent.click(screen.getByRole("button", {
+    name: "在当前已选 Redis 连接 本地缓存 中新建工作区",
+  }));
+  expect(await screen.findByRole("region", { name: "Redis 工作区" })).toBeVisible();
+  expect(screen.getByRole("spinbutton", { name: "切换 Redis 数据库" })).toHaveValue(2);
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    REDIS_PROFILE.id,
+    'SCAN 0 MATCH "*" COUNT 200',
+    "2",
+  ));
+
+  const databaseInput = screen.getByRole("spinbutton", { name: "切换 Redis 数据库" });
+  fireEvent.change(databaseInput, { target: { value: "3" } });
+  fireEvent.blur(databaseInput);
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    REDIS_PROFILE.id,
+    'SCAN 0 MATCH "*" COUNT 200',
+    "3",
+  ));
+  expect(redisRow).toHaveTextContent("DB 3");
 }
 
 /** Verifies the context-menu delete flow confirms before removing backend and UI state. */
@@ -425,6 +524,7 @@ function registerAppTests(): void {
       DEVELOPMENT_PROFILE,
       PRODUCTION_PROFILE,
       MONGODB_PROFILE,
+      REDIS_PROFILE,
     ]);
     vi.mocked(loadWorkspace).mockResolvedValue([
       {
@@ -435,6 +535,14 @@ function registerAppTests(): void {
         position: 0,
       },
     ]);
+    vi.mocked(executeQueryOnce).mockResolvedValue({
+      columns: [
+        { name: "cursor", databaseType: "REDIS CURSOR", nullable: null },
+        { name: "key", databaseType: "REDIS VALUE", nullable: null },
+      ],
+      rows: [[{ kind: "integer", value: "0" }, { kind: "null" }]],
+      affectedRows: 0,
+    });
     vi.mocked(deleteConnection).mockResolvedValue(undefined);
     vi.mocked(reconnectConnection).mockResolvedValue(undefined);
     vi.mocked(renameConnection).mockImplementation(async (connectionId, name) => ({
@@ -454,6 +562,8 @@ function registerAppTests(): void {
   it("does not create a SQL tab for a non-MySQL selection", assertNonMySqlSelectionCannotCreateQuery);
   it("blocks workspace replacement until an explicit recovery retry succeeds", assertRecoveryFailureRequiresSuccessfulRetry);
   it("adds Redis through the global connection type picker", assertGlobalAddSupportsRedis);
+  it("creates a native command workspace for Redis", assertRedisConnectionCreatesCommandWorkspace);
+  it("switches Redis workspaces to the database opened in the navigator", assertRedisDatabaseSelectionScopesWorkspace);
   it("deletes a connection only after context-menu confirmation", assertConfirmedConnectionDeletion);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);
   it("uses a configured workspace shortcut and releases its previous default", assertConfiguredGlobalShortcut);

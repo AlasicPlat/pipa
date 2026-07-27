@@ -49,7 +49,7 @@ export function ConnectionForm({ engine, onSaved, onCancel }: ConnectionFormProp
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(isRedis ? "6379" : "3306");
   const [username, setUsername] = useState("");
-  const [database, setDatabase] = useState(isRedis ? "0" : "");
+  const [database, setDatabase] = useState("");
   const [password, setPassword] = useState("");
   const [environment, setEnvironment] = useState<Environment>("unspecified");
   const [tlsMode, setTlsMode] = useState<TlsMode>(isRedis ? "disabled" : "preferred");
@@ -174,13 +174,15 @@ export function ConnectionForm({ engine, onSaved, onCancel }: ConnectionFormProp
           </label>
 
           <label className="field field--wide">
-            <span>{isRedis ? "数据库编号" : "默认数据库"} <small>{isRedis ? "0-15" : "可选"}</small></span>
+            <span>
+              默认数据库{" "}
+              <small>{isRedis ? "可选；连接后可切换" : "可选"}</small>
+            </span>
             <input
-              aria-label={isRedis ? "数据库编号" : "默认数据库"}
+              aria-label="默认数据库"
               autoCapitalize="none"
               onChange={(event) => setDatabase(event.target.value)}
               inputMode={isRedis ? "numeric" : undefined}
-              max={isRedis ? 15 : undefined}
               min={isRedis ? 0 : undefined}
               spellCheck={false}
               type={isRedis ? "number" : "text"}

@@ -24,6 +24,10 @@ const tableSession = vi.hoisted(() => ({
 
 vi.mock("../query/useQuerySession", () => ({ useQuerySession: () => tableSession }));
 
+const executeQueryOnce = vi.hoisted(() => vi.fn());
+
+vi.mock("../query/executeQueryOnce", () => ({ executeQueryOnce }));
+
 const MYSQL_CONNECTIONS: ConnectionProfile[] = [
   {
     id: "0d27c056-fd60-4ed4-9570-ab63c500073c",
@@ -48,6 +52,15 @@ const MYSQL_CONNECTIONS: ConnectionProfile[] = [
     tlsMode: "disabled",
   },
 ];
+
+const REDIS_CONNECTION: ConnectionProfile = {
+  ...MYSQL_CONNECTIONS[1],
+  id: "redis-development",
+  name: "本地缓存",
+  engine: "redis",
+  port: 6379,
+  database: "0",
+};
 
 /**
  * Verifies strict engine grouping, empty states, and the selected-row interaction.
@@ -126,6 +139,45 @@ function assertIndependentConnectionDrawers(): void {
   expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
   expect(screen.getByLabelText("本地开发 数据表")).toBeVisible();
   expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
+}
+
+/** Verifies Redis connections reveal databases before a database-scoped key scan. */
+async function assertRedisKeyBrowser(): Promise<void> {
+  const openRedisKey = vi.fn();
+  const selectRedisDatabase = vi.fn();
+  render(
+    <ConnectionSidebar
+      profiles={[REDIS_CONNECTION]}
+      selectedConnectionId={REDIS_CONNECTION.id}
+      onAddConnection={vi.fn()}
+      onOpenRedisKey={openRedisKey}
+      onSelectRedisDatabase={selectRedisDatabase}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  fireEvent.doubleClick(screen.getByRole("button", { name: /本地缓存/ }));
+  await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    REDIS_CONNECTION.id,
+    "INFO keyspace",
+  ));
+  expect(executeQueryOnce).not.toHaveBeenCalledWith(
+    REDIS_CONNECTION.id,
+    'SCAN 0 MATCH "*" COUNT 500',
+    expect.anything(),
+  );
+
+  const database = await screen.findByRole("treeitem", { name: /DB 2/u });
+  fireEvent.doubleClick(database);
+  await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    REDIS_CONNECTION.id,
+    'SCAN 0 MATCH "*" COUNT 500',
+    "2",
+  ));
+  expect(selectRedisDatabase).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2");
+
+  fireEvent.doubleClick(await screen.findByRole("treeitem", { name: "user:1" }));
+  expect(openRedisKey).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2", "user:1");
 }
 
 /** Verifies unified navigator filtering and double-click-only workspace opening. */
@@ -404,6 +456,28 @@ function registerConnectionSidebarTests(): void {
     tableSession.state.queryId = null;
     tableSession.state.affectedRows = null;
     vi.clearAllMocks();
+    executeQueryOnce.mockImplementation(async (_connectionId: string, command: string) => (
+      command === "INFO keyspace"
+        ? {
+            columns: [{ name: "value", databaseType: "REDIS VALUE", nullable: null }],
+            rows: [[{
+              kind: "text",
+              value: "# Keyspace\r\ndb0:keys=1,expires=0,avg_ttl=0\r\ndb2:keys=2,expires=1,avg_ttl=3200\r\n",
+            }]],
+            affectedRows: 0,
+          }
+        : {
+            columns: [
+              { name: "cursor", databaseType: "REDIS CURSOR", nullable: null },
+              { name: "key", databaseType: "REDIS VALUE", nullable: null },
+            ],
+            rows: [
+              [{ kind: "text", value: "0" }, { kind: "text", value: "user:1" }],
+              [{ kind: "text", value: "0" }, { kind: "text", value: "jobs:ready" }],
+            ],
+            affectedRows: 0,
+          }
+    ));
   });
   afterEach(() => {
     cleanup();
@@ -412,6 +486,7 @@ function registerConnectionSidebarTests(): void {
   it("keeps engines separate and exposes a strong selected state", assertGroupedConnectionSelection);
   it("collapses engine sections and persists the choice", assertEngineSectionCollapseToggle);
   it("keeps multiple connection drawers open independently", assertIndependentConnectionDrawers);
+  it("browses Redis keys and opens native key commands", assertRedisKeyBrowser);
   it("filters tables and opens them only on double click", assertTableSearchAndDoubleClickOpen);
   it("matches loaded catalog tables from the unified navigator search", assertUnifiedSearchMatchesCatalogTables);
   it("requests connection deletion from its context menu", assertContextMenuRequestsDeletion);

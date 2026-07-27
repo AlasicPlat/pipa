@@ -25,6 +25,7 @@ import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/prefe
 import { useThemePreference } from "../features/preferences/theme";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
 import { useWorkspacePersistence } from "../features/query/useWorkspacePersistence";
+import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { TableWorkspace } from "../features/tables/TableWorkspace";
 import { WorkspaceTabs, type OpenTableTab } from "../features/workspace/WorkspaceTabs";
 import { deleteConnection, reconnectConnection, renameConnection, setExecuteQueryAccelerator } from "../lib/tauriClient";
@@ -45,6 +46,41 @@ function getConnectionActionError(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+/**
+ * Reports whether one engine owns an executable workspace in the current desktop slice.
+ * @param engine - Stored database engine.
+ * @returns `true` for MySQL SQL or Redis native commands.
+ * Side effects: none.
+ */
+function matchesRunnableEngine(engine: Engine): engine is Extract<Engine, "my_sql" | "redis"> {
+  return engine === "my_sql" || engine === "redis";
+}
+
+/**
+ * Quotes one Redis key for the command editor without changing its UTF-8 content.
+ * @param value - Key name returned by Redis SCAN.
+ * @returns Double-quoted redis-cli argument with control characters escaped.
+ * Side effects: none.
+ */
+function quoteRedisArgument(value: string): string {
+  return `"${value
+    .replace(/\\/gu, "\\\\")
+    .replace(/"/gu, "\\\"")
+    .replace(/\n/gu, "\\n")
+    .replace(/\r/gu, "\\r")
+    .replace(/\t/gu, "\\t")}"`;
+}
+
+/**
+ * Recovers the Redis database embedded in a persisted key-workspace title.
+ * @param title - Persisted workspace title created by the Redis navigator.
+ * @returns The logical database number, or `null` for generic workspaces.
+ * Side effects: none.
+ */
+function redisDatabaseFromWorkspaceTitle(title: string): string | null {
+  return title.match(/ · DB (\d+) · /u)?.[1] ?? null;
 }
 
 /**
@@ -81,6 +117,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [focusConnectionId, setFocusConnectionId] = useState<string | null>(null);
   const [tableCatalog, setTableCatalog] = useState<Record<string, string[]>>({});
+  const [selectedRedisDatabases, setSelectedRedisDatabases] = useState<Record<string, string>>({});
   const [recentItemTimestamps, setRecentItemTimestamps] = useState<Record<string, number>>({});
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
@@ -90,19 +127,36 @@ export function App() {
   const activeQueryProfile = connections.profiles.find(
     (profile) => profile.id === queryWorkspace.activeTab?.connectionId,
   );
+  const activeQueryWorkspaceProfile = activeQueryProfile?.engine === "redis"
+    ? {
+        ...activeQueryProfile,
+        database: selectedRedisDatabases[activeQueryProfile.id]
+          ?? (queryWorkspace.activeTab
+            ? redisDatabaseFromWorkspaceTitle(queryWorkspace.activeTab.title)
+            : null)
+          ?? activeQueryProfile.database
+          ?? "0",
+      }
+    : activeQueryProfile;
   const activeTableTab = openTableTabs.find((tab) => tab.id === activeTableTabId);
   const pendingCloseTable = openTableTabs.find((tab) => tab.id === pendingCloseTableId) ?? null;
   const dirtyTables = openTableTabs
     .filter((tab) => dirtyTableTabIds.has(tab.id))
     .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
   const activeTableProfile = connections.profiles.find((profile) => profile.id === activeTableTab?.connectionId);
-  const workspaceContextProfile = activeTableProfile ?? activeQueryProfile ?? selectedProfile ?? null;
+  const workspaceContextProfile = activeTableProfile
+    ?? activeQueryWorkspaceProfile
+    ?? selectedProfile
+    ?? null;
   const newQueryProfile = selectedProfile
-    ? selectedProfile.engine === "my_sql" ? selectedProfile : null
+    ? matchesRunnableEngine(selectedProfile.engine) ? selectedProfile : null
     : activeTableProfile?.engine === "my_sql"
       ? activeTableProfile
-      : activeQueryProfile?.engine === "my_sql" ? activeQueryProfile : null;
-  const hasUsableWorkspace = openTableTabs.length > 0 || Boolean(queryWorkspace.activeTab && activeQueryProfile?.engine === "my_sql");
+      : activeQueryProfile && matchesRunnableEngine(activeQueryProfile.engine)
+        ? activeQueryProfile
+        : null;
+  const hasUsableWorkspace = openTableTabs.length > 0
+    || Boolean(queryWorkspace.activeTab && activeQueryProfile && matchesRunnableEngine(activeQueryProfile.engine));
   const deleteCandidateWorkspaceCount = deleteCandidate
     ? queryWorkspace.tabs.filter((tab) => tab.connectionId === deleteCandidate.id).length
       + openTableTabs.filter((tab) => tab.connectionId === deleteCandidate.id).length
@@ -161,9 +215,9 @@ export function App() {
     ...(newQueryProfile ? [{
       id: "command:new-query",
       type: "command" as const,
-      label: "新建 SQL 查询",
+      label: newQueryProfile.engine === "redis" ? "新建 Redis 工作区" : "新建 SQL 查询",
       detail: shortcutLabel("newQuery"),
-      keywords: ["query", "sql"],
+      keywords: ["query", newQueryProfile.engine === "redis" ? "redis" : "sql"],
       lastUsedAt: recentItemTimestamps["command:new-query"],
     }] : []),
     ...((activeTableTabId || queryWorkspace.activeTabId) ? [{
@@ -196,7 +250,7 @@ export function App() {
       {
         id: "command:execute-sql",
         type: "command" as const,
-        label: "执行当前 SQL",
+        label: activeQueryProfile?.engine === "redis" ? "刷新 / 执行 Redis 工作区" : "执行当前 SQL",
         detail: shortcutLabel("executeQuery"),
         keywords: ["run", "查询"],
         lastUsedAt: recentItemTimestamps["command:execute-sql"],
@@ -204,7 +258,7 @@ export function App() {
       {
         id: "command:select-sql",
         type: "command" as const,
-        label: "选中当前 SQL",
+        label: activeQueryProfile?.engine === "redis" ? "选中当前 Redis 命令" : "选中当前 SQL",
         detail: shortcutLabel("selectSql"),
         keywords: ["select", "全选 sql"],
         lastUsedAt: recentItemTimestamps["command:select-sql"],
@@ -212,7 +266,7 @@ export function App() {
       {
         id: "command:find-current",
         type: "command" as const,
-        label: "查找当前 SQL",
+        label: activeQueryProfile?.engine === "redis" ? "查找当前 Redis 工作区" : "查找当前 SQL",
         detail: shortcutLabel("find"),
         keywords: ["search", "查找文本"],
         lastUsedAt: recentItemTimestamps["command:find-current"],
@@ -303,7 +357,11 @@ export function App() {
       queryWorkspace.tabs.length === 0 &&
       profile.engine === "my_sql"
     ) {
-      queryWorkspace.addTab(profile.id, "查询 1");
+      queryWorkspace.addTab(
+        profile.id,
+        "查询 1",
+        "SELECT 1;",
+      );
     }
     setIsAddingConnection(false);
     setConnectionFormEngine(null);
@@ -602,6 +660,14 @@ export function App() {
     try {
       await deleteConnection(profile.id);
       connections.removeProfile(profile.id);
+      setSelectedRedisDatabases((current) => {
+        if (!(profile.id in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[profile.id];
+        return next;
+      });
       queryWorkspace.closeTabsForConnection(profile.id);
       const removedTableTabIds = new Set(
         openTableTabs
@@ -631,7 +697,7 @@ export function App() {
    * Changes only navigator selection and creates a fixed tab solely when no workspace exists.
    * @param connectionId - Connection selected in the left navigation.
    * @returns Nothing (`void`).
-   * Side effects: updates sidebar state and may create the first immutable MySQL query tab.
+   * Side effects: updates sidebar state and may create the first immutable runnable tab.
    */
   function handleSelectConnection(connectionId: string): void {
     connections.selectConnection(connectionId);
@@ -643,12 +709,16 @@ export function App() {
       !queryWorkspace.recoveryBlocked &&
       queryWorkspace.tabs.length === 0
     ) {
-      queryWorkspace.addTab(profile.id, "查询 1");
+      queryWorkspace.addTab(
+        profile.id,
+        "查询 1",
+        "SELECT 1;",
+      );
     }
   }
 
   /**
-   * Creates and activates a query bound to the explicitly selected MySQL connection.
+   * Creates and activates a native workspace bound to the explicitly selected connection.
    * Parameters: none.
    * @returns Nothing (`void`).
    * Side effects: adds a persisted workspace tab without changing any existing tab context.
@@ -661,12 +731,33 @@ export function App() {
       queryWorkspace.tabs.filter((tab) => tab.connectionId === newQueryProfile.id).length + 1;
     const newTab = queryWorkspace.addTab(
       newQueryProfile.id,
-      `${newQueryProfile.name} · 查询 ${queryNumber}`,
+      `${newQueryProfile.name} · ${newQueryProfile.engine === "redis" ? "Redis" : "查询"} ${queryNumber}`,
+      newQueryProfile.engine === "redis" ? "PING" : "SELECT 1;",
     );
     if (newTab) {
       markPaletteItemRecent(`workspace:query:${newTab.id}`);
     }
     setActiveTableTabId(null);
+  }
+
+  /**
+   * Switches the current logical database for one Redis connection without persisting it.
+   * @param connectionId - Saved Redis connection identifier.
+   * @param database - Redis logical database number selected in the navigator.
+   * @returns Nothing (`void`).
+   * Side effects: updates navigator selection and the active Redis workspace context.
+   */
+  function handleSelectRedisDatabase(connectionId: string, database: string): void {
+    const profile = connections.profiles.find((item) => item.id === connectionId);
+    if (profile?.engine !== "redis") {
+      return;
+    }
+    connections.selectConnection(connectionId);
+    setSelectedRedisDatabases((current) => (
+      current[connectionId] === database
+        ? current
+        : { ...current, [connectionId]: database }
+    ));
   }
 
   /**
@@ -689,6 +780,52 @@ export function App() {
     setActiveTableTabId(tabId);
     markPaletteItemRecent(`table:${connectionId}:${tableName}`);
     markPaletteItemRecent(`workspace:table:${tabId}`);
+  }
+
+  /**
+   * Opens or reuses a Redis tab seeded with non-mutating inspection commands for one key.
+   * @param connectionId - Saved Redis connection that owns the key.
+   * @param database - Redis logical database that owns the key.
+   * @param keyName - Exact key name returned by SCAN.
+   * @returns Nothing (`void`).
+   * Side effects: selects the connection and activates or persists its key-inspection tab.
+   */
+  function handleOpenRedisKey(
+    connectionId: string,
+    database: string,
+    keyName: string,
+  ): void {
+    const profile = connections.profiles.find((item) => item.id === connectionId);
+    if (profile?.engine !== "redis" || queryWorkspace.loading || queryWorkspace.recoveryBlocked) {
+      return;
+    }
+    const key = quoteRedisArgument(keyName);
+    const inspectionSql = `TYPE ${key};\nTTL ${key};\nMEMORY USAGE ${key};`;
+    connections.selectConnection(connectionId);
+    setSelectedRedisDatabases((current) => ({ ...current, [connectionId]: database }));
+    const title = `${profile.name} · DB ${database} · ${keyName}`;
+    const existingTab = queryWorkspace.tabs.find(
+      (tab) => (
+        tab.connectionId === connectionId
+        && tab.title === title
+        && tab.sqlText === inspectionSql
+      ),
+    );
+    if (existingTab) {
+      queryWorkspace.selectTab(existingTab.id);
+      markPaletteItemRecent(`workspace:query:${existingTab.id}`);
+      setActiveTableTabId(null);
+      return;
+    }
+    const newTab = queryWorkspace.addTab(
+      connectionId,
+      title,
+      inspectionSql,
+    );
+    if (newTab) {
+      markPaletteItemRecent(`workspace:query:${newTab.id}`);
+    }
+    setActiveTableTabId(null);
   }
 
   /**
@@ -764,6 +901,12 @@ export function App() {
    * Side effects: updates active table and query-tab state.
    */
   function handleSelectQueryTab(tabId: string): void {
+    const tab = queryWorkspace.tabs.find((item) => item.id === tabId);
+    const profile = connections.profiles.find((item) => item.id === tab?.connectionId);
+    const database = tab ? redisDatabaseFromWorkspaceTitle(tab.title) : null;
+    if (profile?.engine === "redis" && database) {
+      setSelectedRedisDatabases((current) => ({ ...current, [profile.id]: database }));
+    }
     setActiveTableTabId(null);
     queryWorkspace.selectTab(tabId);
     markPaletteItemRecent(`workspace:query:${tabId}`);
@@ -1061,15 +1204,18 @@ export function App() {
           onAddConnection={handleAddConnection}
           onCopyConfig={(profile) => void handleCopyConnectionConfig(profile)}
           onFocusConnectionHandled={() => setFocusConnectionId(null)}
+          onOpenRedisKey={handleOpenRedisKey}
           onOpenTable={handleOpenTable}
           onReconnect={(profile) => void handleReconnectConnection(profile)}
           onRequestDelete={handleRequestDeleteConnection}
           onRequestRename={handleRequestRenameConnection}
+          onSelectRedisDatabase={handleSelectRedisDatabase}
           onSelectConnection={handleSelectConnection}
           onTablesLoaded={handleTablesLoaded}
           profiles={connections.profiles}
           reconnectingConnectionId={reconnectingConnectionId}
           selectedConnectionId={connections.selectedConnectionId}
+          selectedRedisDatabases={selectedRedisDatabases}
           tableCatalog={tableCatalog}
         />
       </nav>
@@ -1163,6 +1309,7 @@ export function App() {
                 activeTableTabId={activeTableTabId}
                 busyQueryTabId={busyQueryTabId}
                 dirtyTableTabIds={dirtyTableTabIds}
+                newQueryEngine={newQueryProfile?.engine === "redis" ? "redis" : newQueryProfile ? "my_sql" : null}
                 newQueryConnectionName={newQueryProfile?.name ?? null}
                 onCloseQuery={handleCloseQueryTab}
                 onCloseTable={handleCloseTable}
@@ -1173,17 +1320,37 @@ export function App() {
                 tableTabs={openTableTabs}
               />
               <div className="workspace-tab-panels">
-                {activeTableTabId === null && queryWorkspace.activeTab && activeQueryProfile?.engine === "my_sql" ? (
-                  <QueryWorkspace
-                    key={queryWorkspace.activeTab.id}
-                    onRetryPersistence={queryWorkspace.retrySave}
-                    onRunningChange={handleQueryRunningChange}
-                    onSqlChange={queryWorkspace.updateTabSql}
-                    persistenceError={queryWorkspace.saveError}
-                    profile={activeQueryProfile}
-                    tab={queryWorkspace.activeTab}
-                    theme={theme.resolvedTheme}
-                  />
+                {activeTableTabId === null
+                && queryWorkspace.activeTab
+                && activeQueryWorkspaceProfile
+                && matchesRunnableEngine(activeQueryWorkspaceProfile.engine) ? (
+                  activeQueryWorkspaceProfile.engine === "redis" ? (
+                    <RedisWorkspace
+                      key={queryWorkspace.activeTab.id}
+                      onDatabaseChange={(database) => handleSelectRedisDatabase(
+                        activeQueryWorkspaceProfile.id,
+                        database,
+                      )}
+                      onRetryPersistence={queryWorkspace.retrySave}
+                      onRunningChange={handleQueryRunningChange}
+                      onSqlChange={queryWorkspace.updateTabSql}
+                      persistenceError={queryWorkspace.saveError}
+                      profile={activeQueryWorkspaceProfile}
+                      tab={queryWorkspace.activeTab}
+                      theme={theme.resolvedTheme}
+                    />
+                  ) : (
+                    <QueryWorkspace
+                      key={queryWorkspace.activeTab.id}
+                      onRetryPersistence={queryWorkspace.retrySave}
+                      onRunningChange={handleQueryRunningChange}
+                      onSqlChange={queryWorkspace.updateTabSql}
+                      persistenceError={queryWorkspace.saveError}
+                      profile={activeQueryWorkspaceProfile}
+                      tab={queryWorkspace.activeTab}
+                      theme={theme.resolvedTheme}
+                    />
+                  )
                 ) : null}
                 {openTableTabs.map((tableTab) => {
                   const profile = connections.profiles.find((item) => item.id === tableTab.connectionId);
@@ -1215,7 +1382,11 @@ export function App() {
               </span>
               <span className="eyebrow">CONNECTION SELECTED</span>
               <h2 id="connection-overview-title">{selectedProfile.name}</h2>
-              <p>{selectedProfile.engine === "redis" ? "Redis 连接已保存。命令工作台将在后续版本开放。" : "请选择一个 MySQL 连接继续。"}</p>
+              <p>
+                {selectedProfile.engine === "redis"
+                  ? "请选择“新建 Redis 工作区”，或展开连接浏览键。"
+                  : "请选择一个 MySQL 连接继续。"}
+              </p>
             </section>
           ) : (
             <section className="connection-overview" aria-labelledby="connection-overview-title">

@@ -125,6 +125,7 @@ pub async fn execute_collected(
         query_id,
         connection_id,
         sql: sql.to_owned(),
+        database: None,
     };
     let cancellation = CancellationToken::new();
     let task_cancellation = cancellation.clone();

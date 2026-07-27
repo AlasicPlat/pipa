@@ -15,4 +15,8 @@ connectionId: string,
 /**
  * SQL text to execute.
  */
-sql: string, };
+sql: string,
+/**
+ * Optional Redis database selected for this execution.
+ */
+database: string | null, };

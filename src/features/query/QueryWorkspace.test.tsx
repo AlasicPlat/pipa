@@ -85,6 +85,15 @@ const PROFILE: ConnectionProfile = {
   tlsMode: "preferred",
 };
 
+const PRODUCTION_REDIS_PROFILE: ConnectionProfile = {
+  ...PROFILE,
+  engine: "redis",
+  environment: "production",
+  port: 6379,
+  database: "0",
+  tlsMode: "disabled",
+};
+
 const TAB = {
   id: "tab-1",
   connectionId: PROFILE.id,
@@ -102,6 +111,76 @@ const WORKSPACE_PROPS = {
   onRunningChange: vi.fn(),
   onSqlChange: vi.fn(),
 };
+
+/** Verifies Redis workspaces expose native command presets and engine-aware guidance. */
+function assertRedisCommandWorkspace(): void {
+  sessionController.state.running = false;
+  sessionController.state.error = {
+    code: "query",
+    message: "Redis command failed",
+    technicalDetails: "WRONGTYPE",
+    retryable: false,
+  };
+  const onSqlChange = vi.fn();
+  render(
+    <QueryWorkspace
+      {...WORKSPACE_PROPS}
+      onSqlChange={onSqlChange}
+      profile={{
+        ...PROFILE,
+        engine: "redis",
+        port: 6379,
+        database: "0",
+        tlsMode: "disabled",
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Redis")).toBeVisible();
+  expect(screen.getByLabelText("Redis 常用命令")).toBeVisible();
+  expect(screen.getByText("请检查 Redis 命令、参数和键的数据类型。")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Hash" }));
+  expect(onSqlChange).toHaveBeenCalledWith(TAB.id, "HGETALL key");
+}
+
+/** Verifies production Redis writes execute only after reviewing the exact command. */
+function assertProductionRedisWriteRequiresConfirmation(): void {
+  sessionController.state.running = false;
+  monacoState.sql = "FLUSHALL";
+  monacoState.selection = {
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: 1,
+    endColumn: 9,
+  };
+  render(<QueryWorkspace {...WORKSPACE_PROPS} profile={PRODUCTION_REDIS_PROFILE} />);
+
+  fireEvent.click(screen.getByRole("button", { name: /执行/ }));
+
+  expect(sessionController.run).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog", { name: "确认执行 Redis 命令" }))
+    .toHaveTextContent("FLUSHALL");
+  fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+  expect(sessionController.run).toHaveBeenCalledWith("FLUSHALL");
+}
+
+/** Verifies allowlisted production Redis reads retain one-click execution. */
+function assertProductionRedisReadRunsDirectly(): void {
+  sessionController.state.running = false;
+  monacoState.sql = "GET cache:key";
+  monacoState.selection = {
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: 1,
+    endColumn: 14,
+  };
+  render(<QueryWorkspace {...WORKSPACE_PROPS} profile={PRODUCTION_REDIS_PROFILE} />);
+
+  fireEvent.click(screen.getByRole("button", { name: /执行/ }));
+
+  expect(sessionController.run).toHaveBeenCalledWith("GET cache:key");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+}
 
 /**
  * Verifies running feedback remains intentionally small after cancellation is requested.
@@ -275,6 +354,12 @@ function registerQueryWorkspaceTests(): void {
     sessionController.state.affectedRows = null;
     sessionController.state.error = null;
     monacoState.sql = "select 1;\nselect 2;";
+    monacoState.selection = {
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 9,
+    };
     monacoState.position = { lineNumber: 2, column: 4 };
   });
   afterEach(() => {
@@ -289,6 +374,9 @@ function registerQueryWorkspaceTests(): void {
   it("ignores the cancel shortcut while idle", assertIdleCancelShortcutIsIgnored);
   it("shows actionable query errors with closed diagnostic details", assertLayeredQueryError);
   it("shows a terminal state for an empty canceled query", assertCanceledEmptyQueryState);
+  it("renders Redis native command controls and guidance", assertRedisCommandWorkspace);
+  it("confirms production Redis writes before execution", assertProductionRedisWriteRequiresConfirmation);
+  it("runs production Redis reads without a confirmation", assertProductionRedisReadRunsDirectly);
 }
 
 describe("QueryWorkspace", registerQueryWorkspaceTests);
