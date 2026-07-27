@@ -16,6 +16,8 @@ pub struct QueryRequest {
     pub connection_id: Uuid,
     /// SQL text to execute.
     pub sql: String,
+    /// Optional Redis database selected for this execution.
+    pub database: Option<String>,
 }
 
 /// Stable query context recorded after its matching backend execution starts.
@@ -128,7 +130,7 @@ pub enum QueryEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellValue, QueryColumn, QueryEvent, RecordQueryHistoryInput};
+    use super::{CellValue, QueryColumn, QueryEvent, QueryRequest, RecordQueryHistoryInput};
     use crate::{AppError, AppErrorCode};
     use ts_rs::{Config, TS};
     use uuid::Uuid;
@@ -218,6 +220,22 @@ mod tests {
         let declaration = QueryEvent::decl(&Config::default());
 
         assert!(declaration.contains("affectedRows: number"));
+    }
+
+    /// Verifies one Redis execution may carry a transient logical database selection.
+    #[test]
+    fn query_request_serializes_redis_database_context() {
+        let request = QueryRequest {
+            query_id: Uuid::nil(),
+            connection_id: Uuid::nil(),
+            sql: "SCAN 0".into(),
+            database: Some("2".into()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["database"],
+            serde_json::json!("2")
+        );
     }
 
     /// Verifies the history command accepts only the stable run context and executed SQL.

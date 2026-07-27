@@ -744,6 +744,81 @@ body {
   font-size: 8px;
 }
 
+.redis-database-tree {
+  display: grid;
+  max-height: 300px;
+  overflow: auto;
+  padding: 1px 4px 5px 6px;
+}
+
+.redis-database-tree__branch {
+  min-width: 0;
+}
+
+.redis-database-tree__database {
+  display: grid;
+  width: 100%;
+  min-height: 30px;
+  grid-template-columns: 12px 15px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+
+.redis-database-tree__database:hover,
+.redis-database-tree__database.is-selected {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.redis-database-tree__database.is-selected {
+  box-shadow: inset 2px 0 0 var(--accent-redis);
+}
+
+.redis-database-tree__database > svg:first-child {
+  color: var(--text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.redis-database-tree__database[aria-expanded="true"] > svg:first-child {
+  transform: rotate(90deg);
+}
+
+.redis-database-tree__database span {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-database-tree__database small {
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.redis-database-tree__keys {
+  display: grid;
+  margin-left: 13px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.redis-database-tree__key {
+  grid-template-columns: 15px minmax(0, 1fr);
+  min-height: 28px;
+}
+
+.redis-database-tree__key.is-selected {
+  box-shadow: inset 2px 0 0 var(--accent-redis);
+}
+
 .workspace {
   display: grid;
   min-width: 0;
@@ -1068,6 +1143,55 @@ body {
   min-height: 0;
   grid-template-rows: 36px minmax(0, 1fr);
   border-bottom: 1px solid var(--border-strong);
+}
+
+.query-editor-panel--redis {
+  grid-template-rows: 36px 32px minmax(0, 1fr);
+}
+
+.redis-command-presets {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--accent-redis) 5%, var(--surface-panel));
+  scrollbar-width: thin;
+}
+
+.redis-command-presets button {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-redis) 28%, var(--border-subtle));
+  border-radius: 999px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.redis-command-presets button:hover,
+.redis-command-presets button:focus-visible {
+  border-color: var(--accent-redis);
+  color: var(--accent-redis);
+}
+
+.query-workspace--redis .query-context__engine {
+  border-color: color-mix(in srgb, var(--accent-redis) 44%, transparent);
+  color: var(--accent-redis);
+}
+
+.query-workspace--redis .query-run-button {
+  border-color: color-mix(in srgb, var(--accent-redis) 70%, var(--border-strong));
+  background: var(--accent-redis);
+}
+
+.query-workspace--redis .query-run-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-redis) 84%, #000000);
 }
 
 .query-toolbar,
@@ -3323,6 +3447,924 @@ body {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--border-subtle);
+}
+
+.redis-workspace {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 38px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--surface-panel);
+}
+
+.redis-workspace button,
+.redis-workspace input,
+.redis-workspace select,
+.redis-workspace textarea {
+  font: inherit;
+}
+
+.redis-workspace__modebar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.redis-workspace__context {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.redis-workspace__context strong,
+.redis-workspace__context > span:not(.environment) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-workspace__context strong {
+  max-width: 180px;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.redis-workspace__context > span:not(.environment) {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.redis-workspace__database {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-tertiary);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+}
+
+.redis-workspace__database input {
+  width: 38px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.redis-workspace__database input:focus {
+  border-color: var(--accent-redis);
+}
+
+.redis-workspace__database input:disabled {
+  cursor: wait;
+  opacity: 0.52;
+}
+
+.redis-workspace__context .environment {
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 740;
+}
+
+.redis-workspace__context .environment--production {
+  border-color: color-mix(in srgb, var(--accent-redis) 42%, var(--border-subtle));
+  color: var(--accent-redis);
+}
+
+.redis-workspace__modes {
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.redis-workspace__modes button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-workspace__modes button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.redis-workspace__modes button.is-active {
+  background: var(--surface-raised);
+  color: var(--accent-redis);
+  box-shadow: inset 0 -2px 0 var(--accent-redis);
+}
+
+.redis-workspace__production {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-redis);
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-workspace__pane {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(248px, 29%) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.redis-workspace__pane[hidden] {
+  display: none;
+}
+
+.redis-workspace__pane--cli {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.redis-key-browser {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto auto 28px minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-right: 1px solid var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.redis-key-browser__toolbar {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.redis-key-browser__toolbar form {
+  display: grid;
+  height: 32px;
+  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface-raised);
+}
+
+.redis-key-browser__toolbar form > svg {
+  justify-self: center;
+  color: var(--text-tertiary);
+}
+
+.redis-key-browser__toolbar input {
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 10px;
+}
+
+.redis-key-browser__toolbar form button {
+  height: 24px;
+  margin-right: 3px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-key-browser__toolbar form button:last-child {
+  background: var(--accent-redis);
+  color: #ffffff;
+}
+
+.redis-key-browser__toolbar > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.redis-key-browser__toolbar > span button,
+.redis-key-details__actions button,
+.redis-entry-form button,
+.redis-operation-row button,
+.redis-detail-empty button {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 660;
+}
+
+.redis-key-browser__toolbar > span button:hover,
+.redis-key-details__actions button:hover,
+.redis-entry-form button:hover,
+.redis-operation-row button:hover,
+.redis-detail-empty button:hover {
+  border-color: color-mix(in srgb, var(--accent-redis) 52%, var(--border-strong));
+  color: var(--text-primary);
+}
+
+.redis-key-browser__toolbar button:disabled,
+.redis-key-details button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.redis-type-filter {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  scrollbar-width: thin;
+}
+
+.redis-type-filter button {
+  flex: 0 0 auto;
+  height: 23px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 680;
+}
+
+.redis-type-filter button:hover {
+  color: var(--text-primary);
+}
+
+.redis-type-filter button.is-active {
+  border-color: color-mix(in srgb, var(--accent-redis) 30%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-redis) 8%, var(--surface-raised));
+  color: var(--accent-redis);
+}
+
+.redis-key-browser__summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.redis-key-browser__summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-key-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.redis-key-list > button {
+  display: grid;
+  width: 100%;
+  min-height: 31px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.redis-key-list > button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.redis-key-list > button.is-active {
+  border-left-color: var(--accent-redis);
+  background: color-mix(in srgb, var(--accent-redis) 7%, var(--surface-selected));
+  color: var(--text-primary);
+}
+
+.redis-key-list > button svg {
+  color: var(--text-tertiary);
+}
+
+.redis-key-list > button span {
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-key-list > button small {
+  max-width: 70px;
+  overflow: hidden;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-key-list > p {
+  margin: 24px 16px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.redis-key-browser__more {
+  min-height: 31px;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  color: var(--accent-redis);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-key-details {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-panel);
+}
+
+.redis-inline-message {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-mongodb) 24%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-mongodb) 8%, var(--surface-raised));
+  color: var(--text-primary);
+  font-size: 9px;
+}
+
+.redis-inline-message--error {
+  justify-content: flex-start;
+  border-bottom-color: color-mix(in srgb, var(--accent-redis) 34%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-redis) 7%, var(--surface-raised));
+  color: var(--accent-redis);
+}
+
+.redis-inline-message span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.redis-inline-message button {
+  display: grid;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  place-items: center;
+}
+
+.redis-key-details__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.redis-key-details__header > span:first-child {
+  min-width: 0;
+}
+
+.redis-key-details__header small,
+.redis-dialog header small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--accent-redis);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.redis-key-details__header h2 {
+  margin: 0;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 15px;
+  font-weight: 690;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-key-details__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.redis-key-details__actions button.is-danger {
+  border-color: color-mix(in srgb, var(--accent-redis) 35%, var(--border-strong));
+  color: var(--accent-redis);
+}
+
+.redis-key-metadata {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.redis-key-metadata > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 9px 14px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.redis-key-metadata > span:last-child {
+  border-right: 0;
+}
+
+.redis-key-metadata small {
+  color: var(--text-tertiary);
+  font-size: 7px;
+  font-weight: 720;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.redis-key-metadata strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-key-details__section {
+  margin: 14px 18px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.redis-key-details__section > header {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.redis-key-details__section h3 {
+  margin: 0 0 2px;
+  font-size: 11px;
+}
+
+.redis-key-details__section p {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.redis-scalar-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  justify-items: end;
+}
+
+.redis-scalar-editor textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.redis-scalar-editor textarea:focus,
+.redis-entry-form input:focus,
+.redis-operation-row input:focus,
+.redis-dialog input:focus,
+.redis-dialog select:focus,
+.redis-dialog textarea:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 16%, transparent);
+}
+
+.redis-scalar-editor button {
+  display: inline-flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-redis) 65%, var(--border-strong));
+  border-radius: 4px;
+  background: var(--accent-redis);
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-binary-note {
+  justify-self: start;
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.redis-collection-table {
+  max-height: 330px;
+  overflow: auto;
+}
+
+.redis-collection-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.redis-collection-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 28px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 720;
+  text-align: left;
+}
+
+.redis-collection-table th:last-child:empty {
+  width: 60px;
+}
+
+.redis-collection-table td {
+  height: 30px;
+  overflow: hidden;
+  padding: 4px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redis-collection-table__index {
+  width: 82px;
+  color: var(--text-tertiary) !important;
+}
+
+.redis-collection-table td:last-child {
+  text-align: right;
+}
+
+.redis-collection-table td button {
+  display: inline-grid;
+  width: 23px;
+  height: 22px;
+  margin-left: 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  place-items: center;
+}
+
+.redis-collection-table td button:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
+  color: var(--accent-redis);
+}
+
+.redis-collection-table em {
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 8px;
+}
+
+.redis-entry-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 9px 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.redis-entry-form label,
+.redis-operation-row label,
+.redis-dialog__body label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 680;
+}
+
+.redis-entry-form input,
+.redis-operation-row input,
+.redis-dialog input,
+.redis-dialog select,
+.redis-dialog textarea {
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-size: 9px;
+}
+
+.redis-entry-form > span {
+  display: flex;
+  gap: 5px;
+}
+
+.redis-key-operations {
+  margin-bottom: 24px;
+}
+
+.redis-operation-row {
+  display: grid;
+  grid-template-columns: 22px minmax(150px, 1fr) auto auto;
+  align-items: end;
+  gap: 7px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.redis-operation-row:last-child {
+  grid-template-columns: 22px minmax(150px, 1fr) auto;
+  border-bottom: 0;
+}
+
+.redis-operation-row > svg {
+  align-self: center;
+  color: var(--text-tertiary);
+}
+
+.redis-detail-empty {
+  display: grid;
+  height: 100%;
+  min-height: 240px;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 24px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.redis-detail-empty strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.redis-detail-empty span {
+  max-width: 380px;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.redis-detail-empty--compact {
+  height: auto;
+  min-height: 120px;
+}
+
+.redis-dialog-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  background: color-mix(in srgb, #000000 40%, transparent);
+  place-items: center;
+}
+
+.redis-dialog {
+  width: min(440px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: 0 20px 70px color-mix(in srgb, #000000 25%, transparent);
+}
+
+.redis-dialog > header {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.redis-dialog header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.redis-dialog > header > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  place-items: center;
+}
+
+.redis-dialog--confirm > header > svg {
+  color: var(--accent-redis);
+}
+
+.redis-dialog__body {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.redis-dialog__body textarea {
+  min-height: 90px;
+  resize: vertical;
+  padding-top: 8px;
+}
+
+.redis-dialog__body p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.redis-dialog__body .redis-dialog__error {
+  padding: 7px 8px;
+  border-left: 2px solid var(--accent-redis);
+  background: color-mix(in srgb, var(--accent-redis) 7%, var(--surface-panel));
+  color: var(--accent-redis);
+}
+
+.redis-dialog__body pre {
+  max-height: 150px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-size: 9px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.redis-dialog__body > strong {
+  color: var(--accent-redis);
+  font-size: 9px;
+}
+
+.redis-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.redis-dialog > footer button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.redis-dialog > footer .button--primary {
+  border-color: var(--accent-redis);
+  background: var(--accent-redis);
+  color: #ffffff;
+}
+
+.redis-dialog > footer .button--danger {
+  border-color: var(--accent-redis);
+  background: var(--accent-redis);
+  color: #ffffff;
+}
+
+@media (max-width: 860px) {
+  .redis-workspace__context > span:not(.environment),
+  .redis-workspace__production {
+    display: none;
+  }
+
+  .redis-workspace__pane {
+    grid-template-columns: minmax(220px, 36%) minmax(0, 1fr);
+  }
+
+  .redis-workspace__pane--cli {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .redis-key-metadata {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .redis-entry-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 :focus-visible {

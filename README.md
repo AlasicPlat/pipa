@@ -1,8 +1,8 @@
 # Pipa
 
-Pipa 是一款本地优先的多数据库桌面查询工作台。当前支持 MySQL 连接管理与 SQL 查询、Redis 连接管理、流式结果处理、多格式导出，以及仅监听本机回环地址的 MCP 服务；连接配置、未保存的 SQL 和查询历史均保存在本机。
+Pipa 是一款本地优先的多数据库桌面查询工作台。当前支持 MySQL 连接管理与 SQL 查询、Redis 键浏览与原生命令、流式结果处理、多格式导出，以及仅监听本机回环地址的 MCP 服务；连接配置、未保存的查询/命令和执行历史均保存在本机。
 
-界面为 MySQL、PostgreSQL、MongoDB 和 Redis 提供严格分离的视觉分区。MySQL 支持新增连接、连接测试、保存和查询执行；Redis 支持连接管理与测试，命令工作台尚未开放；PostgreSQL 与 MongoDB 当前只预留界面位置。
+界面为 MySQL、PostgreSQL、MongoDB 和 Redis 提供严格分离的视觉分区。MySQL 支持新增连接、连接测试、保存和查询执行；Redis 支持连接管理、测试、SCAN 键浏览、原生命令执行、取消、历史和结果导出；PostgreSQL 与 MongoDB 当前只预留界面位置。
 
 ## 环境要求
 
@@ -61,8 +61,13 @@ docker compose -f infra/test/mysql.compose.yml down
 
 ## 当前交互
 
-- MySQL、PostgreSQL、MongoDB、Redis 连接分别位于独立分区，MySQL 与 Redis 支持连接管理和测试。
-- 查询标签绑定创建时的 MySQL 连接；在侧栏选择其他连接不会重绑定已有标签。
+- MySQL、PostgreSQL、MongoDB、Redis 连接分别位于独立分区，MySQL 与 Redis 支持连接管理、测试和可执行工作区。
+- 查询/命令标签绑定创建时的连接；在侧栏选择其他连接不会重绑定已有标签。
+- Redis 连接默认进入键浏览器，可按名称模式和类型分页 SCAN；双击侧栏键会直接打开对应键的结构化详情。
+- 键详情自动读取 `TYPE`、`TTL` 和 `MEMORY USAGE`，并为 String、Hash、List、Set、Sorted Set、Stream、RedisJSON（服务器已安装模块时）提供有界预览和常用新增、编辑、删除操作。
+- 键浏览器支持新建键、复制键名、刷新、重命名、设置/移除 TTL 和删除；破坏性操作始终确认，生产连接的全部写操作均显示准确命令并二次确认。
+- Redis 命令工作区与键浏览器并列，直接执行光标所在命令行，支持取消、历史、结果导出和常用命令模板。
+- Redis RESP2 与常见 RESP3 返回会格式化为共享结果表格；`SCAN`/`SSCAN`/`HSCAN`/`ZSCAN` 和 `HGETALL` 使用专用列格式，非 UTF-8 值以 Base64 二进制单元格呈现。
 - `Ctrl/Cmd + R` 执行编辑器选中内容；没有选区时执行光标所在语句，并阻止 WebView 刷新。
 - 查询期间只显示简洁的“查询中…”与取消入口；流式结果底部只显示“正在加载更多…”。
 - 查询可取消，结果以有界批次流式返回；大整数和 decimal 以字符串传输，避免 JavaScript 精度损失。
@@ -85,6 +90,7 @@ docker compose -f infra/test/mysql.compose.yml down
 | `pipa-core` | 与框架无关的连接、查询、结果、错误模型、SQL 风险策略和数据库适配器契约，并生成 TypeScript 边界类型。 |
 | `pipa-store` | 在 SQLCipher 加密 SQLite 中原子保存连接配置与密码，并持久化工作区、查询历史和 MCP 设置。 |
 | `pipa-mysql` | 基于 SQLx 的 MySQL 连接测试、可取消查询、结果分批和数据库值的无损传输转换。 |
+| `pipa-redis` | 基于有界 RESP 编解码的 Redis 连接测试、ACL 认证、数据库选择、可取消原生命令和结构化结果转换。 |
 | `src-tauri` | 组合本地存储与数据库适配器，通过类型化 Tauri IPC 提供命令，并托管带连接作用域和确认队列的本机 MCP 服务。 |
 
 ## 本地数据与安全策略

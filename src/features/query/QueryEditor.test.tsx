@@ -57,6 +57,7 @@ vi.mock("@monaco-editor/react", () => ({
             endLineNumber: 2,
             endColumn: 10,
           }),
+          getLineContent: (lineNumber: number) => monacoState.sql.split("\n")[lineNumber - 1] ?? "",
           getOffsetAt,
         }),
         getPosition: () => monacoState.position,
@@ -109,6 +110,36 @@ function assertCapturedPlatformShortcutsExecuteOnce(): void {
   expect(onExecute).toHaveBeenCalledTimes(2);
   expect(onExecute).toHaveBeenLastCalledWith("select 1");
   expect(monacoState.actionRegistrations).toBe(0);
+}
+
+/**
+ * Verifies Redis executes the current command line without requiring SQL delimiters.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: renders the Redis editor and dispatches its execution shortcut.
+ */
+function assertRedisExecutesCurrentLine(): void {
+  monacoState.sql = "PING\nGET user:1;\nTTL user:1";
+  monacoState.selection = null;
+  monacoState.position = { lineNumber: 2, column: 5 };
+  const onExecute = vi.fn();
+  render(
+    <QueryEditor
+      engine="redis"
+      sql={monacoState.sql}
+      onSqlChange={vi.fn()}
+      onExecute={onExecute}
+    />,
+  );
+
+  document.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "r",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  }));
+
+  expect(onExecute).toHaveBeenCalledWith("GET user:1");
 }
 
 /**
@@ -454,6 +485,7 @@ function registerQueryEditorTests(): void {
     vi.restoreAllMocks();
   });
   it("executes Ctrl/Cmd + R once in capture phase", assertCapturedPlatformShortcutsExecuteOnce);
+  it("executes the current Redis command line without SQL delimiters", assertRedisExecutesCurrentLine);
   it("replaces the default execution binding after customization", assertConfiguredExecuteShortcutReplacesDefault);
   it("opens Monaco find with the configured contextual binding", assertConfiguredFindShortcutRunsMonacoAction);
   it("does not leak modal key recording into the SQL editor", assertModalBlocksEditorShortcuts);

@@ -15,7 +15,7 @@ interface WorkspacePersistenceController {
   loadError: string | null;
   saveError: string | null;
   recoveryBlocked: boolean;
-  addTab: (connectionId: string, title: string) => WorkspaceTab | null;
+  addTab: (connectionId: string, title: string, initialText?: string) => WorkspaceTab | null;
   closeTab: (tabId: string) => void;
   closeTabsForConnection: (connectionId: string) => void;
   renameConnectionTabTitles: (connectionId: string, previousName: string, nextName: string) => void;
@@ -251,7 +251,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
 
   /** Creates a tab only after storage recovery established a safe baseline. */
   const addTab = useCallback(
-    (connectionId: string, title: string): WorkspaceTab | null => {
+    (connectionId: string, title: string, initialText = "SELECT 1;"): WorkspaceTab | null => {
       if (recoveryBlockedRef.current) {
         return null;
       }
@@ -259,7 +259,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
         id: crypto.randomUUID(),
         connectionId,
         title,
-        sqlText: "SELECT 1;",
+        sqlText: initialText,
         position: tabsRef.current.length,
       };
       updateTabs([...tabsRef.current, tab]);

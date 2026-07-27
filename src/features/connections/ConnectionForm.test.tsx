@@ -124,7 +124,7 @@ async function assertRedisTestThenSaveFlow(): Promise<void> {
     host: "127.0.0.1",
     port: 6379,
     username: "",
-    database: "0",
+    database: null,
     tlsMode: "disabled",
   };
   vi.mocked(testRedisConnection).mockResolvedValue();
@@ -141,7 +141,7 @@ async function assertRedisTestThenSaveFlow(): Promise<void> {
     profile: expect.objectContaining({
       engine: "redis",
       port: 6379,
-      database: "0",
+      database: null,
       tlsMode: "disabled",
     }),
     password: "",

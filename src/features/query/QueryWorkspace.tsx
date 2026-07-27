@@ -1,5 +1,5 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Copy, Download, Play, Search, X } from "lucide-react";
+import { AlertTriangle, Copy, Download, Play, Search, X } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
@@ -29,6 +29,126 @@ interface QueryWorkspaceProps {
   onSqlChange: (tabId: string, sqlText: string) => void;
 }
 
+const REDIS_COMMAND_PRESETS = [
+  { label: "浏览键", command: 'SCAN 0 MATCH "*" COUNT 200' },
+  { label: "String", command: "GET key" },
+  { label: "Hash", command: "HGETALL key" },
+  { label: "List", command: "LRANGE key 0 -1" },
+  { label: "Set", command: "SMEMBERS key" },
+  { label: "ZSet", command: "ZRANGE key 0 -1 WITHSCORES" },
+  { label: "Stream", command: "XRANGE key - + COUNT 100" },
+  { label: "诊断", command: "INFO" },
+] as const;
+
+const REDIS_READ_ONLY_COMMANDS = new Set([
+  "BITCOUNT",
+  "BITFIELD_RO",
+  "BITPOS",
+  "COMMAND",
+  "DBSIZE",
+  "DUMP",
+  "ECHO",
+  "EXISTS",
+  "EXPIRETIME",
+  "GEODIST",
+  "GEOHASH",
+  "GEOPOS",
+  "GEOSEARCH",
+  "GET",
+  "GETBIT",
+  "GETRANGE",
+  "HEXISTS",
+  "HGET",
+  "HGETALL",
+  "HKEYS",
+  "HLEN",
+  "HMGET",
+  "HRANDFIELD",
+  "HSCAN",
+  "HSTRLEN",
+  "HVALS",
+  "INFO",
+  "KEYS",
+  "LCS",
+  "LINDEX",
+  "LLEN",
+  "LOLWUT",
+  "LPOS",
+  "LRANGE",
+  "MGET",
+  "OBJECT",
+  "PEXPIRETIME",
+  "PFCOUNT",
+  "PING",
+  "PTTL",
+  "PUBSUB",
+  "RANDOMKEY",
+  "SCAN",
+  "SCARD",
+  "SDIFF",
+  "SINTER",
+  "SINTERCARD",
+  "SISMEMBER",
+  "SMEMBERS",
+  "SMISMEMBER",
+  "SORT_RO",
+  "SRANDMEMBER",
+  "SSCAN",
+  "STRLEN",
+  "SUNION",
+  "TIME",
+  "TTL",
+  "TYPE",
+  "XINFO",
+  "XLEN",
+  "XPENDING",
+  "XRANGE",
+  "XREAD",
+  "XREVRANGE",
+  "ZCARD",
+  "ZCOUNT",
+  "ZDIFF",
+  "ZINTER",
+  "ZINTERCARD",
+  "ZLEXCOUNT",
+  "ZMSCORE",
+  "ZRANDMEMBER",
+  "ZRANGE",
+  "ZRANGEBYLEX",
+  "ZRANGEBYSCORE",
+  "ZRANK",
+  "ZREVRANGE",
+  "ZREVRANGEBYLEX",
+  "ZREVRANGEBYSCORE",
+  "ZREVRANK",
+  "ZSCAN",
+  "ZSCORE",
+  "ZUNION",
+]);
+
+/**
+ * Treats unknown or state-changing Redis commands as writes for production confirmation.
+ * @param command - Exact command selected in the Redis editor.
+ * @returns `true` when the command must be explicitly confirmed before execution.
+ * Side effects: none.
+ */
+function redisCommandNeedsProductionConfirmation(command: string): boolean {
+  const [commandName = "", subcommand = ""] = command
+    .trim()
+    .split(/\s+/u, 2)
+    .map((token) => token.toUpperCase());
+  if (commandName === "MEMORY") {
+    return !["DOCTOR", "MALLOC-STATS", "STATS", "USAGE"].includes(subcommand);
+  }
+  if (commandName === "SCRIPT") {
+    return subcommand !== "EXISTS";
+  }
+  if (commandName === "CONFIG") {
+    return subcommand !== "GET";
+  }
+  return !REDIS_READ_ONLY_COMMANDS.has(commandName);
+}
+
 /**
  * Returns the compact environment label shared with the query's immutable context strip.
  * @param environment - Stored connection environment.
@@ -45,10 +165,10 @@ function environmentLabel(environment: ConnectionProfile["environment"]): string
  * @returns A short next step that does not repeat diagnostic details.
  * Side effects: none.
  */
-function queryErrorAdvice(error: AppError): string {
+function queryErrorAdvice(error: AppError, isRedis: boolean): string {
   switch (error.code) {
     case "validation":
-      return "请检查查询内容和当前连接后再执行。";
+      return `请检查${isRedis ? "命令" : "查询"}内容和当前连接后再执行。`;
     case "connection":
       return error.retryable
         ? "请检查网络和连接状态，然后重试。"
@@ -62,7 +182,9 @@ function queryErrorAdvice(error: AppError): string {
         ? "请缩小查询范围或稍后重试。"
         : "请缩小查询范围并检查超时配置。";
     case "query":
-      return "请检查 SQL 语法、对象名称和当前数据库。";
+      return isRedis
+        ? "请检查 Redis 命令、参数和键的数据类型。"
+        : "请检查 SQL 语法、对象名称和当前数据库。";
     case "storage":
       return error.retryable
         ? "请检查本地存储状态，然后重试。"
@@ -79,7 +201,7 @@ function queryErrorAdvice(error: AppError): string {
 }
 
 /**
- * Composes one connection-bound MySQL editor, minimal run controls, and streamed results.
+ * Composes one connection-bound native editor, run controls, and streamed results.
  * @param props - Active persisted tab, its fixed non-secret profile, and tab actions.
  * @returns The usable query workspace for that fixed connection.
  * Side effects: reports controlled SQL edits and invokes query-session commands after user actions.
@@ -94,13 +216,17 @@ export function QueryWorkspace({
   onSqlChange,
 }: QueryWorkspaceProps) {
   const shortcuts = useShortcutSettings();
-  const session = useQuerySession(profile.id);
+  const isRedis = profile.engine === "redis";
+  const session = useQuerySession(profile.id, {
+    database: isRedis ? profile.database : null,
+  });
   const queryEditorRef = useRef<QueryEditorHandle>(null);
   const resultSearchInputRef = useRef<HTMLInputElement>(null);
   const [resultActionFeedback, setResultActionFeedback] = useState<string | null>(null);
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [pendingProductionRedisCommand, setPendingProductionRedisCommand] = useState<string | null>(null);
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
   const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
   const inferredTableName = inferTableNameFromSql(tab.sqlText);
@@ -115,7 +241,29 @@ export function QueryWorkspace({
     if (session.state.running) {
       return;
     }
+    if (
+      isRedis
+      && profile.environment === "production"
+      && redisCommandNeedsProductionConfirmation(sqlToRun)
+    ) {
+      setPendingProductionRedisCommand(sqlToRun);
+      return;
+    }
     void session.run(sqlToRun);
+  }
+
+  /**
+   * Executes the exact production Redis command after the user reviews it.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: closes the confirmation layer and starts the query session.
+   */
+  function confirmProductionRedisCommand(): void {
+    const command = pendingProductionRedisCommand;
+    setPendingProductionRedisCommand(null);
+    if (command && !session.state.running) {
+      void session.run(command);
+    }
   }
 
   /**
@@ -126,6 +274,16 @@ export function QueryWorkspace({
    */
   function handleToolbarExecute(): void {
     queryEditorRef.current?.executeCurrent();
+  }
+
+  /**
+   * Replaces the Redis editor with one explicit native-command template.
+   * @param command - Safe non-secret command template selected by the user.
+   * @returns Nothing (`void`).
+   * Side effects: updates the persisted editor contents for the active tab.
+   */
+  function handleRedisPreset(command: string): void {
+    onSqlChange(tab.id, command);
   }
 
   /**
@@ -338,9 +496,12 @@ export function QueryWorkspace({
     resultSearchInputRef.current?.select();
   }
   return (
-    <section className="query-workspace" aria-label={`${profile.name} 查询工作区`}>
+    <section
+      className={`query-workspace${isRedis ? " query-workspace--redis" : ""}`}
+      aria-label={`${profile.name} 查询工作区`}
+    >
       <header className="query-context">
-        <span className="query-context__engine">MySQL</span>
+        <span className="query-context__engine">{isRedis ? "Redis" : "MySQL"}</span>
         <strong>{profile.name}</strong>
         <span className="query-context__target">
           {profile.host}:{profile.port} · {profile.database ?? "未指定数据库"}
@@ -358,14 +519,14 @@ export function QueryWorkspace({
         ) : null}
       </header>
 
-      <div className="query-editor-panel">
+      <div className={`query-editor-panel${isRedis ? " query-editor-panel--redis" : ""}`}>
         <div className="query-toolbar">
           <span className="query-toolbar__title">{tab.title}</span>
           <button
             className="query-run-button"
             disabled={session.state.running}
             onClick={handleToolbarExecute}
-            title={`执行选中 SQL 或当前语句（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
+            title={`执行选中${isRedis ? "命令" : " SQL 或当前语句"}（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
             type="button"
           >
             <Play size={13} fill="currentColor" aria-hidden="true" />
@@ -373,7 +534,22 @@ export function QueryWorkspace({
             <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
           </button>
         </div>
+        {isRedis ? (
+          <div className="redis-command-presets" aria-label="Redis 常用命令">
+            {REDIS_COMMAND_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                onClick={() => handleRedisPreset(preset.command)}
+                title={preset.command}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <QueryEditor
+          engine={isRedis ? "redis" : "my_sql"}
           ref={queryEditorRef}
           sql={tab.sqlText}
           onSqlChange={(sqlText) => onSqlChange(tab.id, sqlText)}
@@ -438,9 +614,11 @@ export function QueryWorkspace({
                       <button onClick={handleExportMarkdown} role="menuitem" type="button">
                         导出 Markdown
                       </button>
-                      <button onClick={handleExportSql} role="menuitem" type="button">
-                        导出 SQL INSERT
-                      </button>
+                      {!isRedis ? (
+                        <button onClick={handleExportSql} role="menuitem" type="button">
+                          导出 SQL INSERT
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -449,11 +627,11 @@ export function QueryWorkspace({
             {session.state.running ? (
               <span className="query-loading" role="status">
                 <span className="loading-spinner" aria-hidden="true" />
-                查询中…
+                {isRedis ? "命令执行中…" : "查询中…"}
                 <button
                   disabled={session.state.cancelRequested}
                   onClick={handleCancel}
-                  title={`取消当前查询（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
+                  title={`取消当前${isRedis ? "命令" : "查询"}（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
                   type="button"
                 >
                   <X size={12} aria-hidden="true" />
@@ -467,9 +645,9 @@ export function QueryWorkspace({
 
         {session.state.error && !session.state.running ? (
           <div className="query-error" role="alert">
-            <strong>查询失败</strong>
+            <strong>{isRedis ? "命令失败" : "查询失败"}</strong>
             <span className="query-error__summary">{session.state.error.message}</span>
-            <span className="query-error__advice">{queryErrorAdvice(session.state.error)}</span>
+            <span className="query-error__advice">{queryErrorAdvice(session.state.error, isRedis)}</span>
             {session.state.error.technicalDetails ? (
               <details className="query-error__details">
                 <summary>诊断详情</summary>
@@ -498,7 +676,9 @@ export function QueryWorkspace({
         session.state.columns.length === 0 &&
         session.state.affectedRows === null ? (
           <div className="query-results__empty">
-            {session.state.incomplete ? "查询已取消" : "执行查询后，结果会显示在这里。"}
+            {session.state.incomplete
+              ? `${isRedis ? "命令" : "查询"}已取消`
+              : `执行${isRedis ? "命令" : "查询"}后，结果会显示在这里。`}
           </div>
         ) : null}
 
@@ -509,6 +689,45 @@ export function QueryWorkspace({
           <div className="query-results__empty">执行完成</div>
         ) : null}
       </section>
+
+      {pendingProductionRedisCommand ? (
+        <div className="redis-dialog-backdrop">
+          <section
+            aria-labelledby="redis-cli-confirm-title"
+            aria-modal="true"
+            className="redis-dialog redis-dialog--confirm"
+            role="alertdialog"
+          >
+            <header>
+              <span>
+                <small>PRODUCTION COMMAND</small>
+                <h2 id="redis-cli-confirm-title">确认执行 Redis 命令</h2>
+              </span>
+              <AlertTriangle size={18} aria-hidden="true" />
+            </header>
+            <div className="redis-dialog__body">
+              <p>该命令可能修改生产 Redis 数据，请核对后再执行。</p>
+              <pre>{pendingProductionRedisCommand}</pre>
+            </div>
+            <footer>
+              <button
+                autoFocus
+                onClick={() => setPendingProductionRedisCommand(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="button--danger"
+                onClick={confirmProductionRedisCommand}
+                type="button"
+              >
+                确认执行
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

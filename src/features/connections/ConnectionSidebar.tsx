@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, LoaderCircle, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Copy, Database, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
@@ -9,6 +9,7 @@ import {
   loadEngineSectionCollapseOverrides,
   persistEngineSectionCollapseOverrides,
 } from "../preferences/sidebarLayout";
+import { executeQueryOnce } from "../query/executeQueryOnce";
 import { useQuerySession } from "../query/useQuerySession";
 
 interface ConnectionSidebarProps {
@@ -22,12 +23,15 @@ interface ConnectionSidebarProps {
   onSelectConnection: (id: string) => void;
   onAddConnection: () => void;
   onCopyConfig?: (profile: ConnectionProfile) => void;
+  onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
   onOpenTable?: (connectionId: string, tableName: string) => void;
   onReconnect?: (profile: ConnectionProfile) => void;
   onRequestRename?: (profile: ConnectionProfile) => void;
   onRequestDelete?: (profile: ConnectionProfile) => void;
+  onSelectRedisDatabase?: (connectionId: string, database: string) => void;
   onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
   reconnectingConnectionId?: string | null;
+  selectedRedisDatabases?: Readonly<Record<string, string>>;
 }
 
 interface EngineGroup {
@@ -42,11 +46,21 @@ interface ConnectionDrawerProps {
   profile: ConnectionProfile;
   selected: boolean;
   tableFilter: string;
+  onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
   onOpenTable?: (connectionId: string, tableName: string) => void;
   onOpenContextMenu: (profile: ConnectionProfile, x: number, y: number) => void;
   onSelect: (connectionId: string) => void;
+  onSelectRedisDatabase?: (connectionId: string, database: string) => void;
   onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
   onToggle: (connectionId: string) => void;
+  selectedRedisDatabase?: string;
+}
+
+interface RedisDatabaseInfo {
+  database: string;
+  keys: number;
+  expires: number;
+  averageTtlMs: number;
 }
 
 /**
@@ -117,7 +131,68 @@ function cellText(cell: CellValue | undefined): string {
 }
 
 /**
- * Renders one independently expandable connection and its lazily loaded table list.
+ * Returns the metadata command used to populate one MySQL connection drawer.
+ * Parameters: none.
+ * @returns Native MySQL table metadata command.
+ * Side effects: none.
+ */
+function metadataCommand(): string {
+  return "SHOW FULL TABLES;";
+}
+
+/**
+ * Extracts the table identity from one MySQL metadata result row.
+ * @param row - Streamed result row.
+ * @returns MySQL table name.
+ * Side effects: none.
+ */
+function objectName(row: CellValue[]): string {
+  return cellText(row[0]);
+}
+
+/**
+ * Parses Redis INFO keyspace text and always retains the effective default database.
+ * @param infoText - Raw INFO keyspace response.
+ * @param fallbackDatabase - Configured database, or Redis' implicit DB 0.
+ * @returns Numerically ordered database summaries.
+ * Side effects: none.
+ */
+function parseRedisDatabases(
+  infoText: string,
+  fallbackDatabase: string,
+): RedisDatabaseInfo[] {
+  const databases = new Map<string, RedisDatabaseInfo>();
+  for (const line of infoText.split(/\r?\n/u)) {
+    const match = line.match(/^db(\d+):keys=(\d+),expires=(\d+),avg_ttl=(\d+)$/u);
+    if (!match) {
+      continue;
+    }
+    const [, database, keys, expires, averageTtlMs] = match;
+    if (database === undefined || keys === undefined || expires === undefined || averageTtlMs === undefined) {
+      continue;
+    }
+    databases.set(database, {
+      database,
+      keys: Number(keys),
+      expires: Number(expires),
+      averageTtlMs: Number(averageTtlMs),
+    });
+  }
+  if (!databases.has(fallbackDatabase)) {
+    databases.set(fallbackDatabase, {
+      database: fallbackDatabase,
+      keys: 0,
+      expires: 0,
+      averageTtlMs: 0,
+    });
+  }
+  return [...databases.values()].sort(
+    (left, right) => Number(left.database) - Number(right.database),
+  );
+}
+
+/**
+ * Renders one independently expandable connection and its lazily loaded object list.
  * @param props - Connection identity, drawer state, and navigation callbacks.
  * @returns One selectable connection drawer.
  * Side effects: issues an internal metadata query only after explicit expansion or refresh.
@@ -129,51 +204,195 @@ function ConnectionDrawer({
   profile,
   selected,
   tableFilter,
+  onOpenRedisKey,
   onOpenTable,
   onOpenContextMenu,
   onSelect,
+  onSelectRedisDatabase,
   onTablesLoaded,
   onToggle,
+  selectedRedisDatabase,
 }: ConnectionDrawerProps) {
   const tables = useQuerySession(profile.id, { recordHistory: false });
   const connectionButtonRef = useRef<HTMLButtonElement>(null);
-  const canExplore = profile.engine === "my_sql" && Boolean(profile.database);
+  const supportsExplorer = profile.engine === "my_sql" || profile.engine === "redis";
+  const canExplore = profile.engine === "redis"
+    || (profile.engine === "my_sql" && Boolean(profile.database));
+  const isRedis = profile.engine === "redis";
   const [selectedTableName, setSelectedTableName] = useState<string | null>(null);
+  const [redisDatabases, setRedisDatabases] = useState<RedisDatabaseInfo[]>([]);
+  const [expandedRedisDatabase, setExpandedRedisDatabase] = useState<string | null>(null);
+  const [redisKeys, setRedisKeys] = useState<string[]>([]);
+  const [redisDatabasesLoading, setRedisDatabasesLoading] = useState(false);
+  const [redisKeysLoading, setRedisKeysLoading] = useState(false);
+  const [redisExplorerError, setRedisExplorerError] = useState<string | null>(null);
+  const redisDatabaseRequestIdRef = useRef(0);
+  const redisKeyRequestIdRef = useRef(0);
   const normalizedTableFilter = tableFilter.trim().toLocaleLowerCase();
-  const visibleTableRows = tables.state.rows.filter((row) =>
-    cellText(row[0]).toLocaleLowerCase().includes(normalizedTableFilter),
+  const objectRows = tables.state.rows.filter((row) => Boolean(objectName(row)));
+  const visibleTableRows = objectRows.filter((row) =>
+    objectName(row).toLocaleLowerCase().includes(normalizedTableFilter),
   );
+  const visibleRedisKeys = redisKeys.filter((key) =>
+    key.toLocaleLowerCase().includes(normalizedTableFilter),
+  );
+  const effectiveRedisDatabase = selectedRedisDatabase ?? profile.database ?? "0";
+  const displayedRedisDatabases = redisDatabases.some(
+    (databaseInfo) => databaseInfo.database === effectiveRedisDatabase,
+  )
+    ? redisDatabases
+    : [
+        ...redisDatabases,
+        {
+          database: effectiveRedisDatabase,
+          keys: 0,
+          expires: 0,
+          averageTtlMs: 0,
+        },
+      ].sort((left, right) => Number(left.database) - Number(right.database));
 
   useEffect(() => {
-    if (!tables.state.queryId || tables.state.running || tables.state.error) {
+    if (
+      profile.engine !== "my_sql"
+      || !tables.state.queryId
+      || tables.state.running
+      || tables.state.error
+    ) {
       return;
     }
     onTablesLoaded?.(
       profile.id,
       tables.state.rows.map((row) => cellText(row[0])).filter(Boolean),
     );
-  }, [onTablesLoaded, profile.id, tables.state.error, tables.state.queryId, tables.state.rows, tables.state.running]);
+  }, [onTablesLoaded, profile.engine, profile.id, tables.state.error, tables.state.queryId, tables.state.rows, tables.state.running]);
 
   useEffect(() => {
-    if (discoverTables && canExplore && tables.state.queryId === null && !tables.state.running) {
-      void tables.run("SHOW FULL TABLES;");
+    if (
+      discoverTables
+      && profile.engine === "my_sql"
+      && canExplore
+      && tables.state.queryId === null
+      && !tables.state.running
+    ) {
+      void tables.run(metadataCommand());
     }
-  }, [canExplore, discoverTables, tables.run, tables.state.queryId, tables.state.running]);
+  }, [canExplore, discoverTables, profile, tables.run, tables.state.queryId, tables.state.running]);
+
+  /**
+   * Loads the Redis database summaries without scanning any database keys.
+   * Parameters: none.
+   * @returns A promise settled after the latest INFO request updates the tree.
+   * Side effects: executes INFO keyspace and updates Redis explorer state.
+   */
+  async function loadRedisDatabases(): Promise<void> {
+    const requestId = redisDatabaseRequestIdRef.current + 1;
+    redisDatabaseRequestIdRef.current = requestId;
+    setRedisDatabasesLoading(true);
+    setRedisExplorerError(null);
+    try {
+      const result = await executeQueryOnce(profile.id, "INFO keyspace");
+      if (redisDatabaseRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRedisDatabases(parseRedisDatabases(
+        cellText(result.rows[0]?.[0]),
+        profile.database ?? "0",
+      ));
+    } catch (error: unknown) {
+      if (redisDatabaseRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRedisExplorerError(
+        typeof error === "object"
+        && error !== null
+        && "message" in error
+        && typeof error.message === "string"
+          ? error.message
+          : "无法读取 Redis 数据库信息。",
+      );
+    } finally {
+      if (redisDatabaseRequestIdRef.current === requestId) {
+        setRedisDatabasesLoading(false);
+      }
+    }
+  }
+
+  /**
+   * Selects one Redis database and loads only that database's first key page.
+   * @param database - Redis logical database number.
+   * @param forceRefresh - Whether an already open database should remain open and reload.
+   * @returns A promise settled after the latest SCAN request updates the tree.
+   * Side effects: updates the active database and executes a database-scoped SCAN.
+   */
+  async function openRedisDatabase(
+    database: string,
+    forceRefresh = false,
+  ): Promise<void> {
+    onSelect(profile.id);
+    onSelectRedisDatabase?.(profile.id, database);
+    if (expandedRedisDatabase === database && !forceRefresh) {
+      setExpandedRedisDatabase(null);
+      return;
+    }
+
+    const requestId = redisKeyRequestIdRef.current + 1;
+    redisKeyRequestIdRef.current = requestId;
+    setExpandedRedisDatabase(database);
+    setRedisKeys([]);
+    setRedisKeysLoading(true);
+    setRedisExplorerError(null);
+    try {
+      const result = await executeQueryOnce(
+        profile.id,
+        'SCAN 0 MATCH "*" COUNT 500',
+        database,
+      );
+      if (redisKeyRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRedisKeys(result.rows
+        .map((row) => cellText(row[1]))
+        .filter(Boolean));
+    } catch (error: unknown) {
+      if (redisKeyRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRedisExplorerError(
+        typeof error === "object"
+        && error !== null
+        && "message" in error
+        && typeof error.message === "string"
+          ? error.message
+          : `无法读取 DB ${database} 的键。`,
+      );
+    } finally {
+      if (redisKeyRequestIdRef.current === requestId) {
+        setRedisKeysLoading(false);
+      }
+    }
+  }
 
   /**
    * Selects and toggles the drawer, loading table metadata only when it first opens.
    * Parameters: none.
    * @returns Nothing (`void`).
-   * Side effects: updates parent state and may start a MySQL metadata query.
+   * Side effects: updates parent state and may start an engine-native metadata query.
    */
   function handleToggleRequested(): void {
     onSelect(profile.id);
-    if (profile.engine !== "my_sql") {
+    if (profile.engine !== "my_sql" && profile.engine !== "redis") {
       return;
     }
     onToggle(profile.id);
-    if (!expanded && canExplore && tables.state.queryId === null) {
-      void tables.run("SHOW FULL TABLES;");
+    if (expanded || !canExplore) {
+      return;
+    }
+    if (isRedis) {
+      if (redisDatabases.length === 0 && !redisDatabasesLoading) {
+        void loadRedisDatabases();
+      }
+    } else if (tables.state.queryId === null) {
+      void tables.run(metadataCommand());
     }
   }
 
@@ -197,14 +416,22 @@ function ConnectionDrawer({
   }
 
   /**
-   * Reloads table metadata while retaining the open connection drawer.
+   * Reloads object metadata while retaining the open connection drawer.
    * Parameters: none.
    * @returns Nothing (`void`).
-   * Side effects: starts a MySQL metadata query.
+   * Side effects: starts an engine-native metadata query.
    */
   function handleRefresh(): void {
-    if (canExplore && !tables.state.running) {
-      void tables.run("SHOW FULL TABLES;");
+    if (!canExplore) {
+      return;
+    }
+    if (isRedis) {
+      void loadRedisDatabases();
+      if (expandedRedisDatabase) {
+        void openRedisDatabase(expandedRedisDatabase, true);
+      }
+    } else if (!tables.state.running) {
+      void tables.run(metadataCommand());
     }
   }
 
@@ -290,11 +517,55 @@ function ConnectionDrawer({
     setSelectedTableName(nextButton.dataset.tableName ?? null);
   }
 
+  /**
+   * Supports keyboard expansion and collapse for one Redis database row.
+   * @param event - Keyboard event raised by the database tree item.
+   * @param database - Redis logical database number.
+   * @returns Nothing (`void`).
+   * Side effects: may select a database and run its bounded SCAN query.
+   */
+  function handleRedisDatabaseKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    database: string,
+  ): void {
+    if (event.key === "Enter" || event.key === "ArrowRight") {
+      event.preventDefault();
+      if (expandedRedisDatabase !== database) {
+        void openRedisDatabase(database);
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft" && expandedRedisDatabase === database) {
+      event.preventDefault();
+      void openRedisDatabase(database);
+    }
+  }
+
+  /**
+   * Opens one Redis key from the currently expanded database with Enter.
+   * @param event - Keyboard event raised by the key tree item.
+   * @param database - Owning Redis database.
+   * @param keyName - Exact Redis key name.
+   * @returns Nothing (`void`).
+   * Side effects: activates the key workspace callback.
+   */
+  function handleRedisKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    database: string,
+    keyName: string,
+  ): void {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    onOpenRedisKey?.(profile.id, database, keyName);
+  }
+
   return (
     <div className={`connection-drawer${expanded ? " is-expanded" : ""}`}>
       <button
-        aria-controls={profile.engine === "my_sql" ? `connection-tables-${profile.id}` : undefined}
-        aria-expanded={profile.engine === "my_sql" ? expanded : undefined}
+        aria-controls={supportsExplorer ? `connection-objects-${profile.id}` : undefined}
+        aria-expanded={supportsExplorer ? expanded : undefined}
         aria-pressed={selected}
         aria-selected={selected}
         className={`connection-row${selected ? " is-selected" : ""}`}
@@ -305,7 +576,7 @@ function ConnectionDrawer({
         onKeyDown={handleConnectionKeyDown}
         ref={connectionButtonRef}
         style={{ minHeight: "40px" }}
-        title={profile.engine === "my_sql" ? "双击或按 Enter 展开数据表" : undefined}
+        title={supportsExplorer ? `双击或按 Enter 展开${isRedis ? "数据库" : "数据表"}` : undefined}
         type="button"
       >
         <span className="connection-row__content">
@@ -325,24 +596,136 @@ function ConnectionDrawer({
           <span className="connection-row__meta">
             {profile.host}:{profile.port}
             <span aria-hidden="true"> · </span>
-            {profile.database ?? "未指定数据库"}
+            {isRedis
+              ? `DB ${effectiveRedisDatabase}${
+                  selectedRedisDatabase === undefined && !profile.database ? "（默认）" : ""
+                }`
+              : profile.database ?? "未指定数据库"}
           </span>
         </span>
-        {profile.engine === "my_sql" ? (
+        {supportsExplorer ? (
           <ChevronRight className="connection-row__chevron" size={14} aria-hidden="true" />
         ) : (
           <Check className="connection-row__check" size={15} aria-hidden="true" />
         )}
       </button>
 
-      {expanded && profile.engine === "my_sql" ? (
+      {expanded && supportsExplorer && isRedis ? (
+        <div
+          className="connection-drawer__body"
+          aria-label={`${profile.name} 数据库`}
+          id={`connection-objects-${profile.id}`}
+        >
+          <header className="connection-drawer__header">
+            <span>数据库 <small>{displayedRedisDatabases.length}</small></span>
+            <button
+              aria-label={`刷新 ${profile.name} 数据库`}
+              disabled={redisDatabasesLoading || redisKeysLoading}
+              onClick={handleRefresh}
+              type="button"
+            >
+              {redisDatabasesLoading || redisKeysLoading ? (
+                <LoaderCircle className="spin" size={12} aria-hidden="true" />
+              ) : (
+                <RefreshCw size={12} aria-hidden="true" />
+              )}
+            </button>
+          </header>
+          {redisDatabasesLoading && redisDatabases.length === 0 ? (
+            <p className="connection-drawer__status">正在读取数据库信息…</p>
+          ) : redisExplorerError && redisDatabases.length === 0 ? (
+            <p className="connection-drawer__status connection-drawer__status--error">
+              {redisExplorerError}
+            </p>
+          ) : (
+            <div className="redis-database-tree" role="tree">
+              {displayedRedisDatabases.map((databaseInfo) => {
+                const databaseExpanded = expandedRedisDatabase === databaseInfo.database;
+                const databaseSelected = effectiveRedisDatabase === databaseInfo.database;
+                return (
+                  <div className="redis-database-tree__branch" key={databaseInfo.database}>
+                    <button
+                      aria-expanded={databaseExpanded}
+                      aria-selected={databaseSelected}
+                      className={`redis-database-tree__database${databaseSelected ? " is-selected" : ""}`}
+                      onClick={() => onSelect(profile.id)}
+                      onDoubleClick={() => void openRedisDatabase(databaseInfo.database)}
+                      onKeyDown={(event) => handleRedisDatabaseKeyDown(event, databaseInfo.database)}
+                      role="treeitem"
+                      title={`双击切换到 DB ${databaseInfo.database} 并浏览键；${
+                        databaseInfo.keys
+                      } 个键，${databaseInfo.expires} 个带过期时间${
+                        databaseInfo.averageTtlMs > 0
+                          ? `，平均 TTL ${databaseInfo.averageTtlMs} ms`
+                          : ""
+                      }`}
+                      type="button"
+                    >
+                      <ChevronRight size={12} aria-hidden="true" />
+                      <Database size={13} strokeWidth={1.7} aria-hidden="true" />
+                      <span>DB {databaseInfo.database}</span>
+                      <small>
+                        {databaseInfo.keys} 键
+                        {databaseInfo.expires > 0 ? ` · ${databaseInfo.expires} TTL` : ""}
+                      </small>
+                    </button>
+                    {databaseExpanded ? (
+                      <div
+                        aria-label={`DB ${databaseInfo.database} 键`}
+                        className="redis-database-tree__keys"
+                        role="group"
+                      >
+                        {redisKeysLoading ? (
+                          <p className="connection-drawer__status">正在读取 DB {databaseInfo.database} 的键…</p>
+                        ) : redisExplorerError ? (
+                          <p className="connection-drawer__status connection-drawer__status--error">
+                            {redisExplorerError}
+                          </p>
+                        ) : visibleRedisKeys.length === 0 ? (
+                          <p className="connection-drawer__status">
+                            {redisKeys.length === 0 ? "此数据库暂无键。" : "没有匹配的键。"}
+                          </p>
+                        ) : visibleRedisKeys.map((keyName) => (
+                          <button
+                            aria-selected={selectedTableName === keyName}
+                            className={`table-tree__item redis-database-tree__key${selectedTableName === keyName ? " is-selected" : ""}`}
+                            data-table-name={keyName}
+                            key={keyName}
+                            onClick={() => setSelectedTableName(keyName)}
+                            onDoubleClick={() => onOpenRedisKey?.(
+                              profile.id,
+                              databaseInfo.database,
+                              keyName,
+                            )}
+                            onKeyDown={(event) => handleRedisKeyDown(
+                              event,
+                              databaseInfo.database,
+                              keyName,
+                            )}
+                            role="treeitem"
+                            title="双击或按 Enter 打开键工作区"
+                            type="button"
+                          >
+                            <KeyRound size={13} strokeWidth={1.7} aria-hidden="true" />
+                            <span>{keyName}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : expanded && supportsExplorer ? (
         <div
           className="connection-drawer__body"
           aria-label={`${profile.name} 数据表`}
-          id={`connection-tables-${profile.id}`}
+          id={`connection-objects-${profile.id}`}
         >
           <header className="connection-drawer__header">
-            <span>数据表 <small>{tables.state.rows.length}</small></span>
+            <span>数据表 <small>{objectRows.length}</small></span>
             <button
               aria-label={`刷新 ${profile.name} 数据表`}
               disabled={!canExplore || tables.state.running}
@@ -364,14 +747,14 @@ function ConnectionDrawer({
             </p>
           ) : tables.state.running && tables.state.rows.length === 0 ? (
             <p className="connection-drawer__status">正在读取数据表…</p>
-          ) : tables.state.rows.length === 0 && tables.state.affectedRows !== null ? (
+          ) : objectRows.length === 0 && tables.state.affectedRows !== null ? (
             <p className="connection-drawer__status">此数据库暂无数据表。</p>
           ) : visibleTableRows.length === 0 ? (
             <p className="connection-drawer__status">没有匹配的数据表。</p>
           ) : (
             <div className="table-tree" role="tree">
               {visibleTableRows.map((row, rowIndex) => {
-                const tableName = cellText(row[0]);
+                const tableName = objectName(row);
                 const objectType = cellText(row[1]);
                 const isDirty = dirtyTableNames.has(tableName);
                 return (
@@ -425,12 +808,15 @@ export function ConnectionSidebar({
   onSelectConnection,
   onAddConnection,
   onCopyConfig,
+  onOpenRedisKey,
   onOpenTable,
   onReconnect,
   onRequestRename,
   onRequestDelete,
+  onSelectRedisDatabase,
   onTablesLoaded,
   reconnectingConnectionId = null,
+  selectedRedisDatabases = {},
 }: ConnectionSidebarProps) {
   const shortcuts = useShortcutSettings();
   const [expandedConnectionIds, setExpandedConnectionIds] = useState<Set<string>>(new Set());
@@ -713,13 +1099,16 @@ export function ConnectionSidebar({
                         )}
                         expanded={forceExpandForTableMatch || expandedConnectionIds.has(profile.id)}
                         key={profile.id}
+                        onOpenRedisKey={onOpenRedisKey}
                         onOpenTable={onOpenTable}
                         onOpenContextMenu={handleOpenContextMenu}
                         onSelect={onSelectConnection}
+                        onSelectRedisDatabase={onSelectRedisDatabase}
                         onTablesLoaded={onTablesLoaded}
                         onToggle={handleToggleConnection}
                         profile={profile}
                         selected={selectedConnectionId === profile.id}
+                        selectedRedisDatabase={selectedRedisDatabases[profile.id]}
                         tableFilter={normalizedNavigatorFilter}
                       />
                     );

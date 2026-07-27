@@ -128,7 +128,7 @@ pub(crate) async fn test_redis_connection(
     test_redis_connection_inner(&state, input).await
 }
 
-/// Starts a MySQL query and forwards ordered streaming events to the caller.
+/// Starts a supported database query or command and forwards ordered streaming events.
 #[tauri::command]
 pub(crate) async fn run_query(
     state: State<'_, AppState>,
@@ -288,13 +288,13 @@ fn engine_validation_error(expected_engine: &'static str) -> AppError {
     }
 }
 
-/// Registers and starts one MySQL query with an eight-event backpressure bridge.
+/// Registers and starts one engine-native query with an eight-event backpressure bridge.
 async fn run_query_inner(
     state: &AppState,
     request: QueryRequest,
     on_event: Channel<QueryEvent>,
 ) -> Result<Uuid, AppError> {
-    let profile = state
+    let mut profile = state
         .local_store
         .list_connections()?
         .into_iter()
@@ -305,6 +305,17 @@ async fn run_query_inner(
             technical_details: None,
             retryable: false,
         })?;
+    if request.database.is_some() {
+        if !matches!(profile.engine, Engine::Redis) {
+            return Err(AppError {
+                code: AppErrorCode::Validation,
+                message: "Per-query database selection is supported only for Redis".into(),
+                technical_details: None,
+                retryable: false,
+            });
+        }
+        profile.database.clone_from(&request.database);
+    }
     let password = state
         .local_store
         .get_connection_credential(request.connection_id)?;
@@ -333,17 +344,39 @@ async fn run_query_inner(
     ));
 
     let mysql = state.mysql.clone();
+    let redis = state.redis.clone();
     tokio::spawn(async move {
-        if let Err(error) = mysql
-            .query(
-                &profile,
-                password,
-                request,
-                event_sender.clone(),
-                cancellation,
-            )
-            .await
-        {
+        let result = match profile.engine {
+            Engine::MySql => {
+                mysql
+                    .query(
+                        &profile,
+                        password,
+                        request,
+                        event_sender.clone(),
+                        cancellation,
+                    )
+                    .await
+            }
+            Engine::Redis => {
+                redis
+                    .query(
+                        &profile,
+                        password,
+                        request,
+                        event_sender.clone(),
+                        cancellation,
+                    )
+                    .await
+            }
+            Engine::PostgreSql | Engine::MongoDb => Err(AppError {
+                code: AppErrorCode::Validation,
+                message: "Query execution is not supported for this database engine".into(),
+                technical_details: None,
+                retryable: false,
+            }),
+        };
+        if let Err(error) = result {
             let _send_result = event_sender
                 .send(QueryEvent::Failed { query_id, error })
                 .await;
@@ -877,6 +910,7 @@ mod tests {
                 query_id,
                 connection_id,
                 sql: "SELECT 1".into(),
+                database: None,
             },
             json_channel(seen_tx),
         )
@@ -923,6 +957,7 @@ mod tests {
                 query_id,
                 connection_id,
                 sql: "SELECT 1".into(),
+                database: None,
             },
             Channel::new(|_| Ok(())),
         )
