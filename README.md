@@ -12,7 +12,7 @@
 
   [下载 Apple 芯片版](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-arm64.dmg)
   ·
-  [下载 Intel 芯片版](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg)
+  [下载 Intel 芯片版（v0.2.4）](https://github.com/AlasicPlat/pipa/releases/download/v0.2.4/Pipa-macOS-x64.dmg)
 </div>
 
 <p align="center">
@@ -27,6 +27,8 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 
 - 创建、测试、重命名和整理 MySQL、Redis 连接。
 - 在绑定 MySQL 连接的查询标签中编写与执行 SQL。
+- 浏览 Redis 数据库与键，并在不同 DB 之间切换。
+- 执行 Redis 原生命令，查看 String、Hash、List、Set、Sorted Set 与 Stream 等键详情。
 - 执行选中 SQL 或光标所在语句，并可取消运行中的查询。
 - 流式展示查询结果，保留大整数和精确小数的原始语义。
 - 结果区支持区域选择、搜索、排序和列宽调整。
@@ -48,7 +50,7 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 | 数据库 | 当前支持 |
 | --- | --- |
 | MySQL | 连接管理、连接测试、SQL 查询与 MCP 只读访问 |
-| Redis | 连接管理与连接测试；命令工作台尚未开放 |
+| Redis | 连接管理、数据库切换、键浏览、键详情与原生命令执行 |
 | PostgreSQL | 界面位置已预留，连接与查询尚未开放 |
 | MongoDB | 界面位置已预留，连接与查询尚未开放 |
 
@@ -57,11 +59,11 @@ Pipa 为日常数据库查询提供一个安静、清晰的桌面工作区：集
 | Mac 类型 | 安装包 |
 | --- | --- |
 | Apple 芯片（M1 / M2 / M3 / M4 等） | [下载 `Pipa-macOS-arm64.dmg`](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-arm64.dmg) |
-| Intel 芯片 | [下载 `Pipa-macOS-x64.dmg`](https://github.com/AlasicPlat/pipa/releases/latest/download/Pipa-macOS-x64.dmg) |
+| Intel 芯片 | [下载 v0.2.4 `Pipa-macOS-x64.dmg`](https://github.com/AlasicPlat/pipa/releases/download/v0.2.4/Pipa-macOS-x64.dmg) |
 
 下载后打开 DMG，将 Pipa 拖入“应用程序”文件夹即可。历史版本与更新说明可在 [Releases](https://github.com/AlasicPlat/pipa/releases) 查看。
 
-当前 v0.2.4 的两个安装包均已完成 Developer ID 签名并通过 Apple 公证。
+v0.2.5 Apple 芯片版为未签名构建，首次打开时请在 Finder 中右键应用并选择“打开”。Intel 芯片版当前停留在 v0.2.4，已完成 Developer ID 签名并通过 Apple 公证。
 
 ## 本地数据与隐私
 
