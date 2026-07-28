@@ -4,6 +4,7 @@ use crate::mcp::{
     SharedMcpConnectionScope, SharedMcpServer,
 };
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use pipa_binlog::InMemoryAnalysisRepository;
 use pipa_core::{AppError, AppErrorCode};
 use pipa_mysql::MySqlAdapter;
 use pipa_redis::RedisAdapter;
@@ -31,6 +32,10 @@ pub struct AppState {
     pub redis: Arc<RedisAdapter>,
     /// Cancellation tokens for currently running queries.
     pub cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    /// Ephemeral summaries and decoded transactions for open binlog analyses.
+    pub binlog_analyses: Arc<InMemoryAnalysisRepository>,
+    /// Cancellation tokens for currently running binlog imports.
+    pub binlog_cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
     /// In-process MCP HTTP server handle.
     pub mcp_server: SharedMcpServer,
     /// MCP proposal queue and activity log.
@@ -63,6 +68,8 @@ impl AppState {
             mysql: Arc::new(MySqlAdapter::new()),
             redis: Arc::new(RedisAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            binlog_analyses: Arc::new(InMemoryAnalysisRepository::new()),
+            binlog_cancellations: Arc::new(Mutex::new(HashMap::new())),
             mcp_server: Arc::new(Mutex::new(McpServerHandle::from_settings(mcp_settings))),
             mcp_queue: McpQueue::new(),
             mcp_connection_scope,
@@ -76,6 +83,8 @@ impl AppState {
             mysql: self.mysql.clone(),
             queue: self.mcp_queue.clone(),
             connection_scope: self.mcp_connection_scope.clone(),
+            binlog_analyses: self.binlog_analyses.clone(),
+            binlog_cancellations: self.binlog_cancellations.clone(),
         }
     }
 }

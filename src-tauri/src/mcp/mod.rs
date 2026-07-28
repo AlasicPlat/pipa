@@ -1,5 +1,6 @@
 //! In-process MCP server, SQL proposal queue, and Tauri command surface.
 
+mod binlog;
 mod query_runner;
 mod queue;
 mod server;

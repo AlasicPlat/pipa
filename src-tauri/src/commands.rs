@@ -494,6 +494,8 @@ mod tests {
             mysql: Arc::new(MySqlAdapter::new()),
             redis: Arc::new(RedisAdapter::new()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            binlog_analyses: Arc::new(pipa_binlog::InMemoryAnalysisRepository::new()),
+            binlog_cancellations: Arc::new(Mutex::new(HashMap::new())),
             mcp_server: Arc::new(Mutex::new(crate::mcp::McpServerHandle::default())),
             mcp_queue: crate::mcp::McpQueue::new(),
             mcp_connection_scope: crate::mcp::shared_connection_scope(

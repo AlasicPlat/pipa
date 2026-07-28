@@ -1,7 +1,16 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type Channel } from "@tauri-apps/api/core";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { RecordQueryHistoryInput } from "../bindings/RecordQueryHistoryInput";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
+import type {
+  BinlogImportEvent,
+  BinlogOperation,
+  BinlogResetSql,
+  BinlogSummary,
+  BinlogTransaction,
+  BinlogTransactionFilter,
+  BinlogTransactionPage,
+} from "../features/binlog/types";
 import type { McpPanelSnapshot } from "../features/mcp/types";
 
 /** Exact non-secret workspace-tab payload shared with the Rust persistence command. */
@@ -182,4 +191,117 @@ export function mcpDismissProposal(proposalId: string): Promise<McpPanelSnapshot
 /** Runs arbitrary SQL from the MCP panel (UI privileges; not MCP-gated). */
 export function mcpRunManualSql(connectionId: string, sql: string): Promise<McpPanelSnapshot> {
   return invoke<McpPanelSnapshot>("mcp_run_manual_sql", { connectionId, sql });
+}
+
+/**
+ * Starts a streaming, offline binlog analysis for one ordered file selection.
+ * @param paths - Absolute native paths chosen by the user; files are inspected by content.
+ * @param onEvent - Tauri channel subscribed before invocation for ordered lifecycle progress.
+ * @returns The backend-owned analysis identifier used by subsequent commands.
+ * Side effects: creates an ephemeral backend analysis and begins reading local files.
+ */
+export function startBinlogImport(
+  paths: string[],
+  onEvent: Channel<BinlogImportEvent>,
+): Promise<string> {
+  return invoke<string>("binlog_start_import", { paths, onEvent });
+}
+
+/**
+ * Requests cancellation of a running binlog import.
+ * @param analysisId - Identifier returned by `startBinlogImport`.
+ * @returns A promise that resolves when the cancellation request is accepted.
+ * Side effects: signals the backend parser; the terminal state still arrives on the channel.
+ */
+export function cancelBinlogImport(analysisId: string): Promise<void> {
+  return invoke<void>("binlog_cancel_import", { analysisId });
+}
+
+/**
+ * Loads aggregate counts, source metadata, table choices, and diagnostics.
+ * @param analysisId - Completed analysis identifier.
+ * @returns The immutable summary for the imported file set.
+ * Side effects: reads the backend's ephemeral analysis index.
+ */
+export function getBinlogSummary(analysisId: string): Promise<BinlogSummary> {
+  return invoke<BinlogSummary>("binlog_get_summary", { analysisId });
+}
+
+/**
+ * Loads one filtered cursor page for the transaction timeline.
+ * @param analysisId - Completed analysis identifier.
+ * @param filter - Exact database, table, operation, cursor, and page-size constraints.
+ * @returns Ordered transaction items and the optional next cursor.
+ * Side effects: reads the backend's ephemeral analysis index.
+ */
+export function listBinlogTransactions(
+  analysisId: string,
+  filter: BinlogTransactionFilter,
+): Promise<BinlogTransactionPage> {
+  return invoke<BinlogTransactionPage>("binlog_list_transactions", {
+    analysisId,
+    filter,
+  });
+}
+
+/**
+ * Loads row images for one expanded transaction using the active timeline filter.
+ * @param analysisId - Completed analysis identifier.
+ * @param sequence - Stable transaction sequence returned by the summary page.
+ * @param database - Exact database filter or `null`.
+ * @param table - Exact table filter or `null`.
+ * @param operation - Exact operation filter or `null`.
+ * @returns The projected transaction including row and statement changes.
+ * Side effects: reads one transaction from the backend's ephemeral analysis index.
+ */
+export function getBinlogTransaction(
+  analysisId: string,
+  sequence: number,
+  database: string | null,
+  table: string | null,
+  operation: BinlogOperation | null,
+): Promise<BinlogTransaction> {
+  return invoke<BinlogTransaction>("binlog_get_transaction", {
+    analysisId,
+    sequence,
+    database,
+    table,
+    operation,
+  });
+}
+
+/**
+ * Generates Reset SQL for one transaction using the active timeline projection.
+ * @param analysisId - Completed analysis identifier.
+ * @param sequence - Stable transaction sequence returned by the summary page.
+ * @param database - Exact database filter or `null`.
+ * @param table - Exact table filter or `null`.
+ * @param operation - Exact operation filter or `null`.
+ * @returns Reviewable SQL plus statement count, completeness, and safety warnings.
+ * Side effects: reads decoded row images; no SQL is executed.
+ */
+export function getBinlogResetSql(
+  analysisId: string,
+  sequence: number,
+  database: string | null,
+  table: string | null,
+  operation: BinlogOperation | null,
+): Promise<BinlogResetSql> {
+  return invoke<BinlogResetSql>("binlog_get_reset_sql", {
+    analysisId,
+    sequence,
+    database,
+    table,
+    operation,
+  });
+}
+
+/**
+ * Releases all temporary files and database state for one local analysis.
+ * @param analysisId - Analysis identifier to close; repeated closes are safe.
+ * @returns A promise that resolves after ephemeral state is released.
+ * Side effects: removes the backend-owned analysis session and its temporary index.
+ */
+export function closeBinlogAnalysis(analysisId: string): Promise<void> {
+  return invoke<void>("binlog_close_analysis", { analysisId });
 }
