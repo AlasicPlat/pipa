@@ -17,6 +17,10 @@ import {
 } from "../lib/tauriClient";
 import { App } from "./App";
 
+vi.mock("../features/binlog/BinlogWorkspace", () => ({
+  BinlogWorkspace: () => <section aria-label="Binlog 分析工作区">Binlog integration fixture</section>,
+}));
+
 vi.mock("../lib/tauriClient", () => ({
   deleteConnection: vi.fn(),
   listConnections: vi.fn(),
@@ -32,6 +36,11 @@ vi.mock("../lib/tauriClient", () => ({
 }));
 
 const clipboardState = vi.hoisted(() => ({ writeText: vi.fn() }));
+const querySessionFixture = vi.hoisted(() => ({
+  cancel: vi.fn(),
+  run: vi.fn(),
+  running: false,
+}));
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: clipboardState.writeText,
@@ -45,14 +54,14 @@ vi.mock("../features/query/useQuerySession", () => ({
       sql: "",
       columns: [],
       rows: [],
-      running: false,
+      running: querySessionFixture.running,
       cancelRequested: false,
       incomplete: false,
       affectedRows: null,
       error: null,
     },
-    run: vi.fn(),
-    cancel: vi.fn(),
+    run: querySessionFixture.run,
+    cancel: querySessionFixture.cancel,
   }),
 }));
 
@@ -404,6 +413,126 @@ async function assertGlobalCommandPalette(): Promise<void> {
   expect(screen.getByRole("dialog", { name: "快捷键帮助" })).toBeVisible();
 }
 
+/** Verifies Binlog discovery reactivates one unbound utility tab and preserves its prior query. */
+async function assertBinlogWorkspaceSingletonLifecycle(): Promise<void> {
+  render(<App />);
+  const productionRow = await screen.findByRole("button", { name: /生产主库/ });
+  const visibleEntry = screen.getByRole("button", { name: "打开 Binlog 分析" });
+  expect(visibleEntry).toBeVisible();
+
+  fireEvent.click(visibleEntry);
+  expect(screen.getByRole("tab", { name: "Binlog 分析" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const binlogRegion = screen.getByRole("region", { name: "Binlog 分析工作区" });
+  expect(binlogRegion).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "添加连接" }));
+  expect(screen.getByRole("heading", { name: "选择数据库类型" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBe(binlogRegion);
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(screen.queryByRole("heading", { name: "选择数据库类型" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBe(binlogRegion);
+
+  fireEvent.click(productionRow);
+  await waitFor(() => expect(productionRow).toHaveAttribute("aria-selected", "true"));
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("tab", { name: "恢复的查询" }));
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Binlog 分析工作区", hidden: true }),
+  ).not.toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: /命令/ }));
+  const paletteSearch = screen.getByRole("combobox", { name: /搜索连接/ });
+  fireEvent.change(paletteSearch, { target: { value: "打开 Binlog 分析" } });
+  fireEvent.click(screen.getByRole("option", { name: /打开 Binlog 分析/ }));
+
+  expect(screen.getByRole("tab", { name: "Binlog 分析" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: /命令/ }));
+  fireEvent.change(screen.getByRole("combobox", { name: /搜索连接/ }), {
+    target: { value: "打开 Binlog 分析" },
+  });
+  fireEvent.click(screen.getByRole("option", { name: /打开 Binlog 分析/ }));
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "关闭 Binlog 分析" }));
+  expect(screen.queryByRole("tab", { name: "Binlog 分析" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "恢复的查询" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+}
+
+/** Verifies the global Binlog workspace can open and close without any saved connection. */
+async function assertBinlogWorkspaceNeedsNoConnection(): Promise<void> {
+  vi.mocked(listConnections).mockResolvedValueOnce([]);
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([]);
+  render(<App />);
+
+  expect(
+    await screen.findByRole("heading", { name: "选择或创建一个数据库连接" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "打开 Binlog 分析" }));
+
+  expect(screen.getByRole("tab", { name: "Binlog 分析" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "关闭 Binlog 分析" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "选择或创建一个数据库连接" }),
+  ).toBeVisible();
+}
+
+/** Verifies a running query stays mounted and protected while Binlog remains switchable. */
+async function assertBusyQueryCanSwitchToBinlog(): Promise<void> {
+  querySessionFixture.running = true;
+  const { rerender } = render(<App />);
+  expect(await screen.findByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  await waitFor(() => expect(
+    screen.getByRole("button", { name: "关闭 恢复的查询" }),
+  ).toBeDisabled());
+
+  fireEvent.click(screen.getByRole("button", { name: "打开 Binlog 分析" }));
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "开发主库 查询工作区", hidden: true }),
+  ).not.toBeVisible();
+
+  const busyQueryTab = screen.getByRole("tab", { name: "恢复的查询" });
+  expect(busyQueryTab).not.toBeDisabled();
+  fireEvent.click(busyQueryTab);
+  expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Binlog 分析" }));
+  expect(screen.getByRole("region", { name: "Binlog 分析工作区" })).toBeVisible();
+
+  querySessionFixture.running = false;
+  rerender(<App />);
+  await waitFor(() => expect(
+    screen.getByRole("button", { name: "关闭 恢复的查询" }),
+  ).not.toBeDisabled());
+  expect(
+    screen.getByRole("region", { name: "开发主库 查询工作区", hidden: true }),
+  ).not.toBeVisible();
+
+  fireEvent.keyDown(document, { key: "w", metaKey: true });
+  expect(screen.queryByRole("tab", { name: "Binlog 分析" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
+}
+
 /** Verifies the connection sidebar toggles, persists, and stays mounted while collapsed. */
 async function assertSidebarCollapseToggleAndPersistence(): Promise<void> {
   const { unmount } = render(<App />);
@@ -520,6 +649,7 @@ function registerAppTests(): void {
     window.localStorage.clear();
     reloadShortcutBindings();
     vi.clearAllMocks();
+    querySessionFixture.running = false;
     vi.mocked(listConnections).mockResolvedValue([
       DEVELOPMENT_PROFILE,
       PRODUCTION_PROFILE,
@@ -570,6 +700,9 @@ function registerAppTests(): void {
   it("switches and persists the selected interface appearance", assertThemeSwitching);
   it("opens shortcut settings from the persistent topbar entry", assertShortcutSettingsEntry);
   it("opens and searches the global command palette", assertGlobalCommandPalette);
+  it("discovers and reuses one connection-independent Binlog workspace", assertBinlogWorkspaceSingletonLifecycle);
+  it("opens the Binlog workspace without a saved connection", assertBinlogWorkspaceNeedsNoConnection);
+  it("switches to Binlog without unmounting a busy query", assertBusyQueryCanSwitchToBinlog);
   it("collapses the connection sidebar and restores the preference", assertSidebarCollapseToggleAndPersistence);
   it("reveals the active connection from the collapsed context chip", assertCollapsedContextBarRevealsConnection);
   it("expands a collapsed sidebar when the palette opens a connection", assertPaletteNavigationExpandsSidebar);

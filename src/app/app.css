@@ -219,6 +219,12 @@ body {
   color: var(--text-primary);
 }
 
+.workspace__topbar-actions button.is-active {
+  border-color: color-mix(in srgb, var(--accent-mysql) 40%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-mysql) 9%, var(--surface-panel));
+  color: var(--text-primary);
+}
+
 .workspace__topbar-actions button kbd {
   color: var(--text-tertiary);
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -1007,6 +1013,10 @@ body {
 
 .query-tab--table.is-active {
   box-shadow: inset 0 -2px 0 var(--accent-mongodb);
+}
+
+.query-tab--utility.is-active {
+  box-shadow: inset 0 -2px 0 var(--accent-mysql);
 }
 
 .query-tab__select:disabled {
@@ -3220,6 +3230,17 @@ body {
   border-radius: 9px;
   background: var(--surface-panel);
   box-shadow: 0 16px 42px color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.connection-flow-backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  overflow: auto;
+  padding: 24px;
+  place-items: center;
+  background: color-mix(in srgb, #000000 42%, transparent);
 }
 
 .connection-type-picker {

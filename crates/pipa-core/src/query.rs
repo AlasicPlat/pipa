@@ -48,7 +48,7 @@ pub struct QueryColumn {
 }
 
 /// Lossless, transport-safe representation of a database cell.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 #[ts(export)]
 pub enum CellValue {

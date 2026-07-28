@@ -1,6 +1,6 @@
 # Pipa MCP 连接指南
 
-Pipa 内置一个仅监听本机回环地址的 Streamable HTTP MCP 服务，让支持 MCP 的客户端读取 Pipa 中保存的 MySQL 连接、查看表结构并执行受限的只读查询。
+Pipa 内置一个仅监听本机回环地址的 Streamable HTTP MCP 服务，让支持 MCP 的客户端读取 Pipa 中保存的 MySQL 连接、查看表结构、执行受限的只读查询，并离线分析一份或多份 MySQL Binlog。
 
 默认地址：
 
@@ -8,11 +8,11 @@ Pipa 内置一个仅监听本机回环地址的 Streamable HTTP MCP 服务，让
 http://127.0.0.1:3847/mcp
 ```
 
-当前版本只支持 MySQL MCP 工具，不提供远程监听或 `stdio` 传输。
+当前版本的数据库与 Binlog MCP 工具面向 MySQL，不提供远程监听或 `stdio` 传输。Binlog 工具不依赖已保存的数据库连接。
 
 ## 1. 启动 MCP 服务
 
-1. 启动 Pipa，并至少保存一个可用的 MySQL 连接。
+1. 启动 Pipa；只有数据库查询工具需要预先保存可用的 MySQL 连接，Binlog 工具无需连接。
 2. 点击查询工作区顶部的 **MCP** 按钮，打开 **MCP 控制台**。
 3. 如需修改默认端口，在“端口”输入框中填写 `1` 到 `65535` 之间的端口并点击“应用”。
 4. 点击“启动”，确认状态变为“运行中”。
@@ -145,10 +145,55 @@ curl --noproxy 127.0.0.1 -i --max-time 10 \
 | `describe_table` | 查看指定 MySQL 表结构 | 是，只读 |
 | `run_readonly_query` | 执行通过安全策略的只读 SQL | 是，只读 |
 | `propose_sql` | 把 SQL 放入 Pipa 的待确认队列 | 否 |
+| `binlog_import` | 按顺序导入多份本机路径或多份 Base64 文件，立即返回 `analysisId` | 否 |
+| `binlog_get_summary` | 轮询解析状态、文件摘要、表聚合与诊断 | 否 |
+| `binlog_list_transactions` | 按库、表、操作类型过滤并分页读取事务时间线 | 否 |
+| `binlog_get_transaction` | 按序号读取事务及 Before/After 行镜像 | 否 |
+| `binlog_get_reset_sql` | 为已提交事务生成但不执行 Reset SQL | 否 |
+| `binlog_close` | 取消未完成解析并释放临时文件与内存结果 | 否 |
 
 调用数据库工具前，客户端通常应先调用 `list_connections`，取得当前范围内目标连接的 `connection_id`。开启“是否指定连接”后，尝试使用其他连接 ID 会被拒绝。
 
 只读查询结果最多返回 200 行。结果超过限制时会标记为截断，并取消继续读取数据库结果。
+
+### Binlog 多文件导入
+
+`binlog_import` 必须且只能选择一种输入：
+
+- `file_paths`：Pipa 所在电脑上的有序文件路径，适合大文件，单次最多 256 个。
+- `files`：包含 `name` 与 `content_base64` 的有序数组，适合客户端直接上传；单次最多 32 个，解码后合计不超过 64 MiB。
+
+内联上传示例：
+
+```json
+{
+  "files": [
+    {
+      "name": "mysql-bin.000001",
+      "content_base64": "<BASE64_BYTES>"
+    },
+    {
+      "name": "mysql-bin.000002",
+      "content_base64": "<BASE64_BYTES>"
+    }
+  ]
+}
+```
+
+大文件的本机路径示例：
+
+```json
+{
+  "file_paths": [
+    "/var/lib/mysql/mysql-bin.000001",
+    "/var/lib/mysql/mysql-bin.000002"
+  ]
+}
+```
+
+导入是异步的：保存 `binlog_import` 返回的 `analysisId`，通过 `binlog_get_summary` 轮询，状态不再是 `importing` 后再调用事务工具。使用完毕应调用 `binlog_close`。内联文件保存在私有临时目录中，并在解析结束后自动删除。
+
+Reset SQL 按原事务的逆序生成，但不会执行或进入 SQL 确认队列。Binlog 不携带主键定义，因此 UPDATE/DELETE 定位使用所有可重建当前值的 `<=>` 条件与 `LIMIT 1`；执行前仍必须人工检查。DDL、未提交事务、缺失真实列名或不完整的 DELETE Before 镜像会返回 warning，而不会生成具有误导性的 SQL。
 
 ## 6. SQL 安全策略
 
@@ -233,6 +278,14 @@ curl --noproxy 127.0.0.1 ...
 - 在 Pipa 工作台中先测试该数据库连接。
 - 确认数据库网络、TLS、账号权限和密码仍然有效。
 - 如果 SQL 命中了只读或危险关键字策略，改用 `propose_sql` 并在 Pipa 中确认。
+
+### Binlog 上传或解析失败
+
+- `files` 与 `file_paths` 不能同时提供，也不能同时为空。
+- 内联上传必须使用标准 Base64，文件名只能是普通文件名，不能包含目录或 `..`。
+- 超过 64 MiB 的内联内容应改用 Pipa 主机上的 `file_paths`。
+- 多份文件按参数顺序解析；应按 Binlog 序号升序传入连续文件。
+- 解析结束后调用 `binlog_get_summary` 查看 CRC32、截断、兼容性等诊断。
 
 ### 写入 SQL 没有立即执行
 

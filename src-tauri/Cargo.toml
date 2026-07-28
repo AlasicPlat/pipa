@@ -24,6 +24,7 @@ getrandom.workspace = true
 http.workspace = true
 libc.workspace = true
 pipa-core = { path = "../crates/pipa-core" }
+pipa-binlog = { path = "../crates/pipa-binlog" }
 pipa-mysql = { path = "../crates/pipa-mysql" }
 pipa-redis = { path = "../crates/pipa-redis" }
 pipa-store = { path = "../crates/pipa-store" }
@@ -33,13 +34,13 @@ schemars.workspace = true
 secrecy.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-clipboard-manager.workspace = true
+tauri-plugin-dialog.workspace = true
+tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tower.workspace = true
+tower-http.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

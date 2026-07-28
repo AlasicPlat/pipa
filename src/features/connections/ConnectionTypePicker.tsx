@@ -24,7 +24,7 @@ export function ConnectionTypePicker({ onCancel, onSelect }: ConnectionTypePicke
         </span>
       </header>
       <div className="connection-type-grid">
-        <button onClick={() => onSelect("my_sql")} type="button">
+        <button autoFocus onClick={() => onSelect("my_sql")} type="button">
           <span className="connection-type-grid__icon connection-type-grid__icon--mysql"><Database size={20} /></span>
           <strong>MySQL</strong>
           <small>SQL 查询、数据编辑、表结构与索引</small>

@@ -14,9 +14,13 @@ use rmcp::transport::streamable_http_server::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use tower_http::limit::RequestBodyLimitLayer;
 use uuid::Uuid;
 
-use super::service::{McpDeps, PipaMcpService};
+use super::{
+    binlog::MCP_MAX_REQUEST_BYTES,
+    service::{McpDeps, PipaMcpService},
+};
 
 /// Default MCP listen port when unset.
 pub const DEFAULT_MCP_PORT: u16 = 3847;
@@ -121,17 +125,19 @@ pub async fn start_mcp_server(
     );
 
     let auth_token = expected_token.clone();
-    let router = Router::new().nest_service("/mcp", service).layer(from_fn(
-        move |request: Request, next: Next| {
-            let auth_token = auth_token.clone();
-            async move {
-                if !authorized(&request, auth_token.as_str()) {
-                    return Err(StatusCode::UNAUTHORIZED);
-                }
-                Ok(next.run(request).await)
+    let router = limit_request_body(
+        Router::new().nest_service("/mcp", service),
+        MCP_MAX_REQUEST_BYTES,
+    )
+    .layer(from_fn(move |request: Request, next: Next| {
+        let auth_token = auth_token.clone();
+        async move {
+            if !authorized(&request, auth_token.as_str()) {
+                return Err(StatusCode::UNAUTHORIZED);
             }
-        },
-    ));
+            Ok(next.run(request).await)
+        }
+    }));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -177,6 +183,11 @@ pub async fn start_mcp_server(
     guard.settings.port = bound_port;
     guard.settings.enabled = true;
     Ok(())
+}
+
+/// Wraps every MCP route body so raw-body consumers cannot bypass the upload ceiling.
+fn limit_request_body(router: Router, max_bytes: usize) -> Router {
+    router.layer(RequestBodyLimitLayer::new(max_bytes))
 }
 
 /// Stops the MCP HTTP server and waits until its listener releases the port.
@@ -323,15 +334,22 @@ fn generate_token() -> Result<String, AppError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        regenerate_token_and_restart, set_mcp_server_port, start_mcp_server, stop_mcp_server,
-        McpServerHandle, SharedMcpServer,
+        limit_request_body, regenerate_token_and_restart, set_mcp_server_port, start_mcp_server,
+        stop_mcp_server, McpServerHandle, SharedMcpServer,
     };
     use crate::mcp::{McpDeps, McpQueue};
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header::CONTENT_LENGTH, Request, StatusCode},
+        routing::post,
+        Router,
+    };
     use pipa_mysql::MySqlAdapter;
     use pipa_store::LocalStore;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
+    use tower::ServiceExt;
 
     /// Builds isolated dependencies sufficient to start the loopback MCP listener.
     fn test_deps() -> (TempDir, McpDeps) {
@@ -346,6 +364,8 @@ mod tests {
                 connection_scope: crate::mcp::shared_connection_scope(
                     &pipa_store::McpSettings::default(),
                 ),
+                binlog_analyses: Arc::new(pipa_binlog::InMemoryAnalysisRepository::new()),
+                binlog_cancellations: Arc::new(Mutex::new(std::collections::HashMap::new())),
             },
         )
     }
@@ -353,6 +373,41 @@ mod tests {
     /// Creates an empty shared lifecycle handle.
     fn test_handle() -> SharedMcpServer {
         Arc::new(Mutex::new(McpServerHandle::default()))
+    }
+
+    /// Verifies raw collection is bounded even when the request omits `Content-Length`.
+    #[tokio::test]
+    async fn oversized_request_body_is_rejected() {
+        let router = limit_request_body(
+            Router::new().route(
+                "/mcp",
+                post(|request: axum::extract::Request| async move {
+                    match to_bytes(request.into_body(), usize::MAX).await {
+                        Ok(_body) => StatusCode::OK,
+                        Err(_error) => StatusCode::PAYLOAD_TOO_LARGE,
+                    }
+                }),
+            ),
+            4,
+        );
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .body(Body::from("12345"))
+            .unwrap();
+
+        let response = router.clone().oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_LENGTH, "5")
+            .body(Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     /// Verifies token regeneration releases and rebinds the same listener port.

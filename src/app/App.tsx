@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Command as CommandIcon, Database, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Trash2 } from "lucide-react";
+import { AlertTriangle, Command as CommandIcon, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Trash2 } from "lucide-react";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { Engine } from "../bindings/Engine";
+import { BinlogWorkspace } from "../features/binlog/BinlogWorkspace";
 import { CommandPalette, type CommandPaletteItem } from "../features/commands/CommandPalette";
 import { ShortcutHelpDialog, type ShortcutDialogView } from "../features/commands/ShortcutHelpDialog";
 import {
@@ -27,10 +28,20 @@ import { QueryWorkspace } from "../features/query/QueryWorkspace";
 import { useWorkspacePersistence } from "../features/query/useWorkspacePersistence";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { TableWorkspace } from "../features/tables/TableWorkspace";
-import { WorkspaceTabs, type OpenTableTab } from "../features/workspace/WorkspaceTabs";
+import {
+  WorkspaceTabs,
+  type OpenTableTab,
+  type UtilityWorkspaceTab,
+} from "../features/workspace/WorkspaceTabs";
 import { deleteConnection, reconnectConnection, renameConnection, setExecuteQueryAccelerator } from "../lib/tauriClient";
 import "./tokens.css";
 import "./app.css";
+
+const BINLOG_WORKSPACE_TAB: UtilityWorkspaceTab = {
+  id: "binlog-analysis",
+  kind: "binlog",
+  title: "Binlog 分析",
+};
 
 /** Returns a safe connection-deletion error message from an unknown IPC rejection. */
 function getConnectionDeletionError(error: unknown): string {
@@ -98,6 +109,8 @@ export function App() {
   const [connectionFormEngine, setConnectionFormEngine] = useState<Extract<Engine, "my_sql" | "redis"> | null>(null);
   const [openTableTabs, setOpenTableTabs] = useState<OpenTableTab[]>([]);
   const [activeTableTabId, setActiveTableTabId] = useState<string | null>(null);
+  const [binlogWorkspaceOpen, setBinlogWorkspaceOpen] = useState(false);
+  const [activeUtilityTabId, setActiveUtilityTabId] = useState<string | null>(null);
   const [busyQueryTabId, setBusyQueryTabId] = useState<string | null>(null);
   const [dirtyTableTabIds, setDirtyTableTabIds] = useState<Set<string>>(new Set());
   const [pendingCloseTableId, setPendingCloseTableId] = useState<string | null>(null);
@@ -144,10 +157,14 @@ export function App() {
     .filter((tab) => dirtyTableTabIds.has(tab.id))
     .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
   const activeTableProfile = connections.profiles.find((profile) => profile.id === activeTableTab?.connectionId);
-  const workspaceContextProfile = activeTableProfile
-    ?? activeQueryWorkspaceProfile
-    ?? selectedProfile
-    ?? null;
+  const isBinlogWorkspaceActive = binlogWorkspaceOpen
+    && activeUtilityTabId === BINLOG_WORKSPACE_TAB.id;
+  const workspaceContextProfile = isBinlogWorkspaceActive
+    ? null
+    : activeTableProfile
+      ?? activeQueryWorkspaceProfile
+      ?? selectedProfile
+      ?? null;
   const newQueryProfile = selectedProfile
     ? matchesRunnableEngine(selectedProfile.engine) ? selectedProfile : null
     : activeTableProfile?.engine === "my_sql"
@@ -155,7 +172,8 @@ export function App() {
       : activeQueryProfile && matchesRunnableEngine(activeQueryProfile.engine)
         ? activeQueryProfile
         : null;
-  const hasUsableWorkspace = openTableTabs.length > 0
+  const hasUsableWorkspace = binlogWorkspaceOpen
+    || openTableTabs.length > 0
     || Boolean(queryWorkspace.activeTab && activeQueryProfile && matchesRunnableEngine(activeQueryProfile.engine));
   const deleteCandidateWorkspaceCount = deleteCandidate
     ? queryWorkspace.tabs.filter((tab) => tab.connectionId === deleteCandidate.id).length
@@ -189,6 +207,14 @@ export function App() {
       lastUsedAt: recentItemTimestamps["command:open-mcp"],
     },
     {
+      id: "command:open-binlog",
+      type: "command",
+      label: "打开 Binlog 分析",
+      detail: binlogWorkspaceOpen ? "切换到已打开的独立日志工作区" : "导入并分析本地 MySQL Binlog",
+      keywords: ["binlog", "binary log", "时间线", "日志", "恢复"],
+      lastUsedAt: recentItemTimestamps["command:open-binlog"],
+    },
+    {
       id: "command:shortcut-help",
       type: "command",
       label: "打开快捷键帮助",
@@ -220,7 +246,7 @@ export function App() {
       keywords: ["query", newQueryProfile.engine === "redis" ? "redis" : "sql"],
       lastUsedAt: recentItemTimestamps["command:new-query"],
     }] : []),
-    ...((activeTableTabId || queryWorkspace.activeTabId) ? [{
+    ...((activeUtilityTabId || activeTableTabId || queryWorkspace.activeTabId) ? [{
       id: "command:close-workspace",
       type: "command" as const,
       label: "关闭当前工作区",
@@ -228,7 +254,7 @@ export function App() {
       keywords: ["close", "关闭标签"],
       lastUsedAt: recentItemTimestamps["command:close-workspace"],
     }] : []),
-    ...(queryWorkspace.tabs.length + openTableTabs.length > 1 ? [
+    ...(queryWorkspace.tabs.length + openTableTabs.length + (binlogWorkspaceOpen ? 1 : 0) > 1 ? [
       {
         id: "command:next-workspace",
         type: "command" as const,
@@ -246,7 +272,7 @@ export function App() {
         lastUsedAt: recentItemTimestamps["command:previous-workspace"],
       },
     ] : []),
-    ...(activeTableTabId === null && queryWorkspace.activeTabId ? [
+    ...(activeUtilityTabId === null && activeTableTabId === null && queryWorkspace.activeTabId ? [
       {
         id: "command:execute-sql",
         type: "command" as const,
@@ -280,7 +306,15 @@ export function App() {
         lastUsedAt: recentItemTimestamps["command:cancel-query"],
       }] : []),
     ] : []),
-    ...(activeTableTabId ? [
+    ...(activeUtilityTabId !== null && busyQueryTabId ? [{
+      id: "command:cancel-query",
+      type: "command" as const,
+      label: "取消后台查询",
+      detail: shortcutLabel("cancelQuery"),
+      keywords: ["stop", "停止", "后台查询"],
+      lastUsedAt: recentItemTimestamps["command:cancel-query"],
+    }] : []),
+    ...(activeUtilityTabId === null && activeTableTabId ? [
       {
         id: "command:find-current",
         type: "command" as const,
@@ -341,6 +375,14 @@ export function App() {
       keywords: [tab.tableName],
       lastUsedAt: recentItemTimestamps[`workspace:table:${tab.id}`],
     })),
+    ...(binlogWorkspaceOpen ? [{
+      id: `workspace:utility:${BINLOG_WORKSPACE_TAB.id}`,
+      type: "workspace" as const,
+      label: BINLOG_WORKSPACE_TAB.title,
+      detail: "独立 Binlog 工作区",
+      keywords: ["binlog", "binary log", "时间线", "日志"],
+      lastUsedAt: recentItemTimestamps[`workspace:utility:${BINLOG_WORKSPACE_TAB.id}`],
+    }] : []),
   ];
 
   /**
@@ -370,6 +412,48 @@ export function App() {
   /** Records session-local object recency without persisting connection metadata outside the encrypted store. */
   function markPaletteItemRecent(itemId: string): void {
     setRecentItemTimestamps((current) => ({ ...current, [itemId]: Date.now() }));
+  }
+
+  /**
+   * Opens or reactivates the singleton Binlog workspace without selecting a database connection.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: cancels an unfinished connection form and updates session-local workspace state.
+   */
+  function handleOpenBinlogWorkspace(): void {
+    setIsAddingConnection(false);
+    setConnectionFormEngine(null);
+    setBinlogWorkspaceOpen(true);
+    setActiveUtilityTabId(BINLOG_WORKSPACE_TAB.id);
+    markPaletteItemRecent(`workspace:utility:${BINLOG_WORKSPACE_TAB.id}`);
+  }
+
+  /**
+   * Activates an already-open connection-independent utility workspace.
+   * @param tabId - Utility workspace identifier from the shared tab strip.
+   * @returns Nothing (`void`).
+   * Side effects: updates only the active utility identity and session-local recency.
+   */
+  function handleSelectUtilityTab(tabId: string): void {
+    if (!binlogWorkspaceOpen || tabId !== BINLOG_WORKSPACE_TAB.id) {
+      return;
+    }
+    setActiveUtilityTabId(tabId);
+    markPaletteItemRecent(`workspace:utility:${tabId}`);
+  }
+
+  /**
+   * Closes the singleton utility workspace while preserving all query and table bindings.
+   * @param tabId - Utility workspace identifier from the shared tab strip.
+   * @returns Nothing (`void`).
+   * Side effects: unmounts the Binlog workspace and reveals the retained query, table, or empty state.
+   */
+  function handleCloseUtilityTab(tabId: string): void {
+    if (tabId !== BINLOG_WORKSPACE_TAB.id) {
+      return;
+    }
+    setBinlogWorkspaceOpen(false);
+    setActiveUtilityTabId((current) => current === tabId ? null : current);
   }
 
   /** Retains table names discovered by explicitly expanded connections for global fuzzy lookup. */
@@ -489,6 +573,8 @@ export function App() {
         handleSelectQueryTab(item.id.slice("workspace:query:".length));
       } else if (item.id.startsWith("workspace:table:")) {
         handleSelectTableTab(item.id.slice("workspace:table:".length));
+      } else if (item.id.startsWith("workspace:utility:")) {
+        handleSelectUtilityTab(item.id.slice("workspace:utility:".length));
       }
       return;
     }
@@ -500,8 +586,13 @@ export function App() {
       case "command:new-query":
         handleCreateQuery();
         break;
+      case "command:open-binlog":
+        handleOpenBinlogWorkspace();
+        break;
       case "command:close-workspace":
-        if (activeTableTabId) {
+        if (activeUtilityTabId) {
+          handleCloseUtilityTab(activeUtilityTabId);
+        } else if (activeTableTabId) {
           handleCloseTable(activeTableTabId);
         } else if (queryWorkspace.activeTabId) {
           handleCloseQueryTab(queryWorkspace.activeTabId);
@@ -738,6 +829,7 @@ export function App() {
       markPaletteItemRecent(`workspace:query:${newTab.id}`);
     }
     setActiveTableTabId(null);
+    setActiveUtilityTabId(null);
   }
 
   /**
@@ -778,6 +870,7 @@ export function App() {
       ? current
       : [...current, { id: tabId, connectionId, tableName, title: `${profile.name} · ${tableName}` }]);
     setActiveTableTabId(tabId);
+    setActiveUtilityTabId(null);
     markPaletteItemRecent(`table:${connectionId}:${tableName}`);
     markPaletteItemRecent(`workspace:table:${tabId}`);
   }
@@ -815,6 +908,7 @@ export function App() {
       queryWorkspace.selectTab(existingTab.id);
       markPaletteItemRecent(`workspace:query:${existingTab.id}`);
       setActiveTableTabId(null);
+      setActiveUtilityTabId(null);
       return;
     }
     const newTab = queryWorkspace.addTab(
@@ -826,6 +920,7 @@ export function App() {
       markPaletteItemRecent(`workspace:query:${newTab.id}`);
     }
     setActiveTableTabId(null);
+    setActiveUtilityTabId(null);
   }
 
   /**
@@ -908,6 +1003,7 @@ export function App() {
       setSelectedRedisDatabases((current) => ({ ...current, [profile.id]: database }));
     }
     setActiveTableTabId(null);
+    setActiveUtilityTabId(null);
     queryWorkspace.selectTab(tabId);
     markPaletteItemRecent(`workspace:query:${tabId}`);
   }
@@ -916,6 +1012,7 @@ export function App() {
   function handleSelectTableTab(tabId: string): void {
     if (openTableTabs.some((tab) => tab.id === tabId)) {
       setActiveTableTabId(tabId);
+      setActiveUtilityTabId(null);
       markPaletteItemRecent(`workspace:table:${tabId}`);
     }
   }
@@ -929,24 +1026,34 @@ export function App() {
     }
   }
 
-  /** Cycles through the shared query/table tab order without changing connection binding. */
+  /** Cycles through shared tabs, limiting a busy query to itself and the read-only Binlog workspace. */
   function cycleWorkspaceTabs(reverse: boolean): void {
     const orderedTabs = [
       ...queryWorkspace.tabs.map((tab) => ({ id: tab.id, type: "query" as const })),
       ...openTableTabs.map((tab) => ({ id: tab.id, type: "table" as const })),
+      ...(binlogWorkspaceOpen
+        ? [{ id: BINLOG_WORKSPACE_TAB.id, type: "utility" as const }]
+        : []),
     ];
-    if (orderedTabs.length < 2 || busyQueryTabId !== null) {
+    const cycleableTabs = busyQueryTabId
+      ? orderedTabs.filter(
+        (tab) => tab.type === "utility" || (tab.type === "query" && tab.id === busyQueryTabId),
+      )
+      : orderedTabs;
+    if (cycleableTabs.length < 2) {
       return;
     }
-    const currentId = activeTableTabId ?? queryWorkspace.activeTabId;
-    const currentIndex = Math.max(0, orderedTabs.findIndex((tab) => tab.id === currentId));
+    const currentId = activeUtilityTabId ?? activeTableTabId ?? queryWorkspace.activeTabId;
+    const currentIndex = Math.max(0, cycleableTabs.findIndex((tab) => tab.id === currentId));
     const delta = reverse ? -1 : 1;
-    const nextIndex = (currentIndex + delta + orderedTabs.length) % orderedTabs.length;
-    const nextTab = orderedTabs[nextIndex];
+    const nextIndex = (currentIndex + delta + cycleableTabs.length) % cycleableTabs.length;
+    const nextTab = cycleableTabs[nextIndex];
     if (nextTab?.type === "query") {
       handleSelectQueryTab(nextTab.id);
-    } else if (nextTab) {
+    } else if (nextTab?.type === "table") {
       handleSelectTableTab(nextTab.id);
+    } else if (nextTab) {
+      handleSelectUtilityTab(nextTab.id);
     }
   }
 
@@ -1011,11 +1118,13 @@ export function App() {
         return;
       }
       if (matchesShortcut(event, shortcuts.bindings.closeWorkspace)) {
-        if (!activeTableTabId && !queryWorkspace.activeTabId) {
+        if (!activeUtilityTabId && !activeTableTabId && !queryWorkspace.activeTabId) {
           return;
         }
         event.preventDefault();
-        if (activeTableTabId) {
+        if (activeUtilityTabId) {
+          handleCloseUtilityTab(activeUtilityTabId);
+        } else if (activeTableTabId) {
           handleCloseTable(activeTableTabId);
         } else if (queryWorkspace.activeTabId && busyQueryTabId !== queryWorkspace.activeTabId) {
           handleCloseQueryTab(queryWorkspace.activeTabId);
@@ -1221,7 +1330,9 @@ export function App() {
       </nav>
       <main className="workspace" aria-label="查询工作区">
         <header className="workspace__topbar">
-          {sidebarCollapsed && workspaceContextProfile ? (
+          {isBinlogWorkspaceActive ? (
+            <span>Binlog 分析</span>
+          ) : sidebarCollapsed && workspaceContextProfile ? (
             <button
               aria-label={`当前连接 ${workspaceContextProfile.name} · ${workspaceContextProfile.database ?? "未指定数据库"}`}
               className="workspace__topbar-context"
@@ -1236,6 +1347,16 @@ export function App() {
             <span>连接工作区</span>
           )}
           <span className="workspace__topbar-actions">
+            <button
+              aria-label="打开 Binlog 分析"
+              className={isBinlogWorkspaceActive ? "is-active" : undefined}
+              onClick={handleOpenBinlogWorkspace}
+              title="打开独立 Binlog 分析工作区"
+              type="button"
+            >
+              <FileClock size={14} aria-hidden="true" />
+              Binlog
+            </button>
             <button onClick={openCommandPalette} title={`打开命令面板（${shortcutLabel("commandPalette")}）`} type="button">
               <CommandIcon size={13} aria-hidden="true" />
               命令
@@ -1261,12 +1382,12 @@ export function App() {
 
         <div
           className={`workspace__content${
-            hasUsableWorkspace && !isAddingConnection
+            hasUsableWorkspace
               ? " workspace__content--query"
               : ""
           }`}
         >
-          {queryWorkspace.recoveryBlocked ? (
+          {queryWorkspace.recoveryBlocked && !isBinlogWorkspaceActive ? (
             <section
               className="connection-overview"
               aria-labelledby="workspace-recovery-title"
@@ -1287,18 +1408,7 @@ export function App() {
                 {queryWorkspace.loading ? "正在恢复…" : "重新恢复"}
               </button>
             </section>
-          ) : isAddingConnection && connectionFormEngine === null ? (
-            <ConnectionTypePicker
-              onCancel={handleCancelConnection}
-              onSelect={handleSelectConnectionType}
-            />
-          ) : isAddingConnection && connectionFormEngine ? (
-            <ConnectionForm
-              engine={connectionFormEngine}
-              onCancel={() => setConnectionFormEngine(null)}
-              onSaved={handleConnectionSaved}
-            />
-          ) : queryWorkspace.loading ? (
+          ) : queryWorkspace.loading && !isBinlogWorkspaceActive ? (
             <p className="panel-status" role="status">
               正在恢复本地工作区…
             </p>
@@ -1307,55 +1417,67 @@ export function App() {
               <WorkspaceTabs
                 activeQueryTabId={queryWorkspace.activeTabId}
                 activeTableTabId={activeTableTabId}
+                activeUtilityTabId={activeUtilityTabId}
                 busyQueryTabId={busyQueryTabId}
                 dirtyTableTabIds={dirtyTableTabIds}
                 newQueryEngine={newQueryProfile?.engine === "redis" ? "redis" : newQueryProfile ? "my_sql" : null}
                 newQueryConnectionName={newQueryProfile?.name ?? null}
                 onCloseQuery={handleCloseQueryTab}
                 onCloseTable={handleCloseTable}
+                onCloseUtility={handleCloseUtilityTab}
                 onCreateQuery={handleCreateQuery}
                 onSelectQuery={handleSelectQueryTab}
                 onSelectTable={handleSelectTableTab}
+                onSelectUtility={handleSelectUtilityTab}
                 queryTabs={queryWorkspace.tabs}
                 tableTabs={openTableTabs}
+                utilityTabs={binlogWorkspaceOpen ? [BINLOG_WORKSPACE_TAB] : []}
               />
               <div className="workspace-tab-panels">
                 {activeTableTabId === null
                 && queryWorkspace.activeTab
                 && activeQueryWorkspaceProfile
                 && matchesRunnableEngine(activeQueryWorkspaceProfile.engine) ? (
-                  activeQueryWorkspaceProfile.engine === "redis" ? (
-                    <RedisWorkspace
-                      key={queryWorkspace.activeTab.id}
-                      onDatabaseChange={(database) => handleSelectRedisDatabase(
-                        activeQueryWorkspaceProfile.id,
-                        database,
-                      )}
-                      onRetryPersistence={queryWorkspace.retrySave}
-                      onRunningChange={handleQueryRunningChange}
-                      onSqlChange={queryWorkspace.updateTabSql}
-                      persistenceError={queryWorkspace.saveError}
-                      profile={activeQueryWorkspaceProfile}
-                      tab={queryWorkspace.activeTab}
-                      theme={theme.resolvedTheme}
-                    />
-                  ) : (
-                    <QueryWorkspace
-                      key={queryWorkspace.activeTab.id}
-                      onRetryPersistence={queryWorkspace.retrySave}
-                      onRunningChange={handleQueryRunningChange}
-                      onSqlChange={queryWorkspace.updateTabSql}
-                      persistenceError={queryWorkspace.saveError}
-                      profile={activeQueryWorkspaceProfile}
-                      tab={queryWorkspace.activeTab}
-                      theme={theme.resolvedTheme}
-                    />
-                  )
+                  <div
+                    className="workspace-tab-panel"
+                    hidden={activeUtilityTabId !== null}
+                    key={queryWorkspace.activeTab.id}
+                  >
+                    {activeQueryWorkspaceProfile.engine === "redis" ? (
+                      <RedisWorkspace
+                        onDatabaseChange={(database) => handleSelectRedisDatabase(
+                          activeQueryWorkspaceProfile.id,
+                          database,
+                        )}
+                        onRetryPersistence={queryWorkspace.retrySave}
+                        onRunningChange={handleQueryRunningChange}
+                        onSqlChange={queryWorkspace.updateTabSql}
+                        persistenceError={queryWorkspace.saveError}
+                        profile={activeQueryWorkspaceProfile}
+                        tab={queryWorkspace.activeTab}
+                        theme={theme.resolvedTheme}
+                      />
+                    ) : (
+                      <QueryWorkspace
+                        onRetryPersistence={queryWorkspace.retrySave}
+                        onRunningChange={handleQueryRunningChange}
+                        onSqlChange={queryWorkspace.updateTabSql}
+                        persistenceError={queryWorkspace.saveError}
+                        profile={activeQueryWorkspaceProfile}
+                        tab={queryWorkspace.activeTab}
+                        theme={theme.resolvedTheme}
+                      />
+                    )}
+                  </div>
                 ) : null}
                 {openTableTabs.map((tableTab) => {
                   const profile = connections.profiles.find((item) => item.id === tableTab.connectionId);
                   return profile?.engine === "my_sql" ? (
-                    <div className="workspace-tab-panel" hidden={activeTableTabId !== tableTab.id} key={tableTab.id}>
+                    <div
+                      className="workspace-tab-panel"
+                      hidden={activeUtilityTabId !== null || activeTableTabId !== tableTab.id}
+                      key={tableTab.id}
+                    >
                       <TableWorkspace
                         onDirtyChange={(dirty) => handleTableDirtyChange(tableTab.id, dirty)}
                         profile={profile}
@@ -1364,6 +1486,17 @@ export function App() {
                     </div>
                   ) : null;
                 })}
+                {binlogWorkspaceOpen ? (
+                  <div
+                    aria-labelledby={`workspace-tab-${BINLOG_WORKSPACE_TAB.id}`}
+                    className="workspace-tab-panel"
+                    hidden={!isBinlogWorkspaceActive}
+                    id={`workspace-panel-${BINLOG_WORKSPACE_TAB.id}`}
+                    role="tabpanel"
+                  >
+                    <BinlogWorkspace />
+                  </div>
+                ) : null}
               </div>
             </section>
           ) : queryWorkspace.activeTab ? (
@@ -1404,6 +1537,27 @@ export function App() {
           )}
         </div>
       </main>
+      {isAddingConnection ? (
+        <div
+          aria-labelledby={connectionFormEngine ? "connection-form-title" : "connection-type-title"}
+          aria-modal="true"
+          className="connection-flow-backdrop"
+          role="dialog"
+        >
+          {connectionFormEngine ? (
+            <ConnectionForm
+              engine={connectionFormEngine}
+              onCancel={() => setConnectionFormEngine(null)}
+              onSaved={handleConnectionSaved}
+            />
+          ) : (
+            <ConnectionTypePicker
+              onCancel={handleCancelConnection}
+              onSelect={handleSelectConnectionType}
+            />
+          )}
+        </div>
+      ) : null}
       <CommandPalette
         items={commandPaletteItems}
         onClose={closeCommandPalette}

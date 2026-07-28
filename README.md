@@ -1,6 +1,6 @@
 # Pipa
 
-Pipa 是一款本地优先的多数据库桌面查询工作台。当前支持 MySQL 连接管理与 SQL 查询、Redis 键浏览与原生命令、流式结果处理、多格式导出，以及仅监听本机回环地址的 MCP 服务；连接配置、未保存的查询/命令和执行历史均保存在本机。
+Pipa 是一款本地优先的多数据库桌面查询工作台。当前支持 MySQL 连接管理与 SQL 查询、离线 Binlog 时间线分析、Redis 键浏览与原生命令、流式结果处理、多格式导出，以及仅监听本机回环地址的 MCP 服务；连接配置、未保存的查询/命令和执行历史均保存在本机。
 
 界面为 MySQL、PostgreSQL、MongoDB 和 Redis 提供严格分离的视觉分区。MySQL 支持新增连接、连接测试、保存和查询执行；Redis 支持连接管理、测试、SCAN 键浏览、原生命令执行、取消、历史和结果导出；PostgreSQL 与 MongoDB 当前只预留界面位置。
 
@@ -62,6 +62,8 @@ docker compose -f infra/test/mysql.compose.yml down
 ## 当前交互
 
 - MySQL、PostgreSQL、MongoDB、Redis 连接分别位于独立分区，MySQL 与 Redis 支持连接管理、测试和可执行工作区。
+- 顶栏 Binlog 入口可在没有数据库连接时导入一份或多份 MySQL 日志；解析进度可取消，结果按事务展示 GTID/XID、文件位置、表影响及 Before/After 行镜像，并支持按库、表和操作类型过滤。
+- 已提交的 Binlog 事务可复制 review-first Reset SQL：INSERT 反向生成 DELETE、UPDATE 恢复 Before、DELETE 反向生成 INSERT；无法安全还原的 DDL、缺失列名或不完整行镜像会明确跳过。
 - 查询/命令标签绑定创建时的连接；在侧栏选择其他连接不会重绑定已有标签。
 - Redis 连接默认进入键浏览器，可按名称模式和类型分页 SCAN；双击侧栏键会直接打开对应键的结构化详情。
 - 键详情自动读取 `TYPE`、`TTL` 和 `MEMORY USAGE`，并为 String、Hash、List、Set、Sorted Set、Stream、RedisJSON（服务器已安装模块时）提供有界预览和常用新增、编辑、删除操作。
@@ -80,6 +82,7 @@ docker compose -f infra/test/mysql.compose.yml down
 - “是否指定连接”关闭时，`list_connections` 返回全部已保存连接；开启时只返回选中的目标连接，后端同时拒绝其他连接 ID。
 - 连接元数据包含 `engine` 字段，可区分 MySQL、PostgreSQL、MongoDB 和 Redis 的同名连接。
 - 当前 MCP 数据库工具支持 MySQL 表列表、表结构和只读查询；DML/DDL 只能提交到 Pipa 待确认队列，由用户在控制台确认后执行。
+- MCP 同时提供无连接依赖的 Binlog 工具，可按顺序上传多份 Base64 文件或传入多份本机路径，并异步查询摘要、事务时间线、行镜像和 Reset SQL；内联上传限制为 32 个文件、合计 64 MiB。
 
 完整接入方式和安全边界见 [`MCP_CONNECTION_GUIDE.md`](MCP_CONNECTION_GUIDE.md)。
 
@@ -88,6 +91,7 @@ docker compose -f infra/test/mysql.compose.yml down
 | 部分 | 职责 |
 | --- | --- |
 | `pipa-core` | 与框架无关的连接、查询、结果、错误模型、SQL 风险策略和数据库适配器契约，并生成 TypeScript 边界类型。 |
+| `pipa-binlog` | 流式解析本地 MySQL Binlog，校验事件完整性，组装事务与行镜像，并提供过滤和游标分页的临时分析仓储。 |
 | `pipa-store` | 在 SQLCipher 加密 SQLite 中原子保存连接配置与密码，并持久化工作区、查询历史和 MCP 设置。 |
 | `pipa-mysql` | 基于 SQLx 的 MySQL 连接测试、可取消查询、结果分批和数据库值的无损传输转换。 |
 | `pipa-redis` | 基于有界 RESP 编解码的 Redis 连接测试、ACL 认证、数据库选择、可取消原生命令和结构化结果转换。 |
@@ -103,6 +107,7 @@ docker compose -f infra/test/mysql.compose.yml down
 - 数据库密码不会写入日志或前端持久化存储，错误与 Debug 输出保持脱敏。
 - 不使用 `localStorage`、`sessionStorage`、浏览器持久化或云端同步保存应用数据。
 - 查询结果只存在于当前运行内存中，默认不持久化；重启仅恢复未保存的 SQL 和标签上下文。
+- Binlog 文件只在本机读取，解析结果保留在当前进程内存中；关闭 Binlog 工作区、调用 MCP `binlog_close` 或退出应用后即释放，不写入主数据库。MCP 内联上传先写入私有临时目录，解析结束后自动删除。
 - 日志和错误只应包含脱敏后的诊断信息，不包含密码或完整结果数据。
 
 ## 常见问题

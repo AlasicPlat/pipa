@@ -1,0 +1,19 @@
+[package]
+name = "pipa-binlog"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64.workspace = true
+bigdecimal.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+mysql_common.workspace = true
+pipa-core = { path = "../pipa-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

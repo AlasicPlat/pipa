@@ -4,6 +4,7 @@ import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
 import {
   deleteConnection,
+  getBinlogResetSql,
   listConnections,
   loadWorkspace,
   mcpSetConnectionScope,
@@ -121,6 +122,29 @@ async function assertMcpConnectionScopeCommand(): Promise<void> {
   });
 }
 
+/** Verifies Reset SQL generation uses the exact analysis projection envelope. */
+async function assertBinlogResetSqlCommand(): Promise<void> {
+  const output = {
+    sql: "DELETE FROM `shop`.`orders` WHERE `id` <=> 7 LIMIT 1;",
+    statementCount: 1,
+    complete: true,
+    warnings: [],
+  };
+  vi.mocked(invoke).mockResolvedValueOnce(output);
+
+  await expect(
+    getBinlogResetSql("analysis-1", 7, "shop", "orders", "insert"),
+  ).resolves.toEqual(output);
+
+  expect(invoke).toHaveBeenCalledWith("binlog_get_reset_sql", {
+    analysisId: "analysis-1",
+    sequence: 7,
+    database: "shop",
+    table: "orders",
+    operation: "insert",
+  });
+}
+
 /**
  * Registers typed connection IPC contract tests.
  * Parameters: none.
@@ -133,6 +157,7 @@ function registerTauriClientTests(): void {
   it("uses the exact safe workspace command contracts", assertExactWorkspaceCommands);
   it("updates the native execute-query accelerator", assertNativeAcceleratorCommand);
   it("updates the MCP connection scope", assertMcpConnectionScopeCommand);
+  it("generates Binlog Reset SQL with the active projection", assertBinlogResetSqlCommand);
 }
 
 describe("tauriClient", registerTauriClientTests);

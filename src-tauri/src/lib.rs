@@ -1,3 +1,4 @@
+mod binlog_commands;
 mod bootstrap;
 mod commands;
 mod mcp;
@@ -111,6 +112,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let app_state = state::AppState::initialize(&app_data_dir)?;
@@ -158,6 +160,13 @@ pub fn run() {
             commands::load_workspace,
             commands::save_workspace,
             commands::record_query_history,
+            binlog_commands::binlog_start_import,
+            binlog_commands::binlog_cancel_import,
+            binlog_commands::binlog_get_summary,
+            binlog_commands::binlog_list_transactions,
+            binlog_commands::binlog_get_transaction,
+            binlog_commands::binlog_get_reset_sql,
+            binlog_commands::binlog_close_analysis,
             mcp::mcp_get_snapshot,
             mcp::mcp_start,
             mcp::mcp_stop,

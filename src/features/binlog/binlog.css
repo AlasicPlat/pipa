@@ -1,0 +1,886 @@
+.binlog-workspace {
+  --binlog-success: #238657;
+  --binlog-warning: #a96812;
+  --binlog-danger: #c23c34;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-mysql) 5%, transparent), transparent 180px),
+    var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+.binlog-workspace button,
+.binlog-workspace select {
+  font: inherit;
+}
+
+.binlog-workspace button:focus-visible,
+.binlog-workspace select:focus-visible,
+.binlog-workspace summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.binlog-workspace__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+}
+
+.binlog-workspace__header h1 {
+  margin: 3px 0 4px;
+  font-size: 1.25rem;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+}
+
+.binlog-workspace__header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.binlog-workspace__eyebrow {
+  color: var(--accent-mysql);
+  font-size: 0.68rem;
+  font-weight: 720;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.binlog-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 620;
+}
+
+.binlog-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.binlog-button--primary {
+  border-color: var(--accent-mysql);
+  background: var(--accent-mysql);
+  color: #fff;
+}
+
+.binlog-button--primary:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.binlog-button--secondary {
+  border-color: var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.binlog-button--secondary:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.binlog-button--danger {
+  border-color: color-mix(in srgb, var(--binlog-danger) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--binlog-danger) 8%, var(--surface-raised));
+  color: var(--binlog-danger);
+}
+
+.binlog-empty {
+  display: flex;
+  width: min(540px, calc(100% - 48px));
+  min-height: 360px;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  flex-direction: column;
+  text-align: center;
+}
+
+.binlog-empty__icon {
+  display: grid;
+  width: 66px;
+  height: 66px;
+  margin-bottom: 18px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent-mysql) 25%, var(--border-subtle));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--accent-mysql) 8%, var(--surface-raised));
+  color: var(--accent-mysql);
+}
+
+.binlog-empty h2 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.binlog-empty p {
+  max-width: 480px;
+  margin: 0 0 22px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.binlog-import,
+.binlog-state-card {
+  width: min(720px, calc(100% - 48px));
+  margin: 42px auto;
+  padding: 22px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 11px;
+  background: var(--surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 4%);
+}
+
+.binlog-import__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.binlog-import__heading h2 {
+  margin: 4px 0 0;
+  overflow: hidden;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-import__heading > strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.binlog-import progress {
+  width: 100%;
+  height: 7px;
+  margin: 18px 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--accent-mysql);
+}
+
+.binlog-import progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.binlog-import progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent-mysql);
+}
+
+.binlog-import__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.binlog-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 18px 0;
+}
+
+.binlog-file-list span {
+  max-width: 240px;
+  overflow: hidden;
+  padding: 4px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font: 0.72rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-inline-error {
+  margin: 0 0 12px;
+  color: var(--binlog-danger);
+  font-size: 0.76rem;
+}
+
+.binlog-loading {
+  display: flex;
+  min-height: 300px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--accent-mysql);
+}
+
+.binlog-loading div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.binlog-loading strong {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.binlog-loading span {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.binlog-spin {
+  animation: binlog-spin 900ms linear infinite;
+}
+
+@keyframes binlog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.binlog-state-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.binlog-state-card > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.binlog-state-card--error > svg {
+  color: var(--binlog-danger);
+}
+
+.binlog-state-card h2 {
+  margin: 0 0 5px;
+  font-size: 1rem;
+}
+
+.binlog-state-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.binlog-state-card code {
+  display: block;
+  margin-top: 10px;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+
+.binlog-state-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.binlog-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px 28px;
+}
+
+.binlog-summary {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.binlog-summary__card {
+  display: flex;
+  min-width: 0;
+  min-height: 92px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  flex-direction: column;
+}
+
+.binlog-summary__card--wide {
+  grid-column: span 2;
+}
+
+.binlog-summary__card > span:first-child {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.binlog-summary__card strong {
+  overflow: hidden;
+  margin-top: auto;
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-summary__card small {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-summary__status--complete {
+  color: var(--binlog-success);
+}
+
+.binlog-summary__status--warning,
+.binlog-summary__status--partial {
+  color: var(--binlog-warning);
+}
+
+.binlog-summary__status--error {
+  color: var(--binlog-danger);
+}
+
+.binlog-diagnostics {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  font-size: 0.75rem;
+}
+
+.binlog-diagnostics summary {
+  padding: 9px 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 620;
+}
+
+.binlog-diagnostics ul {
+  margin: 0;
+  padding: 0 12px 10px;
+  list-style: none;
+}
+
+.binlog-diagnostics li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.binlog-diagnostics code,
+.binlog-diagnostics small {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+
+.binlog-diagnostic {
+  font-weight: 700;
+}
+
+.binlog-diagnostic--error {
+  color: var(--binlog-danger);
+}
+
+.binlog-diagnostic--warning {
+  color: var(--binlog-warning);
+}
+
+.binlog-diagnostic--info {
+  color: var(--accent-mysql);
+}
+
+.binlog-timeline {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-panel);
+}
+
+.binlog-timeline__toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.binlog-timeline__toolbar h2 {
+  margin: 3px 0 0;
+  font-size: 0.95rem;
+}
+
+.binlog-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.binlog-filters label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 0.62rem;
+}
+
+.binlog-filters label span {
+  grid-column: 2;
+}
+
+.binlog-filters select {
+  grid-column: 1 / -1;
+  min-width: 124px;
+  height: 29px;
+  margin-top: 3px;
+  padding: 3px 25px 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+}
+
+.binlog-timeline__legend {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 14px 6px 35px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  font-size: 0.63rem;
+}
+
+.binlog-timeline__items {
+  min-width: 0;
+}
+
+.binlog-transaction {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.binlog-transaction:last-child {
+  border-bottom: 0;
+}
+
+.binlog-transaction--expanded {
+  background: color-mix(in srgb, var(--surface-selected) 48%, var(--surface-panel));
+}
+
+.binlog-transaction__toggle {
+  display: grid;
+  width: 100%;
+  min-height: 39px;
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  grid-template-columns: 16px 158px minmax(180px, 1fr) auto 68px;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.binlog-transaction__toggle:hover {
+  background: var(--surface-hover);
+}
+
+.binlog-transaction__chevron {
+  color: var(--text-tertiary);
+  transition: transform 130ms ease;
+}
+
+.binlog-transaction--expanded .binlog-transaction__chevron {
+  transform: rotate(90deg);
+}
+
+.binlog-transaction__time {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.binlog-transaction__identity {
+  overflow: hidden;
+  font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-transaction__rows {
+  color: var(--text-secondary);
+  font-size: 0.69rem;
+  text-align: right;
+}
+
+.binlog-status,
+.binlog-operation {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.binlog-status--committed {
+  background: color-mix(in srgb, var(--binlog-success) 10%, transparent);
+  color: var(--binlog-success);
+}
+
+.binlog-status--rolled_back,
+.binlog-status--incomplete,
+.binlog-status--unknown {
+  background: color-mix(in srgb, var(--binlog-warning) 11%, transparent);
+  color: var(--binlog-warning);
+}
+
+.binlog-transaction__meta {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 13px 7px 35px;
+  color: var(--text-tertiary);
+  font: 0.65rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.binlog-transaction__tables {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.binlog-reset-sql {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.binlog-reset-sql > button {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+.binlog-reset-sql > button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.binlog-reset-sql > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.binlog-reset-sql__feedback {
+  max-width: 220px;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-reset-sql__feedback--success {
+  color: var(--binlog-success);
+}
+
+.binlog-reset-sql__feedback--warning {
+  color: var(--binlog-warning);
+}
+
+.binlog-reset-sql__feedback--error {
+  color: var(--binlog-danger);
+}
+
+.binlog-table-chip {
+  display: inline-flex;
+  max-width: 240px;
+  overflow: hidden;
+  padding: 2px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-transaction__details {
+  padding: 0 12px 12px 35px;
+}
+
+.binlog-change {
+  overflow: hidden;
+  margin-top: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-raised);
+}
+
+.binlog-change__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.71rem;
+}
+
+.binlog-change__heading > span:last-child {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+.binlog-operation--insert {
+  background: color-mix(in srgb, var(--binlog-success) 10%, transparent);
+  color: var(--binlog-success);
+}
+
+.binlog-operation--update {
+  background: color-mix(in srgb, var(--accent-mysql) 11%, transparent);
+  color: var(--accent-mysql);
+}
+
+.binlog-operation--delete,
+.binlog-operation--ddl {
+  background: color-mix(in srgb, var(--binlog-danger) 9%, transparent);
+  color: var(--binlog-danger);
+}
+
+.binlog-change__sql {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.binlog-change__empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+}
+
+.binlog-change__empty--error {
+  color: var(--binlog-danger);
+}
+
+.binlog-diff {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.binlog-diff:last-child {
+  border-bottom: 0;
+}
+
+.binlog-diff__label {
+  padding: 8px;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 0.64rem;
+}
+
+.binlog-diff__scroll {
+  min-width: 0;
+  overflow: auto;
+}
+
+.binlog-diff table {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.binlog-diff th,
+.binlog-diff td {
+  overflow: hidden;
+  padding: 6px 8px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binlog-diff tr:last-child th,
+.binlog-diff tr:last-child td {
+  border-bottom: 0;
+}
+
+.binlog-diff th {
+  width: 24%;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-weight: 620;
+}
+
+.binlog-diff td:last-child,
+.binlog-diff th:last-child {
+  border-right: 0;
+}
+
+.binlog-value--null {
+  color: var(--binlog-danger);
+  font-style: italic;
+}
+
+.binlog-value--not-logged {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.binlog-value--error {
+  color: var(--binlog-danger);
+  text-decoration: underline dotted;
+}
+
+.binlog-value--partial {
+  color: var(--binlog-warning);
+}
+
+.binlog-value--binary,
+.binlog-value--unknown {
+  color: var(--text-tertiary);
+}
+
+.binlog-timeline__loading,
+.binlog-timeline__empty,
+.binlog-timeline__error {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.binlog-timeline__empty {
+  flex-direction: column;
+}
+
+.binlog-timeline__empty strong {
+  color: var(--text-primary);
+}
+
+.binlog-timeline__empty span {
+  color: var(--text-tertiary);
+}
+
+.binlog-timeline__error {
+  color: var(--binlog-danger);
+}
+
+.binlog-timeline__error button {
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.binlog-timeline__more {
+  margin: 12px auto;
+}
+
+.binlog-timeline__end {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-tertiary);
+  font-size: 0.67rem;
+  text-align: center;
+}
+
+@media (max-width: 980px) {
+  .binlog-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .binlog-timeline__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .binlog-filters {
+    width: 100%;
+  }
+
+  .binlog-filters label {
+    flex: 1;
+  }
+
+  .binlog-filters select {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .binlog-spin {
+    animation-duration: 1800ms;
+  }
+
+  .binlog-transaction__chevron {
+    transition: none;
+  }
+}
