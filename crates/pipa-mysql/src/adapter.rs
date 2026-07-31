@@ -1,4 +1,4 @@
-use crate::value::convert_cell;
+use crate::value::{convert_cell, normalize_database_type};
 use futures_util::TryStreamExt;
 use pipa_core::{
     AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, Engine, QueryColumn, QueryEvent,
@@ -276,7 +276,7 @@ fn query_columns(row: &MySqlRow) -> Vec<QueryColumn> {
         .iter()
         .map(|column| QueryColumn {
             name: column.name().to_owned(),
-            database_type: column.type_info().name().to_owned(),
+            database_type: normalize_database_type(column.type_info().name()).to_owned(),
             nullable: None,
         })
         .collect()

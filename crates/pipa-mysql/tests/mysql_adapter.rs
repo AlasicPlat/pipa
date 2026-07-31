@@ -61,9 +61,9 @@ async fn streams_every_lossless_value_category() {
     let events = run_query(
         &profile,
         query_id,
-        "CREATE TEMPORARY TABLE pipa_value_types (boolean_value BOOLEAN NOT NULL); \
-         INSERT INTO pipa_value_types VALUES (TRUE); \
-         SELECT boolean_value, \
+        "CREATE TEMPORARY TABLE pipa_value_types (use_type TINYINT(1) NOT NULL); \
+         INSERT INTO pipa_value_types VALUES (3); \
+         SELECT use_type, \
                 CAST(-9223372036854775808 AS SIGNED) AS signed_value, \
                 CAST(18446744073709551615 AS UNSIGNED) AS unsigned_value, \
                 CAST(12.3400 AS DECIMAL(10,4)) AS decimal_value, \
@@ -80,6 +80,11 @@ async fn streams_every_lossless_value_category() {
     )
     .await;
 
+    let QueryEvent::Schema { columns, .. } = &events[1] else {
+        panic!("second event should be a schema");
+    };
+    assert_eq!(columns[0].database_type, "TINYINT");
+
     let QueryEvent::Batch { rows, .. } = &events[2] else {
         panic!("third event should be a batch");
     };
@@ -87,7 +92,7 @@ async fn streams_every_lossless_value_category() {
         matches!(
             rows[0].as_slice(),
             [
-                CellValue::Boolean(true),
+                CellValue::Integer(use_type),
                 CellValue::Integer(signed_value),
                 CellValue::Integer(unsigned_value),
                 CellValue::Decimal(decimal_value),
@@ -100,7 +105,8 @@ async fn streams_every_lossless_value_category() {
                 CellValue::DateTime(datetime_value),
                 CellValue::Text(text_value),
                 CellValue::Null,
-            ] if signed_value == "-9223372036854775808"
+            ] if use_type == "3"
+                && signed_value == "-9223372036854775808"
                 && unsigned_value == "18446744073709551615"
                 && decimal_value == "12.3400"
                 && *float_value == 1.25
