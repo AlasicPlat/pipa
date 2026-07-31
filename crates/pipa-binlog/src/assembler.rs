@@ -271,13 +271,7 @@ fn token_after_keyword<'a>(tokens: &'a [&str], keyword: &str) -> Option<&'a str>
         .windows(2)
         .find(|pair| pair[0].eq_ignore_ascii_case(keyword))
         .map(|pair| pair[1])
-        .and_then(|token| {
-            if token.eq_ignore_ascii_case("IF") {
-                None
-            } else {
-                Some(token)
-            }
-        })
+        .filter(|&token| !token.eq_ignore_ascii_case("IF"))
         .or_else(|| {
             let keyword_position = tokens
                 .iter()
