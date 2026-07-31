@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pipa",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "identifier": "com.alasic.pipa",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -21,15 +21,20 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; object-src 'none'; base-uri 'none'; frame-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+      "devCsp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1421; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; object-src 'none'; base-uri 'none'; frame-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
-    "macOS": {
-      "signingIdentity": "Developer ID Application: zhilong Lin (4BH553X7SC)"
-    },
+    "resources": [
+      "../LICENSE",
+      "../NOTICE",
+      "../THIRD_PARTY_LICENSES.md",
+      "../THIRD_PARTY_LICENSES.txt"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,5 +42,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBODkyNzAwMTM3MTdGQjUKUldTMWYzRVRBQ2VKaWtkeHRndm9lNTVpbU9DcWV6M21KR2sxRjQvOElEWmRPRFRDNHo2eUY5NFoK",
+      "endpoints": [
+        "https://github.com/AlasicPlat/pipa/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

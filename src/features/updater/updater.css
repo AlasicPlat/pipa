@@ -1,0 +1,78 @@
+.update-control {
+  position: relative;
+}
+
+.update-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: min(320px, calc(100vw - 28px));
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 30px color-mix(in srgb, #000000 20%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.update-menu__eyebrow {
+  color: var(--text-tertiary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.update-menu strong {
+  font-size: 13px;
+}
+
+.update-menu p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.update-menu .update-menu__notes {
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-muted);
+  white-space: pre-wrap;
+}
+
+.update-menu .update-menu__success {
+  color: var(--status-success, #3f8f65);
+}
+
+.update-menu .update-menu__error {
+  color: var(--status-danger, #c55151);
+}
+
+.workspace__topbar-actions .update-menu__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workspace__topbar-actions .update-menu__actions button {
+  min-height: 28px;
+  border-color: var(--border-subtle);
+  background: var(--surface-muted);
+  font-size: 10px;
+}
+
+.workspace__topbar-actions .update-menu__actions .update-menu__primary {
+  border-color: color-mix(in srgb, var(--accent-mysql) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-mysql) 12%, var(--surface-panel));
+  color: var(--text-primary);
+}
