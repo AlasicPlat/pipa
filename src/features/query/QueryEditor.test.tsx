@@ -214,6 +214,37 @@ function assertModalBlocksEditorShortcuts(): void {
 }
 
 /**
+ * Verifies a mounted but hidden workspace cannot consume DOM or native execution shortcuts.
+ * Parameters: none.
+ * @returns A promise that settles after native shortcut registration.
+ * Side effects: renders an inactive editor and dispatches both shortcut sources.
+ */
+async function assertInactiveEditorIgnoresShortcuts(): Promise<void> {
+  const onExecute = vi.fn();
+  render(
+    <QueryEditor
+      active={false}
+      sql={monacoState.sql}
+      onSqlChange={vi.fn()}
+      onExecute={onExecute}
+    />,
+  );
+  await waitFor(() => expect(nativeEventState.handler).not.toBeNull());
+  const shortcut = new KeyboardEvent("keydown", {
+    key: "r",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+
+  document.dispatchEvent(shortcut);
+  act(() => nativeEventState.handler?.());
+
+  expect(shortcut.defaultPrevented).toBe(false);
+  expect(onExecute).not.toHaveBeenCalled();
+}
+
+/**
  * Verifies the native menu bridge registers, deduplicates a DOM echo, and cleans up.
  * Parameters: none.
  * @returns A promise that settles after the asynchronous Tauri listener is registered.
@@ -489,6 +520,7 @@ function registerQueryEditorTests(): void {
   it("replaces the default execution binding after customization", assertConfiguredExecuteShortcutReplacesDefault);
   it("opens Monaco find with the configured contextual binding", assertConfiguredFindShortcutRunsMonacoAction);
   it("does not leak modal key recording into the SQL editor", assertModalBlocksEditorShortcuts);
+  it("ignores shortcuts while its workspace is inactive", assertInactiveEditorIgnoresShortcuts);
   it("executes one native shortcut and cleans up its listener", assertNativeShortcutRegistrationAndCleanup);
   it("always executes repeated shortcuts from the same source", assertSameSourceShortcutsAlwaysExecute);
   it("suppresses only cross-source echoes without updating state", assertCrossSourceEchoRules);
