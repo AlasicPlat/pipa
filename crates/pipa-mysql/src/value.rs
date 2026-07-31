@@ -6,7 +6,6 @@ use sqlx_mysql::MySqlRow;
 /// Conversion family selected from SQLx's stable MySQL type names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ValueKind {
-    Boolean,
     Integer,
     Decimal,
     Float32,
@@ -22,8 +21,7 @@ enum ValueKind {
 
 /// Classifies a SQLx MySQL database type into its transport conversion family.
 fn classify_type(database_type: &str) -> ValueKind {
-    match database_type {
-        "BOOLEAN" => ValueKind::Boolean,
+    match normalize_database_type(database_type) {
         "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "TINYINT UNSIGNED"
         | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED" | "BIGINT UNSIGNED"
         | "YEAR" => ValueKind::Integer,
@@ -38,6 +36,24 @@ fn classify_type(database_type: &str) -> ValueKind {
         "DATETIME" | "TIMESTAMP" => ValueKind::DateTime,
         "NULL" => ValueKind::Null,
         _ => ValueKind::Text,
+    }
+}
+
+/// Normalizes SQLx's ambiguous `BOOLEAN` label back to MySQL's wire-level integer type.
+///
+/// # Parameters
+/// `database_type` is the stable type name returned by SQLx metadata.
+///
+/// # Returns
+/// Returns `TINYINT` for `BOOLEAN`, otherwise the original borrowed name.
+///
+/// # Side effects
+/// None.
+pub(crate) fn normalize_database_type(database_type: &str) -> &str {
+    if database_type == "BOOLEAN" {
+        "TINYINT"
+    } else {
+        database_type
     }
 }
 
@@ -81,7 +97,6 @@ pub(crate) fn convert_cell(
     }
 
     Ok(match classify_type(database_type) {
-        ValueKind::Boolean => CellValue::Boolean(row.try_get_unchecked::<bool, _>(index)?),
         ValueKind::Integer if database_type.ends_with("UNSIGNED") || database_type == "YEAR" => {
             integer_cell(row.try_get_unchecked::<u64, _>(index)?)
         }
@@ -103,7 +118,8 @@ pub(crate) fn convert_cell(
 #[cfg(test)]
 mod tests {
     use super::{
-        binary_cell, classify_type, float_cell, integer_cell, temporal_cell, text_cell, ValueKind,
+        binary_cell, classify_type, float_cell, integer_cell, normalize_database_type,
+        temporal_cell, text_cell, ValueKind,
     };
     use pipa_core::CellValue;
 
@@ -199,10 +215,11 @@ mod tests {
         assert!(matches!(text_cell(&[b'P', 0xff]), CellValue::Text(value) if value == "P�"));
     }
 
-    /// Verifies BOOLEAN is distinct from other TINYINT columns.
+    /// Verifies SQLx's ambiguous BOOLEAN label stays an integer-backed TINYINT.
     #[test]
-    fn classifies_boolean_values() {
-        assert_eq!(classify_type("BOOLEAN"), ValueKind::Boolean);
+    fn normalizes_boolean_as_tinyint() {
+        assert_eq!(normalize_database_type("BOOLEAN"), "TINYINT");
+        assert_eq!(classify_type("BOOLEAN"), ValueKind::Integer);
     }
 
     /// Verifies SQL NULL is a dedicated conversion category.
