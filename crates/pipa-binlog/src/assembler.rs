@@ -265,7 +265,7 @@ fn classify_statement(schema: &str, query: &str) -> Option<BinlogChange> {
     })
 }
 
-/// Finds the first token following a case-insensitive SQL keyword.
+/// 查找指定 SQL 关键字之后的第一个词元，关键字匹配不区分大小写。
 fn token_after_keyword<'a>(tokens: &'a [&str], keyword: &str) -> Option<&'a str> {
     tokens
         .windows(2)

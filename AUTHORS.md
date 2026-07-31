@@ -1,5 +1,5 @@
-# Authors
+# 作者
 
-Pipa was created and is maintained by **Alasic333** ([AlasicPlat](https://github.com/AlasicPlat)).
+Pipa 由 **Alasic333**（[@AlasicPlat](https://github.com/AlasicPlat)）创建并维护。
 
-Additional contributors are recorded permanently in the Git commit history. By contributing, contributors agree that their work is provided under the repository's [Apache License 2.0](LICENSE).
+其他贡献者会永久记录在 Git 提交历史中。提交贡献即表示贡献者同意其工作按本仓库的 [Apache License 2.0](LICENSE) 提供。

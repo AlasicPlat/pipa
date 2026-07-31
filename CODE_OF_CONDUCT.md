@@ -1,21 +1,21 @@
-# Code of conduct
+# 行为准则
 
-Pipa is committed to a welcoming, respectful and technically constructive community.
+Pipa 致力于建设友好、尊重他人并重视技术建设性的社区。
 
-## Expected behavior
+## 期望行为
 
-- Be respectful of different backgrounds, experience levels and viewpoints.
-- Give actionable feedback about the work, not personal judgments about the contributor.
-- Assume good intent while remaining clear about security, correctness and user impact.
-- Protect private information encountered in bug reports, logs or test data.
-- Accept maintainer decisions made transparently in the project's best interests.
+- 尊重不同背景、经验水平和观点。
+- 针对工作给出可执行反馈，不对贡献者本人作人身评价。
+- 默认他人出于善意，同时对安全、正确性和用户影响保持清晰表达。
+- 保护缺陷报告、日志或测试数据中出现的隐私信息。
+- 接受维护者以项目最佳利益为出发点并透明作出的决定。
 
-## Unacceptable behavior
+## 不可接受的行为
 
-Harassment, threats, discrimination, sexualized attention, deliberate intimidation, doxxing, publishing another person's private information, and sustained disruptive behavior are not tolerated in project spaces.
+项目空间不容忍骚扰、威胁、歧视、带有性意味的关注、故意恐吓、人肉搜索、公开他人隐私信息，以及持续扰乱社区的行为。
 
-## Enforcement
+## 执行
 
-Report conduct concerns privately to [@AlasicPlat](https://github.com/AlasicPlat). Include links or screenshots and avoid escalating the situation publicly. The maintainer may edit or remove content, issue a warning, temporarily restrict participation or permanently ban a participant. Reports will be handled as confidentially as reasonably possible, subject to safety and legal obligations.
+请将行为问题私下报告给 [@AlasicPlat](https://github.com/AlasicPlat)，并附上链接或截图，避免在公开场合升级冲突。维护者可以编辑或删除内容、发出警告、暂时限制参与，或永久禁止相关人员参与。报告会在安全和法律义务允许的范围内尽可能保密处理。
 
-This policy applies to repository discussions, Issues, Pull Requests, release channels and public events where someone represents Pipa.
+本准则适用于仓库讨论、Issue、Pull Request、发布渠道，以及有人代表 Pipa 参与的公开活动。

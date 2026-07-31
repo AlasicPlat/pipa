@@ -28,11 +28,11 @@ const INITIAL_STATE: UpdateViewState = {
 };
 
 /**
- * Converts an unknown updater rejection into a concise, non-sensitive message.
- * @param error - Rejection returned by the Tauri updater or process plugin.
- * @param fallback - User-facing message used when the rejection has no message.
- * @returns A safe error message for the update menu.
- * Side effects: none.
+ * 将未知的更新器拒绝原因转换为简洁且不含敏感信息的消息。
+ * @param error - Tauri updater 或 process 插件返回的拒绝原因。
+ * @param fallback - 拒绝原因没有消息时使用的用户提示。
+ * @returns 可安全显示在更新菜单中的错误消息。
+ * 副作用：无。
  */
 function getUpdateErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) {
@@ -42,10 +42,10 @@ function getUpdateErrorMessage(error: unknown, fallback: string): string {
 }
 
 /**
- * Provides update checks, signed package installation, and application relaunch controls.
- * Parameters: none.
- * @returns The desktop-only update control, or `null` in a normal browser preview.
- * Side effects: checks GitHub Releases after mount and temporarily registers dismissal listeners.
+ * 提供更新检查、签名包安装和应用重启控制。
+ * 参数：无。
+ * @returns 仅桌面端显示的更新控件；普通浏览器预览中返回 `null`。
+ * 副作用：挂载后检查 GitHub Releases，并临时注册菜单关闭监听器。
  */
 export function UpdateControl() {
   const runningInTauri = isTauri();
@@ -58,9 +58,9 @@ export function UpdateControl() {
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   /**
-   * Checks the configured release endpoint and retains the signed update resource when available.
-   * @returns A promise that settles after the menu state reflects the server response.
-   * Side effects: performs one HTTPS request and closes any superseded native update resource.
+   * 检查已配置的发布端点，并在有更新时保留签名更新资源。
+   * @returns 菜单状态反映服务器响应后结束的 Promise。
+   * 副作用：执行一次 HTTPS 请求，并关闭已被替代的原生更新资源。
    */
   const checkForUpdate = useCallback(async (): Promise<void> => {
     if (!runningInTauri || checkInFlightRef.current) {
@@ -117,13 +117,13 @@ export function UpdateControl() {
       return undefined;
     }
 
-    /** Closes the update menu when pointer input moves outside the control. */
+    /** 指针在控件外按下时关闭更新菜单。 */
     const handlePointerDown = (event: PointerEvent): void => {
       if (!containerRef.current?.contains(event.target as Node)) {
         setOpen(false);
       }
     };
-    /** Closes the update menu with Escape and restores focus to its trigger. */
+    /** 按 Escape 关闭更新菜单，并将焦点恢复到触发按钮。 */
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -141,9 +141,9 @@ export function UpdateControl() {
   }, [open]);
 
   /**
-   * Tracks signed package download progress, installs it, and requests a clean application relaunch.
-   * @returns A promise that settles after installation or a surfaced failure.
-   * Side effects: downloads and installs a verified release package, then restarts Pipa on success.
+   * 跟踪签名包下载进度、执行安装，并请求干净地重启应用。
+   * @returns 安装完成或错误已显示后结束的 Promise。
+   * 副作用：下载并安装验证通过的发布包，成功后重启 Pipa。
    */
   const installUpdate = async (): Promise<void> => {
     if (!availableUpdate || state.phase !== "available") {
@@ -199,9 +199,9 @@ export function UpdateControl() {
   };
 
   /**
-   * Retries the post-install relaunch without downloading the package again.
-   * @returns A promise that settles when the process plugin accepts or rejects the restart.
-   * Side effects: restarts the desktop application on success.
+   * 安装后重试启动应用，不再重复下载更新包。
+   * @returns process 插件接受或拒绝重启请求后结束的 Promise。
+   * 副作用：成功时重启桌面应用。
    */
   const restartApplication = async (): Promise<void> => {
     try {

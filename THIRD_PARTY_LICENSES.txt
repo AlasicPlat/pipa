@@ -1,5 +1,5 @@
-PIPA THIRD-PARTY LICENSE AND ATTRIBUTION TEXTS
-Generated from pnpm-lock.yaml and Cargo.lock; do not edit manually.
+PIPA 第三方许可证与归属文本
+根据 pnpm-lock.yaml 和 Cargo.lock 生成，请勿手工编辑。
 
 ================================================================================
 Cargo:adler2@2.0.1 (LICENSE-0BSD)

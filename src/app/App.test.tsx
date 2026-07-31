@@ -359,7 +359,7 @@ async function assertWorkspaceTabShortcuts(): Promise<void> {
   );
 }
 
-/** Verifies a completed query result and its view state survive switching to another workspace. */
+/** 验证切换到其他工作区后，已完成的查询结果及其视图状态仍会保留。 */
 async function assertQueryResultsSurviveWorkspaceSwitch(): Promise<void> {
   querySessionFixture.columns = [
     { name: "item", databaseType: "VARCHAR", nullable: false },

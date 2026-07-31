@@ -99,12 +99,12 @@ function redisDatabaseFromWorkspaceTitle(title: string): string | null {
 }
 
 /**
- * Resolves the executable profile used by one persisted query workspace.
- * @param profile - Stored non-secret profile referenced by the tab.
- * @param tab - Persisted query workspace whose Redis database may be encoded in its title.
- * @param selectedRedisDatabases - Current navigator database selection by connection.
- * @returns A runnable profile with its Redis database context, or `null` when unavailable.
- * Side effects: none.
+ * 解析持久化查询工作区执行时使用的连接配置。
+ * @param profile - 标签页引用的已保存非敏感配置。
+ * @param tab - 持久化查询工作区；其标题中可能编码了 Redis 数据库。
+ * @param selectedRedisDatabases - 按连接记录的当前导航器数据库选择。
+ * @returns 带 Redis 数据库上下文的可执行配置；不可用时返回 `null`。
+ * 副作用：无。
  */
 function resolveQueryWorkspaceProfile(
   profile: ConnectionProfile | undefined,
