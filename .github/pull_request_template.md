@@ -1,19 +1,19 @@
-## Problem
+## 问题
 
-<!-- What user or maintainer problem does this solve? -->
+<!-- 这个变更解决了什么用户或维护问题？ -->
 
-## Solution
+## 方案
 
-<!-- Summarize the focused implementation and notable tradeoffs. -->
+<!-- 概述聚焦的实现方案和需要注意的取舍。 -->
 
-## Verification
+## 验证
 
-- [ ] Relevant automated tests pass
-- [ ] `pnpm build` passes
-- [ ] Rust formatting, tests and Clippy pass when Rust changed
-- [ ] Generated bindings are committed when transport types changed
-- [ ] No credentials, private data or signing material are included
+- [ ] 相关自动化测试通过
+- [ ] `pnpm build` 通过
+- [ ] 修改 Rust 时，格式、测试和 Clippy 均通过
+- [ ] 修改传输类型时，已提交对应的生成绑定
+- [ ] 不包含凭据、私有数据或签名材料
 
-## User-visible impact
+## 用户可见影响
 
-<!-- Include screenshots for material UI changes and note migrations/security implications. -->
+<!-- 对明显的界面变化附上截图，并说明迁移或安全影响。 -->

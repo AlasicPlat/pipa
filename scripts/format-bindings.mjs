@@ -2,10 +2,10 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Removes generator-owned trailing whitespace from every TypeScript binding deterministically.
- * Parameters: none.
+ * 确定性移除所有 TypeScript 绑定中由生成器产生的行尾空白。
+ * 参数：无。
  * @returns {void}
- * Side effects: rewrites generated files under `src/bindings` only when normalized content differs.
+ * 副作用：仅在规范化内容不同时重写 `src/bindings` 下的生成文件。
  */
 function main() {
   const bindingDirectory = "src/bindings";

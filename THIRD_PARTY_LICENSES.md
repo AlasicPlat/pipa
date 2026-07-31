@@ -1,10 +1,10 @@
-# Third-party licenses
+# 第三方许可证
 
-This file is generated from the production pnpm graph and the complete Cargo.lock graph. Dependency authors retain their respective copyrights; Pipa's Apache-2.0 license does not replace any third-party license.
+本文件根据生产 pnpm 依赖图和完整 Cargo.lock 依赖图生成。各依赖作者保留其版权；Pipa 的 Apache-2.0 许可证不会替代任何第三方许可证。
 
-Run `pnpm licenses:generate` after dependency changes. Release builds bundle this inventory and the verbatim attribution file `THIRD_PARTY_LICENSES.txt`.
+依赖变更后请运行 `pnpm licenses:generate`。发布构建会同时打包本清单和保留原文的归属文件 `THIRD_PARTY_LICENSES.txt`。
 
-| Ecosystem | Package | Version | Declared license |
+| 生态 | 包 | 版本 | 声明的许可证 |
 | --- | --- | --- | --- |
 | Cargo | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | Cargo | aho-corasick | 1.1.4 | Unlicense OR MIT |
@@ -615,9 +615,9 @@ Run `pnpm licenses:generate` after dependency changes. Release builds bundle thi
 | npm | scheduler | 0.27.0 | MIT |
 | npm | state-local | 1.0.7 | MIT |
 
-## Metadata-only entries
+## 仅含元数据的条目
 
-The following installed packages declared a license identifier but did not expose a top-level license/notice file. Review them manually before a public release:
+以下已安装包声明了许可证标识符，但没有提供顶层许可证或声明文件。公开发布前请人工复核：
 
 - Cargo:alloc-stdlib@0.2.4 — BSD-3-Clause
 - Cargo:block2@0.6.2 — MIT

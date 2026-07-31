@@ -2,6 +2,6 @@
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * Lossless, transport-safe representation of a database cell.
+ * 数据库单元格的无损、传输安全表示。
  */
 export type CellValue = { "kind": "null" } | { "kind": "boolean", "value": boolean } | { "kind": "integer", "value": string } | { "kind": "float", "value": number } | { "kind": "decimal", "value": string } | { "kind": "text", "value": string } | { "kind": "json", "value": JsonValue } | { "kind": "binary", "value": string } | { "kind": "date_time", "value": string };

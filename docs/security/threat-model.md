@@ -1,25 +1,25 @@
-# Local data threat model
+# 本地数据威胁模型
 
-Pipa protects database credentials and workspace data against accidental disclosure and inspection of the main database file in isolation. It does not claim to isolate data from another process already running as the same operating-system user with permission to read Pipa's entire application data directory.
+Pipa 用于防止数据库凭据和工作区数据意外泄露，以及主数据库文件被单独查看。它不宣称能够隔离同一操作系统用户下、且有权读取 Pipa 完整应用数据目录的其他进程。
 
-## Protected assets
+## 受保护资产
 
-- database connection profiles and passwords;
-- saved workspace SQL/commands and query history;
-- MCP settings and pending review state;
-- in-memory query results and Binlog analyses;
-- updater and Apple release-signing integrity.
+- 数据库连接配置和密码；
+- 已保存的工作区 SQL/命令和查询历史；
+- MCP 设置和待确认状态；
+- 内存中的查询结果和 Binlog 分析；
+- updater 与 Apple 发布签名的完整性。
 
-## Trust boundaries
+## 信任边界
 
-- `pipa-data.db` is encrypted with SQLCipher.
-- Its randomly generated root key is stored in `pipa-bootstrap.db` in the same private application data directory. The directory is restricted to `0700` and files to `0600` where the platform permits.
-- This separation prevents a copied main database file from being read by itself. Copying the whole application directory under the same user's authority also copies the key and is outside this protection boundary.
-- UI preferences such as theme, shortcuts and sidebar layout may use WebView `localStorage`; credentials, SQL, query history and results do not.
-- Query results and Binlog analyses are process-memory state. Switching workspaces retains them for the running session; process exit discards them.
-- MCP listens on loopback, authenticates each request with a random bearer token and applies connection scope plus SQL risk controls. Other same-user processes can still attempt to reach loopback and must possess the token.
-- GitHub Releases is the only product-managed external update service. Tauri signatures authenticate update archives, while Apple Developer ID signing and notarization authenticate macOS distribution.
+- `pipa-data.db` 使用 SQLCipher 加密。
+- 随机生成的 root key 保存在同一私有应用数据目录内的 `pipa-bootstrap.db` 中。平台允许时，目录权限限制为 `0700`，文件权限限制为 `0600`。
+- 这种分离可防止被复制的主数据库文件单独遭到读取。在同一用户权限下复制整个应用目录也会复制密钥，超出本保护边界。
+- 主题、快捷键和侧栏布局等界面偏好可以使用 WebView `localStorage`；凭据、SQL、查询历史和结果不会使用。
+- 查询结果和 Binlog 分析属于进程内存状态。切换工作区会在当前运行会话中保留它们；进程退出后会丢弃。
+- MCP 监听回环地址，使用随机 Bearer Token 验证每个请求，并应用连接作用域和 SQL 风险控制。同一用户下的其他进程仍可尝试访问回环地址，但必须持有 Token。
+- GitHub Releases 是产品管理的唯一外部更新服务。Tauri 签名用于验证更新归档，Apple Developer ID 签名与公证用于验证 macOS 发布包。
 
-## User mitigations
+## 用户缓解措施
 
-Use FileVault or equivalent full-disk encryption, protect the macOS account, keep database TLS enabled on untrusted networks, rotate MCP tokens after exposure, and install updates only through Pipa or the canonical GitHub Releases page.
+请使用 FileVault 或等效的全盘加密，保护 macOS 账号，在不受信任网络中保持数据库 TLS 开启，Token 暴露后轮换 MCP Token，并且只通过 Pipa 或规范的 GitHub Releases 页面安装更新。

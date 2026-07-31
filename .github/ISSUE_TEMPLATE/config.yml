@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
+  - name: 安全漏洞
     url: https://github.com/AlasicPlat/pipa/security/advisories/new
-    about: Report vulnerabilities privately; do not disclose them in a public Issue.
+    about: 请私下报告漏洞，不要在公开 Issue 中披露。

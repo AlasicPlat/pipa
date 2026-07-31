@@ -1,43 +1,43 @@
-name: Bug report
-description: Report a reproducible Pipa defect without sensitive database data.
-title: "[Bug]: "
+name: 缺陷报告
+description: 报告可复现的 Pipa 缺陷，请勿包含敏感数据库数据。
+title: "[缺陷]: "
 labels: ["bug", "triage"]
 body:
   - type: markdown
     attributes:
-      value: "Do not include passwords, connection strings, private keys, MCP tokens or unredacted query results. Report security vulnerabilities through SECURITY.md."
+      value: "请勿包含密码、连接串、私钥、MCP Token 或未脱敏的查询结果。安全漏洞请按 SECURITY.md 私下报告。"
   - type: input
     id: version
     attributes:
-      label: Pipa version
+      label: Pipa 版本
       placeholder: v0.x.y
     validations:
       required: true
   - type: dropdown
     id: architecture
     attributes:
-      label: Mac architecture
+      label: Mac 架构
       options:
-        - Apple Silicon
-        - Intel
+        - Apple 芯片
+        - Intel 芯片
     validations:
       required: true
   - type: textarea
     id: description
     attributes:
-      label: What happened?
-      description: Describe the expected and actual behavior.
+      label: 发生了什么？
+      description: 请描述预期行为和实际行为。
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction steps
-      description: Use a local test database or fully redacted examples.
+      label: 复现步骤
+      description: 请使用本地测试数据库或完全脱敏的示例。
     validations:
       required: true
   - type: textarea
     id: verification
     attributes:
-      label: Additional diagnostics
-      description: Include macOS/database versions and sanitized logs when useful.
+      label: 其他诊断信息
+      description: 必要时提供 macOS、数据库版本和已脱敏日志。

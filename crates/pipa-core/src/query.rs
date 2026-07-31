@@ -3,77 +3,77 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-/// A query execution request bound to a connection and stable query identifier.
+/// 绑定连接和稳定查询标识符的一次查询执行请求。
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct QueryRequest {
-    /// Identifier used to correlate all streaming events for this query.
+    /// 用于关联本次查询所有流式事件的标识符。
     #[ts(type = "string")]
     pub query_id: Uuid,
-    /// Identifier of the connection that executes the query.
+    /// 执行查询的连接标识符。
     #[ts(type = "string")]
     pub connection_id: Uuid,
-    /// SQL text to execute.
+    /// 要执行的 SQL 文本。
     pub sql: String,
-    /// Optional Redis database selected for this execution.
+    /// 本次执行可选的 Redis 数据库。
     pub database: Option<String>,
 }
 
-/// Stable query context recorded after its matching backend execution starts.
+/// 对应后端执行开始后记录的稳定查询上下文。
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RecordQueryHistoryInput {
-    /// Query identifier reused as the idempotent history-entry identifier.
+    /// 同时作为幂等历史记录标识符使用的查询标识符。
     #[ts(type = "string")]
     pub query_id: Uuid,
-    /// Immutable connection associated with the executing query tab.
+    /// 与执行中查询标签页关联的不可变连接。
     #[ts(type = "string")]
     pub connection_id: Uuid,
-    /// Exact selected statement or editor selection sent for execution.
+    /// 发送执行的精确语句或编辑器选区。
     pub sql: String,
 }
 
-/// Metadata for one column in a streamed result set.
+/// 流式结果集中单列的元数据。
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct QueryColumn {
-    /// Column label reported by the database driver.
+    /// 数据库驱动报告的列标签。
     pub name: String,
-    /// Database-native type name.
+    /// 数据库原生类型名称。
     pub database_type: String,
-    /// Database nullability when known.
+    /// 已知时的数据库可空性。
     pub nullable: Option<bool>,
 }
 
-/// Lossless, transport-safe representation of a database cell.
+/// 数据库单元格的无损、传输安全表示。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 #[ts(export)]
 pub enum CellValue {
-    /// SQL NULL.
+    /// SQL NULL。
     Null,
-    /// Boolean value.
+    /// 布尔值。
     Boolean(bool),
-    /// Integer encoded as a decimal string to avoid JavaScript precision loss.
+    /// 编码为十进制字符串的整数，用于避免 JavaScript 精度损失。
     Integer(String),
-    /// IEEE-754 floating-point value.
+    /// IEEE-754 浮点值。
     Float(f64),
-    /// Exact decimal encoded as a string.
+    /// 编码为字符串的精确小数。
     Decimal(String),
-    /// UTF-8 text.
+    /// UTF-8 文本。
     Text(String),
-    /// Structured JSON value.
+    /// 结构化 JSON 值。
     Json(serde_json::Value),
-    /// Binary data encoded as a string by an adapter.
+    /// 由适配器编码为字符串的二进制数据。
     Binary(String),
-    /// Date or time value encoded as a string by an adapter.
+    /// 由适配器编码为字符串的日期或时间值。
     DateTime(String),
 }
 
-/// Ordered events emitted while a query executes.
+/// 查询执行期间按顺序发出的事件。
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(
     tag = "type",
@@ -82,49 +82,49 @@ pub enum CellValue {
 )]
 #[ts(export)]
 pub enum QueryEvent {
-    /// Query execution started.
+    /// 查询开始执行。
     Started {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
     },
-    /// Result-set column metadata became available.
+    /// 结果集列元数据已可用。
     Schema {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
-        /// Ordered result-set columns.
+        /// 按顺序排列的结果集列。
         columns: Vec<QueryColumn>,
     },
-    /// A batch of result rows became available.
+    /// 一批结果行已可用。
     Batch {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
-        /// Rows whose cells correspond positionally to the schema.
+        /// 单元格按位置与 schema 对应的结果行。
         rows: Vec<Vec<CellValue>>,
     },
-    /// Query execution completed normally.
+    /// 查询正常执行完成。
     Completed {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
-        /// Rows affected by a statement that does not return rows.
+        /// 不返回结果行的语句所影响的行数。
         #[ts(type = "number")]
         affected_rows: u64,
     },
-    /// Query execution was canceled.
+    /// 查询执行已取消。
     Canceled {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
     },
-    /// Query execution failed.
+    /// 查询执行失败。
     Failed {
-        /// Identifier of the query producing this event.
+        /// 产生本事件的查询标识符。
         #[ts(type = "string")]
         query_id: Uuid,
-        /// Stable execution error.
+        /// 稳定的执行错误。
         error: AppError,
     },
 }
@@ -136,7 +136,7 @@ mod tests {
     use ts_rs::{Config, TS};
     use uuid::Uuid;
 
-    /// Verifies that query events expose a stable tagged JSON contract.
+    /// 验证查询事件对外提供稳定的带标签 JSON 契约。
     #[test]
     fn query_event_uses_tagged_snake_case_json() {
         let event = QueryEvent::Completed {
@@ -154,7 +154,7 @@ mod tests {
         );
     }
 
-    /// Verifies that integers beyond JavaScript's safe range remain lossless.
+    /// 验证超出 JavaScript 安全范围的整数仍保持无损。
     #[test]
     fn integer_cells_remain_lossless_strings() {
         let cell = CellValue::Integer("9007199254740993".into());
@@ -164,7 +164,7 @@ mod tests {
             .contains("9007199254740993"));
     }
 
-    /// Verifies that every streaming event carries its query identifier.
+    /// 验证每个流式事件都携带查询标识符。
     #[test]
     fn every_query_event_carries_query_id() {
         let query_id = Uuid::nil();
@@ -206,7 +206,7 @@ mod tests {
         }
     }
 
-    /// Verifies that every TypeScript query-event variant carries queryId.
+    /// 验证每种 TypeScript 查询事件变体都携带 queryId。
     #[test]
     fn query_event_typescript_contract_carries_query_ids() {
         let declaration = QueryEvent::decl(&Config::default());
@@ -215,7 +215,7 @@ mod tests {
         assert!(declaration.contains("\"type\": \"completed\""));
     }
 
-    /// Verifies that JSON numeric affected-row counts are numeric in TypeScript.
+    /// 验证 JSON 数字形式的影响行数在 TypeScript 中仍为数值类型。
     #[test]
     fn query_event_typescript_contract_uses_number_for_affected_rows() {
         let declaration = QueryEvent::decl(&Config::default());
@@ -223,7 +223,7 @@ mod tests {
         assert!(declaration.contains("affectedRows: number"));
     }
 
-    /// Verifies one Redis execution may carry a transient logical database selection.
+    /// 验证一次 Redis 执行可携带临时的逻辑数据库选择。
     #[test]
     fn query_request_serializes_redis_database_context() {
         let request = QueryRequest {
@@ -239,7 +239,7 @@ mod tests {
         );
     }
 
-    /// Verifies the history command accepts only the stable run context and executed SQL.
+    /// 验证历史记录命令只接受稳定运行上下文和已执行 SQL。
     #[test]
     fn history_input_contract_excludes_transient_and_secret_fields() {
         let input = RecordQueryHistoryInput {

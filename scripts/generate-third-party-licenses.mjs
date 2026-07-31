@@ -6,20 +6,20 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 const LICENSE_FILE_PATTERN = /^(?:licen[cs]e|copying|notice|copyright)(?:[._-].*)?$/iu;
 
 /**
- * Escapes one table cell without changing its human-readable content.
- * @param {unknown} value - Value written into Markdown.
- * @returns {string} A single-line, pipe-safe cell.
- * Side effects: none.
+ * 转义单个表格单元格，同时保持其可读内容不变。
+ * @param {unknown} value - 要写入 Markdown 的值。
+ * @returns {string} 单行且不会破坏竖线分隔的单元格。
+ * 副作用：无。
  */
 function markdownCell(value) {
   return String(value ?? "UNKNOWN").replaceAll("|", "\\|").replaceAll(/\s+/gu, " ").trim();
 }
 
 /**
- * Normalizes upstream notice formatting without changing its legal text.
- * @param {string} value - Raw UTF-8 attribution file content.
- * @returns {string} LF-delimited text without trailing line whitespace.
- * Side effects: none.
+ * 规范化上游声明的格式，但不改变其法律文本。
+ * @param {string} value - 原始 UTF-8 归属文件内容。
+ * @returns {string} 使用 LF 分行且没有行尾空白的文本。
+ * 副作用：无。
  */
 function normalizeAttributionText(value) {
   return value
@@ -32,10 +32,10 @@ function normalizeAttributionText(value) {
 }
 
 /**
- * Reads top-level license and notice files from an installed package directory.
- * @param {string} packageRoot - Absolute package directory discovered from package metadata.
- * @returns {Array<{name: string, text: string}>} Stable list of attribution files.
- * Side effects: reads installed dependency files.
+ * 从已安装包目录读取顶层许可证和声明文件。
+ * @param {string} packageRoot - 从包元数据获取的绝对目录。
+ * @returns {Array<{name: string, text: string}>} 顺序稳定的归属文件列表。
+ * 副作用：读取已安装依赖的文件。
  */
 function readAttributionFiles(packageRoot) {
   return readdirSync(packageRoot, { withFileTypes: true })
@@ -49,9 +49,9 @@ function readAttributionFiles(packageRoot) {
 }
 
 /**
- * Converts pnpm's license grouping into one installed-package record per version.
- * @returns {Array<{ecosystem: string, name: string, version: string, license: string, root: string}>} Production npm dependency records.
- * Side effects: invokes pnpm and reads its installed package index.
+ * 将 pnpm 的许可证分组转换为每个版本一条的已安装包记录。
+ * @returns {Array<{ecosystem: string, name: string, version: string, license: string, root: string}>} 生产 npm 依赖记录。
+ * 副作用：调用 pnpm 并读取其已安装包索引。
  */
 function loadNpmPackages() {
   const groupedLicenses = JSON.parse(execFileSync(
@@ -72,9 +72,9 @@ function loadNpmPackages() {
 }
 
 /**
- * Loads every registry dependency resolved by Cargo.lock, including target-specific crates.
- * @returns {Array<{ecosystem: string, name: string, version: string, license: string, root: string}>} Rust dependency records.
- * Side effects: invokes Cargo, which may populate its local registry cache.
+ * 加载 Cargo.lock 解析出的所有 registry 依赖，包括特定目标的 crate。
+ * @returns {Array<{ecosystem: string, name: string, version: string, license: string, root: string}>} Rust 依赖记录。
+ * 副作用：调用 Cargo，可能填充本地 registry 缓存。
  */
 function loadCargoPackages() {
   const metadata = JSON.parse(execFileSync(
@@ -95,10 +95,10 @@ function loadCargoPackages() {
 }
 
 /**
- * Produces the checked-in dependency inventory and deduplicated verbatim attribution texts.
- * Parameters: none.
+ * 生成纳入版本控制的依赖清单和去重后的原始归属文本。
+ * 参数：无。
  * @returns {void}
- * Side effects: invokes package managers, reads dependency license files, and rewrites two repository reports.
+ * 副作用：调用包管理器、读取依赖许可证文件，并重写仓库中的两份报告。
  */
 function main() {
   const packages = [...loadNpmPackages(), ...loadCargoPackages()]
@@ -124,13 +124,13 @@ function main() {
   }
 
   const inventory = [
-    "# Third-party licenses",
+    "# 第三方许可证",
     "",
-    "This file is generated from the production pnpm graph and the complete Cargo.lock graph. Dependency authors retain their respective copyrights; Pipa's Apache-2.0 license does not replace any third-party license.",
+    "本文件根据生产 pnpm 依赖图和完整 Cargo.lock 依赖图生成。各依赖作者保留其版权；Pipa 的 Apache-2.0 许可证不会替代任何第三方许可证。",
     "",
-    "Run `pnpm licenses:generate` after dependency changes. Release builds bundle this inventory and the verbatim attribution file `THIRD_PARTY_LICENSES.txt`.",
+    "依赖变更后请运行 `pnpm licenses:generate`。发布构建会同时打包本清单和保留原文的归属文件 `THIRD_PARTY_LICENSES.txt`。",
     "",
-    "| Ecosystem | Package | Version | Declared license |",
+    "| 生态 | 包 | 版本 | 声明的许可证 |",
     "| --- | --- | --- | --- |",
     ...packages.map((packageEntry) => `| ${markdownCell(packageEntry.ecosystem)} | ${markdownCell(packageEntry.name)} | ${markdownCell(packageEntry.version)} | ${markdownCell(packageEntry.license)} |`),
   ];
@@ -138,17 +138,17 @@ function main() {
   if (missingAttribution.length > 0) {
     inventory.push(
       "",
-      "## Metadata-only entries",
+      "## 仅含元数据的条目",
       "",
-      "The following installed packages declared a license identifier but did not expose a top-level license/notice file. Review them manually before a public release:",
+      "以下已安装包声明了许可证标识符，但没有提供顶层许可证或声明文件。公开发布前请人工复核：",
       "",
       ...missingAttribution.map((packageEntry) => `- ${packageEntry.ecosystem}:${packageEntry.name}@${packageEntry.version} — ${packageEntry.license}`),
     );
   }
 
   const notices = [
-    "PIPA THIRD-PARTY LICENSE AND ATTRIBUTION TEXTS",
-    "Generated from pnpm-lock.yaml and Cargo.lock; do not edit manually.",
+    "PIPA 第三方许可证与归属文本",
+    "根据 pnpm-lock.yaml 和 Cargo.lock 生成，请勿手工编辑。",
     "",
     ...[...attributionGroups.values()]
       .sort((left, right) => left.packages[0].localeCompare(right.packages[0]))

@@ -5,9 +5,9 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
-# Stops the milestone database while preserving the verification command's exit status.
-# Parameters: none. Returns: exits with the verification status, or the cleanup status after success.
-# Side effects: stops and removes the Compose service and project network it created.
+# 停止里程碑测试数据库，同时保留验证命令的退出状态。
+# 参数：无。返回：验证失败时返回验证状态；验证成功后返回清理状态。
+# 副作用：停止并移除本脚本创建的 Compose 服务和项目网络。
 cleanup() {
   local verification_status=$?
   local cleanup_status

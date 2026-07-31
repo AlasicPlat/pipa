@@ -1,4 +1,4 @@
-name: CI
+name: 持续集成
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Frontend, Rust and MySQL integration
+    name: 前端、Rust 与 MySQL 集成验证
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     services:
@@ -35,59 +35,59 @@ jobs:
           --health-retries=30
 
     steps:
-      - name: Check out the complete history
+      - name: 检出完整历史
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Install pnpm
+      - name: 安装 pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.5.2
 
-      - name: Install Node.js
+      - name: 安装 Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
 
-      - name: Install Rust stable
+      - name: 安装 Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: clippy,rustfmt
 
-      - name: Restore Rust build cache
+      - name: 恢复 Rust 构建缓存
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Install Linux Tauri dependencies
+      - name: 安装 Linux Tauri 依赖
         run: |
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
-      - name: Install locked frontend dependencies
+      - name: 按锁文件安装前端依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Verify third-party notices
+      - name: 校验第三方许可证声明
         run: pnpm licenses:check
 
-      - name: Test and build frontend
+      - name: 测试并构建前端
         run: |
           pnpm test
           pnpm build
 
-      - name: Verify Rust formatting
+      - name: 校验 Rust 格式
         run: cargo fmt --all -- --check
 
-      - name: Test Rust workspace and MySQL adapter
+      - name: 测试 Rust 工作区与 MySQL 适配器
         run: cargo test --workspace --locked
 
-      - name: Reject generated TypeScript drift
+      - name: 拒绝生成的 TypeScript 绑定漂移
         run: |
           pnpm bindings:format
           git diff --exit-code -- src/bindings
 
-      - name: Lint every Rust target
+      - name: 检查所有 Rust 目标
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Reject unexpected repository changes
+      - name: 拒绝意外的仓库改动
         run: git diff --exit-code

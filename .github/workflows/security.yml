@@ -1,4 +1,4 @@
-name: Security
+name: 安全检查
 
 on:
   push:
@@ -17,49 +17,49 @@ concurrency:
 
 jobs:
   secrets:
-    name: Secret scanning
+    name: 秘密扫描
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out the complete history
+      - name: 检出完整历史
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Scan Git history and worktree
+      - name: 扫描 Git 历史和工作树
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependencies:
-    name: Dependency advisories
+    name: 依赖安全公告
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - name: Check out source
+      - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install pnpm
+      - name: 安装 pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.5.2
 
-      - name: Install Node.js
+      - name: 安装 Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
-      - name: Install Rust stable
+      - name: 安装 Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
-      - name: Restore Rust build cache
+      - name: 恢复 Rust 构建缓存
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Audit production npm dependencies
+      - name: 审计生产 npm 依赖
         run: pnpm audit --prod --audit-level=low --registry=https://registry.npmjs.org
 
-      - name: Install the pinned RustSec client
+      - name: 安装锁定版本的 RustSec 客户端
         run: cargo install cargo-audit --locked --version 0.22.2
 
-      - name: Audit Rust dependencies and time-bounded exceptions
+      - name: 审计 Rust 依赖与限时例外
         run: ./scripts/audit-rust.sh

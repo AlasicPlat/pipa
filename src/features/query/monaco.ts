@@ -4,12 +4,12 @@ import "monaco-editor/editor/contrib/find/browser/findController";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import "monaco-editor/languages/definitions/sql/register";
 
-// Bundle Monaco and its worker with Pipa so the privileged Tauri WebView never executes CDN code.
+// 将 Monaco 及其 Worker 打包进 Pipa，避免具备权限的 Tauri WebView 执行 CDN 代码。
 self.MonacoEnvironment = {
   /**
-   * Creates the local worker used by Pipa's SQL and plaintext editor models.
-   * @returns A bundled Monaco editor worker.
-   * Side effects: starts one Web Worker when Monaco requests background editor services.
+   * 创建 Pipa 的 SQL 与纯文本编辑器模型使用的本地 Worker。
+   * @returns 随应用打包的 Monaco 编辑器 Worker。
+   * 副作用：Monaco 请求后台编辑器服务时启动一个 Web Worker。
    */
   getWorker(): Worker {
     return new EditorWorker();

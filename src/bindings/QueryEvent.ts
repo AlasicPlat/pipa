@@ -4,46 +4,46 @@ import type { CellValue } from "./CellValue";
 import type { QueryColumn } from "./QueryColumn";
 
 /**
- * Ordered events emitted while a query executes.
+ * 查询执行期间按顺序发出的事件。
  */
 export type QueryEvent = { "type": "started",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string, } | { "type": "schema",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string,
 /**
- * Ordered result-set columns.
+ * 按顺序排列的结果集列。
  */
 columns: Array<QueryColumn>, } | { "type": "batch",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string,
 /**
- * Rows whose cells correspond positionally to the schema.
+ * 单元格按位置与 schema 对应的结果行。
  */
 rows: Array<Array<CellValue>>, } | { "type": "completed",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string,
 /**
- * Rows affected by a statement that does not return rows.
+ * 不返回结果行的语句所影响的行数。
  */
 affectedRows: number, } | { "type": "canceled",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string, } | { "type": "failed",
 /**
- * Identifier of the query producing this event.
+ * 产生本事件的查询标识符。
  */
 queryId: string,
 /**
- * Stable execution error.
+ * 稳定的执行错误。
  */
 error: AppError, };

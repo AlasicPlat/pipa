@@ -11,10 +11,10 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: updater.check }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: processPlugin.relaunch }));
 
 /**
- * Creates the minimal native update resource exercised by the update control.
- * Parameters: none.
- * @returns A deterministic signed-update test double.
- * Side effects: creates fresh mock functions for one test.
+ * 创建更新控件测试所需的最小原生更新资源。
+ * 参数：无。
+ * @returns 行为确定的签名更新测试替身。
+ * 副作用：为单个测试创建全新的 mock 函数。
  */
 function createUpdate() {
   return {

@@ -214,10 +214,10 @@ function assertModalBlocksEditorShortcuts(): void {
 }
 
 /**
- * Verifies a mounted but hidden workspace cannot consume DOM or native execution shortcuts.
- * Parameters: none.
- * @returns A promise that settles after native shortcut registration.
- * Side effects: renders an inactive editor and dispatches both shortcut sources.
+ * 验证已挂载但隐藏的工作区不会消费 DOM 或原生执行快捷键。
+ * 参数：无。
+ * @returns 原生快捷键注册完成后结束的 Promise。
+ * 副作用：渲染非活动编辑器，并从两种快捷键来源派发事件。
  */
 async function assertInactiveEditorIgnoresShortcuts(): Promise<void> {
   const onExecute = vi.fn();

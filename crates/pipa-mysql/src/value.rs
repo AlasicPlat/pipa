@@ -39,16 +39,16 @@ fn classify_type(database_type: &str) -> ValueKind {
     }
 }
 
-/// Normalizes SQLx's ambiguous `BOOLEAN` label back to MySQL's wire-level integer type.
+/// 将 SQLx 含义不明确的 `BOOLEAN` 标签还原为 MySQL 线协议中的整数类型。
 ///
-/// # Parameters
-/// `database_type` is the stable type name returned by SQLx metadata.
+/// # 参数
+/// `database_type` 是 SQLx 元数据返回的稳定类型名称。
 ///
-/// # Returns
-/// Returns `TINYINT` for `BOOLEAN`, otherwise the original borrowed name.
+/// # 返回值
+/// `BOOLEAN` 返回 `TINYINT`，其他类型返回原始借用名称。
 ///
-/// # Side effects
-/// None.
+/// # 副作用
+/// 无。
 pub(crate) fn normalize_database_type(database_type: &str) -> &str {
     if database_type == "BOOLEAN" {
         "TINYINT"
@@ -215,7 +215,7 @@ mod tests {
         assert!(matches!(text_cell(&[b'P', 0xff]), CellValue::Text(value) if value == "P�"));
     }
 
-    /// Verifies SQLx's ambiguous BOOLEAN label stays an integer-backed TINYINT.
+    /// 验证 SQLx 含义不明确的 BOOLEAN 标签仍按整数型 TINYINT 处理。
     #[test]
     fn normalizes_boolean_as_tinyint() {
         assert_eq!(normalize_database_type("BOOLEAN"), "TINYINT");

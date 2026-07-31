@@ -1,24 +1,24 @@
-name: Feature request
-description: Propose a focused improvement to Pipa.
-title: "[Feature]: "
+name: 功能建议
+description: 为 Pipa 提出聚焦的改进建议。
+title: "[功能]: "
 labels: ["enhancement", "triage"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What workflow is difficult today?
+      label: 问题
+      description: 目前哪个工作流程使用起来困难？
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed outcome
-      description: Describe the smallest useful behavior and relevant alternatives.
+      label: 期望结果
+      description: 请描述最小可用行为和相关备选方案。
     validations:
       required: true
   - type: textarea
     id: security
     attributes:
-      label: Data and security considerations
-      description: Note any new network access, persistence, credentials or destructive operations.
+      label: 数据与安全考虑
+      description: 请说明新增的网络访问、持久化、凭据或破坏性操作。

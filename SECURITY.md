@@ -1,23 +1,23 @@
-# Security policy
+# 安全策略
 
-## Supported versions
+## 支持版本
 
-Security fixes are provided for the latest published Pipa release. Users should update to the newest version shown on the [Releases page](https://github.com/AlasicPlat/pipa/releases/latest).
+安全修复仅面向最新发布的 Pipa 版本。用户应更新到 [Releases 页面](https://github.com/AlasicPlat/pipa/releases/latest)展示的最新版本。
 
-## Report a vulnerability
+## 报告漏洞
 
-Please use GitHub's private vulnerability reporting entry under the repository **Security** tab. Include the affected version, macOS architecture, impact, reproduction steps and any minimal proof of concept.
+请使用仓库 **Security** 页签下的 GitHub 私密漏洞报告入口，并提供受影响版本、macOS 架构、影响、复现步骤和最小化概念验证。
 
-Do not open a public Issue containing credentials, connection strings, database contents, updater or Apple signing material, MCP bearer tokens, or an unpatched exploit. If private vulnerability reporting is temporarily unavailable, contact [@AlasicPlat](https://github.com/AlasicPlat) privately before sharing sensitive details.
+不要创建包含凭据、连接串、数据库内容、更新器或 Apple 签名材料、MCP Bearer Token，或尚未修复利用方式的公开 Issue。如果私密漏洞报告入口暂时不可用，请先私下联系 [@AlasicPlat](https://github.com/AlasicPlat)，再共享敏感细节。
 
-You should receive an acknowledgement within seven days. The maintainer will validate the report, coordinate a fix and disclosure timeline, and credit the reporter unless anonymity is requested.
+你应在七天内收到确认。维护者会验证报告、协调修复和披露时间，并在报告者未要求匿名时予以致谢。
 
-## Security model
+## 安全模型
 
-- Pipa is local-first but may connect to user-configured databases and GitHub Releases for signed updates.
-- MCP binds only to the loopback interface and requires a rotatable bearer token.
-- Connection data is held in a SQLCipher database. The bootstrap key resides in the same private application data directory, so Pipa does not claim protection from another process that can read that entire directory.
-- Query results and Binlog analyses remain in process memory and are not persisted by default.
-- Update archives must pass Tauri signature verification; macOS distributions are also Developer ID signed and notarized.
+- Pipa 以本地优先，但会连接用户配置的数据库，并通过 GitHub Releases 获取签名更新。
+- MCP 只绑定回环接口，并要求使用可轮换的 Bearer Token。
+- 连接数据保存在 SQLCipher 数据库中。bootstrap key 位于同一私有应用数据目录，因此 Pipa 不宣称能够抵御有权读取整个目录的其他进程。
+- 查询结果和 Binlog 分析仅保留在进程内存中，默认不持久化。
+- 更新归档必须通过 Tauri 签名验证；macOS 发布包还必须经过 Developer ID 签名与公证。
 
-Operational details and dependency risk acceptances are documented under `docs/security/`.
+运行细节与依赖风险接受记录位于 `docs/security/`。
