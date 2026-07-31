@@ -4,11 +4,11 @@ import type { BinlogCell } from "./BinlogCell";
 /**
  * One row mutation with column-name keyed images.
  */
-export type BinlogRowChange = { 
+export type BinlogRowChange = {
 /**
  * Before image for DELETE and UPDATE, or `None` when absent.
  */
-before: { [key in string]: BinlogCell } | null, 
+before: { [key in string]: BinlogCell } | null,
 /**
  * After image for INSERT and UPDATE, or `None` when absent.
  */

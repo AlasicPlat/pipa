@@ -6,55 +6,55 @@ import type { BinlogTransactionTable } from "./BinlogTransactionTable";
 /**
  * One complete or incomplete transaction in authoritative file-position order.
  */
-export type BinlogTransaction = { 
+export type BinlogTransaction = {
 /**
  * Stable transaction identifier derived from analysis ID and sequence.
  */
-id: string, 
+id: string,
 /**
  * Stable one-based transaction sequence.
  */
-sequence: number, 
+sequence: number,
 /**
  * RFC 3339 timestamp sourced from the transaction's first event.
  */
-timestamp: string, 
+timestamp: string,
 /**
  * MySQL global transaction identifier when present.
  */
-gtid: string | null, 
+gtid: string | null,
 /**
  * MySQL transaction identifier encoded as a decimal string.
  */
-xid: string | null, 
+xid: string | null,
 /**
  * Originating server identifier.
  */
-serverId: number, 
+serverId: number,
 /**
  * Basename of the file containing the transaction's first event.
  */
-fileName: string, 
+fileName: string,
 /**
  * Physical start offset within `fileName`.
  */
-startPosition: number, 
+startPosition: number,
 /**
  * Physical end offset of the last event associated with the transaction.
  */
-endPosition: number, 
+endPosition: number,
 /**
  * Observed commit status.
  */
-status: BinlogTransactionStatus, 
+status: BinlogTransactionStatus,
 /**
  * Total row mutations across this transaction.
  */
-rowChangeCount: number, 
+rowChangeCount: number,
 /**
  * Aggregated table impact.
  */
-tables: Array<BinlogTransactionTable>, 
+tables: Array<BinlogTransactionTable>,
 /**
  * Ordered row and statement changes.
  */

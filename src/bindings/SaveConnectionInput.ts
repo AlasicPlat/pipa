@@ -7,11 +7,11 @@ import type { ConnectionProfile } from "./ConnectionProfile";
  * This type is deliberately deserialize-only so credentials cannot be sent back to the
  * frontend or serialized into persistence by accident.
  */
-export type SaveConnectionInput = { 
+export type SaveConnectionInput = {
 /**
  * Non-secret connection profile.
  */
-profile: ConnectionProfile, 
+profile: ConnectionProfile,
 /**
  * Password that must be transferred directly to secure storage.
  */

@@ -3,15 +3,15 @@
 /**
  * A query execution request bound to a connection and stable query identifier.
  */
-export type QueryRequest = { 
+export type QueryRequest = {
 /**
  * Identifier used to correlate all streaming events for this query.
  */
-queryId: string, 
+queryId: string,
 /**
  * Identifier of the connection that executes the query.
  */
-connectionId: string, 
+connectionId: string,
 /**
  * SQL text to execute.
  */

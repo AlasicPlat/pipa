@@ -4,23 +4,23 @@ import type { CellValue } from "./CellValue";
 /**
  * A cell in a before or after row image.
  */
-export type BinlogCell = { "kind": "not_logged" } | { "kind": "null" } | { "kind": "value", 
+export type BinlogCell = { "kind": "not_logged" } | { "kind": "null" } | { "kind": "value",
 /**
  * Decoded lossless value.
  */
-value: CellValue, } | { "kind": "unix_timestamp", 
+value: CellValue, } | { "kind": "unix_timestamp",
 /**
  * Unix seconds, including the fractional component for TIMESTAMP2.
  */
-value: string, } | { "kind": "decode_error", 
+value: string, } | { "kind": "decode_error",
 /**
  * Safe reason that excludes the underlying row value.
  */
-message: string, } | { "kind": "partial", 
+message: string, } | { "kind": "partial",
 /**
  * Decoded partial representation.
  */
-value: CellValue, 
+value: CellValue,
 /**
  * Optional explanation of the partial semantics.
  */

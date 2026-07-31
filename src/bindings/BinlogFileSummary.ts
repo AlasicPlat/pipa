@@ -3,11 +3,11 @@
 /**
  * One imported file and its size at the beginning of analysis.
  */
-export type BinlogFileSummary = { 
+export type BinlogFileSummary = {
 /**
  * User-selected local path.
  */
-path: string, 
+path: string,
 /**
  * File size captured before parsing starts.
  */

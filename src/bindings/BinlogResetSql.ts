@@ -3,19 +3,19 @@
 /**
  * Reset SQL generated from the recorded before/after row images of one transaction.
  */
-export type BinlogResetSql = { 
+export type BinlogResetSql = {
 /**
  * Reviewable MySQL statements in reverse mutation order, or an empty string when unsafe.
  */
-sql: string, 
+sql: string,
 /**
  * Number of generated DML statements.
  */
-statementCount: number, 
+statementCount: number,
 /**
  * Whether every row mutation in the requested transaction projection was reversible.
  */
-complete: boolean, 
+complete: boolean,
 /**
  * Safe explanations for every skipped or bounded mutation.
  */

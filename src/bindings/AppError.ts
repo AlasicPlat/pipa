@@ -4,19 +4,19 @@ import type { AppErrorCode } from "./AppErrorCode";
 /**
  * Stable, user-facing error returned across application boundaries.
  */
-export type AppError = { 
+export type AppError = {
 /**
  * Machine-readable error category.
  */
-code: AppErrorCode, 
+code: AppErrorCode,
 /**
  * Safe message intended for display to the user.
  */
-message: string, 
+message: string,
 /**
  * Optional redacted diagnostic context for local troubleshooting.
  */
-technicalDetails: string | null, 
+technicalDetails: string | null,
 /**
  * Whether retrying the same operation may succeed.
  */

@@ -4,23 +4,23 @@ import type { BinlogOperation } from "./BinlogOperation";
 /**
  * Filter and cursor pagination input for the transaction timeline.
  */
-export type BinlogTransactionFilter = { 
+export type BinlogTransactionFilter = {
 /**
  * Exact database name filter.
  */
-database: string | null, 
+database: string | null,
 /**
  * Exact table name filter.
  */
-table: string | null, 
+table: string | null,
 /**
  * Optional mutation category filter.
  */
-operation: BinlogOperation | null, 
+operation: BinlogOperation | null,
 /**
  * Opaque cursor returned by the preceding page.
  */
-cursor: string | null, 
+cursor: string | null,
 /**
  * Requested page size; the backend applies a bounded default and maximum.
  */

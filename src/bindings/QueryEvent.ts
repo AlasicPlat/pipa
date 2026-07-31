@@ -6,43 +6,43 @@ import type { QueryColumn } from "./QueryColumn";
 /**
  * Ordered events emitted while a query executes.
  */
-export type QueryEvent = { "type": "started", 
+export type QueryEvent = { "type": "started",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, } | { "type": "schema", 
+queryId: string, } | { "type": "schema",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, 
+queryId: string,
 /**
  * Ordered result-set columns.
  */
-columns: Array<QueryColumn>, } | { "type": "batch", 
+columns: Array<QueryColumn>, } | { "type": "batch",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, 
+queryId: string,
 /**
  * Rows whose cells correspond positionally to the schema.
  */
-rows: Array<Array<CellValue>>, } | { "type": "completed", 
+rows: Array<Array<CellValue>>, } | { "type": "completed",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, 
+queryId: string,
 /**
  * Rows affected by a statement that does not return rows.
  */
-affectedRows: number, } | { "type": "canceled", 
+affectedRows: number, } | { "type": "canceled",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, } | { "type": "failed", 
+queryId: string, } | { "type": "failed",
 /**
  * Identifier of the query producing this event.
  */
-queryId: string, 
+queryId: string,
 /**
  * Stable execution error.
  */
