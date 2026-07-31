@@ -1,11 +1,33 @@
 {
   "name": "pipa",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
+  "author": "Alasic333 <129958248+AlasicPlat@users.noreply.github.com>",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/AlasicPlat/pipa#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlasicPlat/pipa.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AlasicPlat/pipa/issues"
+  },
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=20.19.0 <21 || >=22.12.0",
+    "pnpm": ">=11 <12"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "bindings:format": "node scripts/format-bindings.mjs",
+    "bindings:generate": "cargo test -p pipa-core && pnpm bindings:format",
+    "bindings:check": "pnpm bindings:generate && git diff --exit-code -- src/bindings",
+    "licenses:generate": "node scripts/generate-third-party-licenses.mjs",
+    "licenses:check": "pnpm licenses:generate && git diff --exit-code -- THIRD_PARTY_LICENSES.md THIRD_PARTY_LICENSES.txt",
+    "audit:rust": "./scripts/audit-rust.sh",
+    "release:check-version": "node scripts/check-release-version.mjs",
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
     "test:watch": "NODE_OPTIONS=--no-experimental-webstorage vitest",
     "tauri": "tauri",
@@ -17,7 +39,10 @@
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "2.3.2",
     "@tauri-apps/plugin-dialog": "2.7.2",
+    "@tauri-apps/plugin-process": "2.3.1",
+    "@tauri-apps/plugin-updater": "2.10.1",
     "lucide-react": "1.24.0",
+    "monaco-editor": "0.56.0",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },

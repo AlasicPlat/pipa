@@ -2,6 +2,11 @@
 members = ["crates/pipa-binlog", "crates/pipa-core", "crates/pipa-mysql", "crates/pipa-redis", "crates/pipa-store", "src-tauri"]
 resolver = "2"
 
+[workspace.package]
+authors = ["Alasic333 <129958248+AlasicPlat@users.noreply.github.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/AlasicPlat/pipa"
+
 [workspace.dependencies]
 async-trait = "0.1.89"
 axum = "0.8.8"
@@ -27,6 +32,8 @@ tauri = "2.11.5"
 tauri-build = "2.6.3"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-dialog = "2.7.2"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.10.1"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

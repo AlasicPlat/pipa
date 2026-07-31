@@ -31,6 +31,7 @@ import {
 } from "../features/query/useWorkspacePersistence";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { TableWorkspace } from "../features/tables/TableWorkspace";
+import { UpdateControl } from "../features/updater/UpdateControl";
 import {
   WorkspaceTabs,
   type OpenTableTab,
@@ -1400,6 +1401,7 @@ export function App() {
               <Server size={14} aria-hidden="true" />
               MCP
             </button>
+            <UpdateControl />
             <ThemeToggle preference={theme.preference} onChange={theme.setPreference} />
             <span className="workspace__scope">本地会话</span>
           </span>
