@@ -4,63 +4,63 @@ import type { AppError } from "./AppError";
 /**
  * Ordered progress events emitted by a background binlog import.
  */
-export type BinlogImportEvent = { "type": "started", 
+export type BinlogImportEvent = { "type": "started",
 /**
  * Stable analysis identifier.
  */
-analysisId: string, 
+analysisId: string,
 /**
  * Number of input files captured before parsing.
  */
-fileCount: number, 
+fileCount: number,
 /**
  * Total bytes across all input files.
  */
-totalBytes: number, } | { "type": "progress", 
+totalBytes: number, } | { "type": "progress",
 /**
  * Stable analysis identifier.
  */
-analysisId: string, 
+analysisId: string,
 /**
  * Bytes consumed from completed files and the current event boundary.
  */
-bytesRead: number, 
+bytesRead: number,
 /**
  * Total input bytes captured before parsing.
  */
-totalBytes: number, 
+totalBytes: number,
 /**
  * Total number of input files.
  */
-fileCount: number, 
+fileCount: number,
 /**
  * Number of fully parsed input files.
  */
-filesCompleted: number, 
+filesCompleted: number,
 /**
  * Basename of the file currently being parsed.
  */
-currentFile: string | null, 
+currentFile: string | null,
 /**
  * Number of assembled transactions so far.
  */
-transactionCount: number, 
+transactionCount: number,
 /**
  * Number of physical and decompressed logical events read so far.
  */
-eventCount: number, } | { "type": "completed", 
+eventCount: number, } | { "type": "completed",
 /**
  * Stable analysis identifier.
  */
-analysisId: string, } | { "type": "failed", 
+analysisId: string, } | { "type": "failed",
 /**
  * Stable analysis identifier.
  */
-analysisId: string, 
+analysisId: string,
 /**
  * Safe application error.
  */
-error: AppError, } | { "type": "canceled", 
+error: AppError, } | { "type": "canceled",
 /**
  * Stable analysis identifier.
  */

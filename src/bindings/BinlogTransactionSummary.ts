@@ -5,51 +5,51 @@ import type { BinlogTransactionTable } from "./BinlogTransactionTable";
 /**
  * Lightweight transaction metadata returned by timeline pagination.
  */
-export type BinlogTransactionSummary = { 
+export type BinlogTransactionSummary = {
 /**
  * Stable transaction identifier derived from analysis ID and sequence.
  */
-id: string, 
+id: string,
 /**
  * Stable one-based transaction sequence.
  */
-sequence: number, 
+sequence: number,
 /**
  * RFC 3339 timestamp sourced from the transaction's first event.
  */
-timestamp: string, 
+timestamp: string,
 /**
  * MySQL global transaction identifier when present.
  */
-gtid: string | null, 
+gtid: string | null,
 /**
  * MySQL transaction identifier encoded as a decimal string.
  */
-xid: string | null, 
+xid: string | null,
 /**
  * Originating server identifier.
  */
-serverId: number, 
+serverId: number,
 /**
  * Basename of the file containing the transaction's first event.
  */
-fileName: string, 
+fileName: string,
 /**
  * Physical start offset within `fileName`.
  */
-startPosition: number, 
+startPosition: number,
 /**
  * Physical end offset of the last event associated with the transaction.
  */
-endPosition: number, 
+endPosition: number,
 /**
  * Observed commit status.
  */
-status: BinlogTransactionStatus, 
+status: BinlogTransactionStatus,
 /**
  * Total row mutations matching the active timeline filter.
  */
-rowChangeCount: number, 
+rowChangeCount: number,
 /**
  * Aggregated table impact for the complete transaction.
  */

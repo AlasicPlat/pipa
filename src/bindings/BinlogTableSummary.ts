@@ -3,31 +3,31 @@
 /**
  * Aggregate mutation counts for one table.
  */
-export type BinlogTableSummary = { 
+export type BinlogTableSummary = {
 /**
  * Database name recorded by the binlog.
  */
-database: string, 
+database: string,
 /**
  * Table name recorded by the binlog.
  */
-table: string, 
+table: string,
 /**
  * Total inserted rows.
  */
-insertCount: number, 
+insertCount: number,
 /**
  * Total updated rows.
  */
-updateCount: number, 
+updateCount: number,
 /**
  * Total deleted rows.
  */
-deleteCount: number, 
+deleteCount: number,
 /**
  * Total statement-level schema changes.
  */
-ddlCount: number, 
+ddlCount: number,
 /**
  * Total row-level changes.
  */

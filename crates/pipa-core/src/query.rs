@@ -23,6 +23,7 @@ pub struct QueryRequest {
 /// Stable query context recorded after its matching backend execution starts.
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct RecordQueryHistoryInput {
     /// Query identifier reused as the idempotent history-entry identifier.
     #[ts(type = "string")]

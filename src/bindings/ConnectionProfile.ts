@@ -6,39 +6,39 @@ import type { TlsMode } from "./TlsMode";
 /**
  * Non-secret configuration for a saved database connection.
  */
-export type ConnectionProfile = { 
+export type ConnectionProfile = {
 /**
  * Stable connection identifier.
  */
-id: string, 
+id: string,
 /**
  * User-visible connection name.
  */
-name: string, 
+name: string,
 /**
  * Database engine.
  */
-engine: Engine, 
+engine: Engine,
 /**
  * Operational environment.
  */
-environment: Environment, 
+environment: Environment,
 /**
  * Database server hostname or address.
  */
-host: string, 
+host: string,
 /**
  * Database server port.
  */
-port: number, 
+port: number,
 /**
  * Database account username.
  */
-username: string, 
+username: string,
 /**
  * Optional default database.
  */
-database: string | null, 
+database: string | null,
 /**
  * TLS policy.
  */

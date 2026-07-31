@@ -3,31 +3,31 @@
 /**
  * Aggregate change counts for one table inside a transaction.
  */
-export type BinlogTransactionTable = { 
+export type BinlogTransactionTable = {
 /**
  * Database name.
  */
-database: string, 
+database: string,
 /**
  * Table name.
  */
-table: string, 
+table: string,
 /**
  * Inserted row count.
  */
-insertCount: number, 
+insertCount: number,
 /**
  * Updated row count.
  */
-updateCount: number, 
+updateCount: number,
 /**
  * Deleted row count.
  */
-deleteCount: number, 
+deleteCount: number,
 /**
  * Statement-level schema change count.
  */
-ddlCount: number, 
+ddlCount: number,
 /**
  * Total row mutations for this table inside the transaction.
  */

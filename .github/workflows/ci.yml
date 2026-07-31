@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Frontend, Rust and MySQL integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      mysql:
+        image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_DATABASE: pipa_test
+          MYSQL_USER: pipa
+          MYSQL_PASSWORD: pipa_test_password
+          MYSQL_ROOT_PASSWORD: pipa_test_root_password
+        ports:
+          - 33306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h 127.0.0.1 -ppipa_test_root_password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    steps:
+      - name: Check out the complete history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.5.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify third-party notices
+        run: pnpm licenses:check
+
+      - name: Test and build frontend
+        run: |
+          pnpm test
+          pnpm build
+
+      - name: Verify Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test Rust workspace and MySQL adapter
+        run: cargo test --workspace --locked
+
+      - name: Reject generated TypeScript drift
+        run: |
+          pnpm bindings:format
+          git diff --exit-code -- src/bindings
+
+      - name: Lint every Rust target
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Reject unexpected repository changes
+        run: git diff --exit-code

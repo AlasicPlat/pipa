@@ -7,51 +7,51 @@ import type { BinlogTableSummary } from "./BinlogTableSummary";
 /**
  * Current summary of one imported binlog analysis.
  */
-export type BinlogSummary = { 
+export type BinlogSummary = {
 /**
  * Stable analysis-session identifier.
  */
-analysisId: string, 
+analysisId: string,
 /**
  * Imported files in authoritative input order.
  */
-files: Array<BinlogFileSummary>, 
+files: Array<BinlogFileSummary>,
 /**
  * Current analysis lifecycle state.
  */
-status: BinlogAnalysisStatus, 
+status: BinlogAnalysisStatus,
 /**
  * RFC 3339 wall-clock time when analysis started.
  */
-startedAt: string, 
+startedAt: string,
 /**
  * RFC 3339 wall-clock time when analysis reached a terminal state.
  */
-endedAt: string | null, 
+endedAt: string | null,
 /**
  * RFC 3339 timestamp of the first non-zero event timestamp.
  */
-firstEventAt: string | null, 
+firstEventAt: string | null,
 /**
  * RFC 3339 timestamp of the last non-zero event timestamp.
  */
-lastEventAt: string | null, 
+lastEventAt: string | null,
 /**
  * Number of assembled transactions.
  */
-transactionCount: number, 
+transactionCount: number,
 /**
  * Number of physical and decompressed logical events read.
  */
-eventCount: number, 
+eventCount: number,
 /**
  * Number of decoded row mutations.
  */
-rowChangeCount: number, 
+rowChangeCount: number,
 /**
  * Per-table aggregate counts.
  */
-tables: Array<BinlogTableSummary>, 
+tables: Array<BinlogTableSummary>,
 /**
  * Ordered parser and integrity diagnostics.
  */

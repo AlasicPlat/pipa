@@ -6,35 +6,35 @@ import type { BinlogTableConfidence } from "./BinlogTableConfidence";
 /**
  * One table mutation event inside a transaction.
  */
-export type BinlogChange = { 
+export type BinlogChange = {
 /**
  * Database attributed to the event, or an empty string when unknown.
  */
-database: string, 
+database: string,
 /**
  * Table attributed to the event, or an empty string when unknown.
  */
-table: string, 
+table: string,
 /**
  * Mutation category.
  */
-operation: BinlogOperation, 
+operation: BinlogOperation,
 /**
  * Number of affected rows represented by this event.
  */
-rowCount: number, 
+rowCount: number,
 /**
  * Column names in row-image order, using `@1`, `@2`, … when metadata is absent.
  */
-columns: Array<string>, 
+columns: Array<string>,
 /**
  * Decoded row changes; empty for statement events.
  */
-rows: Array<BinlogRowChange>, 
+rows: Array<BinlogRowChange>,
 /**
  * Evidence quality for database and table attribution.
  */
-tableConfidence: BinlogTableConfidence, 
+tableConfidence: BinlogTableConfidence,
 /**
  * Original statement text when it was present in the binlog.
  */

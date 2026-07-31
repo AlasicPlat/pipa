@@ -32,9 +32,13 @@ trap 'exit 143' TERM
 docker compose -f infra/test/mysql.compose.yml up -d --wait
 
 pnpm install --frozen-lockfile
+pnpm licenses:check
 pnpm test
 pnpm build
 cargo fmt --all -- --check
 cargo test --workspace
+pnpm bindings:format
+git diff --exit-code -- src/bindings
 cargo clippy --workspace --all-targets -- -D warnings
+./scripts/audit-rust.sh
 pnpm tauri build --debug

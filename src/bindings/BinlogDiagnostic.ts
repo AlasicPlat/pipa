@@ -4,23 +4,23 @@ import type { BinlogDiagnosticSeverity } from "./BinlogDiagnosticSeverity";
 /**
  * Safe diagnostic that locates a parser or compatibility issue.
  */
-export type BinlogDiagnostic = { 
+export type BinlogDiagnostic = {
 /**
  * Stable machine-readable diagnostic identifier.
  */
-code: string, 
+code: string,
 /**
  * User-facing diagnostic message that excludes row values.
  */
-message: string, 
+message: string,
 /**
  * Diagnostic severity.
  */
-severity: BinlogDiagnosticSeverity, 
+severity: BinlogDiagnosticSeverity,
 /**
  * Basename of the affected binlog file when known.
  */
-fileName: string | null, 
+fileName: string | null,
 /**
  * Physical byte offset within the affected file when known.
  */

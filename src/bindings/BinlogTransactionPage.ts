@@ -4,11 +4,11 @@ import type { BinlogTransactionSummary } from "./BinlogTransactionSummary";
 /**
  * One cursor-paginated transaction result.
  */
-export type BinlogTransactionPage = { 
+export type BinlogTransactionPage = {
 /**
  * Matching transaction summaries in stable sequence order.
  */
-items: Array<BinlogTransactionSummary>, 
+items: Array<BinlogTransactionSummary>,
 /**
  * Cursor for the next page, or `None` when this is the final page.
  */

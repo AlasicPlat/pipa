@@ -3,15 +3,15 @@
 /**
  * Metadata for one column in a streamed result set.
  */
-export type QueryColumn = { 
+export type QueryColumn = {
 /**
  * Column label reported by the database driver.
  */
-name: string, 
+name: string,
 /**
  * Database-native type name.
  */
-databaseType: string, 
+databaseType: string,
 /**
  * Database nullability when known.
  */
