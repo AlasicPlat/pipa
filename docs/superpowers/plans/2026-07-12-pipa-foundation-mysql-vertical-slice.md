@@ -1,5 +1,7 @@
 # Pipa Foundation and MySQL Vertical Slice Implementation Plan
 
+> **Archived historical plan (non-normative).** It records the July 2026 foundation work and includes superseded dependency and storage choices. Follow the root README, `CONTRIBUTING.md`, `SECURITY.md` and current manifests for present behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a runnable Pipa desktop application that securely stores local MySQL connections, displays the confirmed engine-grouped workspace, executes real MySQL queries through Rust, streams results to the UI, supports cancellation and `Ctrl/Cmd + R`, and restores unsaved query tabs.

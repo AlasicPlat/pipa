@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible Pipa defect without sensitive database data.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include passwords, connection strings, private keys, MCP tokens or unredacted query results. Report security vulnerabilities through SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Pipa version
+      placeholder: v0.x.y
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Mac architecture
+      options:
+        - Apple Silicon
+        - Intel
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Use a local test database or fully redacted examples.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Additional diagnostics
+      description: Include macOS/database versions and sanitized logs when useful.
