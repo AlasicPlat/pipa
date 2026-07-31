@@ -7,6 +7,7 @@ import type { ResolvedTheme } from "../preferences/theme";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
+  active?: boolean;
   engine?: "my_sql" | "redis";
   sql: string;
   onSqlChange: (sql: string) => void;
@@ -94,7 +95,7 @@ function executeEditorScope(
  * Side effects: registers one temporary document shortcut and the shared toolbar execute handle.
  */
 export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function QueryEditor(
-  { engine = "my_sql", sql, onSqlChange, onExecute, theme = "light" },
+  { active = true, engine = "my_sql", sql, onSqlChange, onExecute, theme = "light" },
   forwardedRef,
 ) {
   const shortcuts = useShortcutSettings();
@@ -117,7 +118,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
    * Side effects: records the shortcut time and executes the current editor scope once.
    */
   const executeShortcutOnce = useCallback((source: ShortcutSource): void => {
-    if (!editorRef.current || document.querySelector("[aria-modal='true']")) {
+    if (!active || !editorRef.current || document.querySelector("[aria-modal='true']")) {
       return;
     }
     const now = performance.now();
@@ -131,7 +132,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
     }
     lastExecutedShortcutRef.current = { source, timestamp: now };
     executeCurrent();
-  }, [executeCurrent]);
+  }, [active, executeCurrent]);
 
   useImperativeHandle(forwardedRef, () => ({ executeCurrent }), [executeCurrent]);
 
@@ -143,7 +144,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
   useEffect(() => {
     /** Executes configured SQL actions before the WebView can consume their key events. */
     function handleExecuteShortcut(event: KeyboardEvent): void {
-      if (document.querySelector("[aria-modal='true']")) {
+      if (!active || document.querySelector("[aria-modal='true']")) {
         return;
       }
       if (isSelectCurrentSqlShortcut(event, shortcuts.bindings.selectSql) && editorRef.current?.hasTextFocus()) {
@@ -169,7 +170,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
 
     document.addEventListener("keydown", handleExecuteShortcut, true);
     return () => document.removeEventListener("keydown", handleExecuteShortcut, true);
-  }, [executeShortcutOnce, shortcuts.bindings.executeQuery, shortcuts.bindings.find, shortcuts.bindings.selectSql]);
+  }, [
+    active,
+    executeShortcutOnce,
+    shortcuts.bindings.executeQuery,
+    shortcuts.bindings.find,
+    shortcuts.bindings.selectSql,
+  ]);
 
   useEffect(() => {
     let disposed = false;

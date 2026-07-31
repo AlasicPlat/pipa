@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CellValue } from "../bindings/CellValue";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
+import type { QueryColumn } from "../bindings/QueryColumn";
 import {
   reloadShortcutBindings,
   resetAllShortcutBindings,
@@ -38,6 +40,8 @@ vi.mock("../lib/tauriClient", () => ({
 const clipboardState = vi.hoisted(() => ({ writeText: vi.fn() }));
 const querySessionFixture = vi.hoisted(() => ({
   cancel: vi.fn(),
+  columns: [] as QueryColumn[],
+  rows: [] as CellValue[][],
   run: vi.fn(),
   running: false,
 }));
@@ -52,8 +56,8 @@ vi.mock("../features/query/useQuerySession", () => ({
       queryId: null,
       connectionId: null,
       sql: "",
-      columns: [],
-      rows: [],
+      columns: querySessionFixture.columns,
+      rows: querySessionFixture.rows,
       running: querySessionFixture.running,
       cancelRequested: false,
       incomplete: false,
@@ -355,6 +359,32 @@ async function assertWorkspaceTabShortcuts(): Promise<void> {
   );
 }
 
+/** Verifies a completed query result and its view state survive switching to another workspace. */
+async function assertQueryResultsSurviveWorkspaceSwitch(): Promise<void> {
+  querySessionFixture.columns = [
+    { name: "item", databaseType: "VARCHAR", nullable: false },
+  ];
+  querySessionFixture.rows = [[{ kind: "text", value: "inventory" }]];
+  render(<App />);
+  const restoredWorkspace = await screen.findByRole("region", {
+    name: "开发主库 查询工作区",
+  });
+  const resultSearch = screen.getByRole("searchbox", { name: "搜索结果" });
+  fireEvent.change(resultSearch, { target: { value: "inventory" } });
+
+  fireEvent.click(screen.getByRole("button", { name: /生产主库/ }));
+  fireEvent.click(screen.getByRole("button", {
+    name: "在当前已选 MySQL 连接 生产主库 中新建查询",
+  }));
+  expect(await screen.findByRole("region", { name: "生产主库 查询工作区" })).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "开发主库 查询工作区", hidden: true }),
+  ).toBe(restoredWorkspace);
+
+  fireEvent.click(screen.getByRole("tab", { name: "恢复的查询" }));
+  expect(screen.getByRole("searchbox", { name: "搜索结果" })).toHaveValue("inventory");
+}
+
 /** Verifies an edited global shortcut replaces the default workspace action immediately. */
 async function assertConfiguredGlobalShortcut(): Promise<void> {
   expect(updateShortcutBinding("newQuery", "Alt+N")).toBe(true);
@@ -649,6 +679,8 @@ function registerAppTests(): void {
     window.localStorage.clear();
     reloadShortcutBindings();
     vi.clearAllMocks();
+    querySessionFixture.columns = [];
+    querySessionFixture.rows = [];
     querySessionFixture.running = false;
     vi.mocked(listConnections).mockResolvedValue([
       DEVELOPMENT_PROFILE,
@@ -696,6 +728,7 @@ function registerAppTests(): void {
   it("switches Redis workspaces to the database opened in the navigator", assertRedisDatabaseSelectionScopesWorkspace);
   it("deletes a connection only after context-menu confirmation", assertConfirmedConnectionDeletion);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);
+  it("keeps query results mounted across workspace switches", assertQueryResultsSurviveWorkspaceSwitch);
   it("uses a configured workspace shortcut and releases its previous default", assertConfiguredGlobalShortcut);
   it("switches and persists the selected interface appearance", assertThemeSwitching);
   it("opens shortcut settings from the persistent topbar entry", assertShortcutSettingsEntry);

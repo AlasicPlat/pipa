@@ -25,6 +25,7 @@ import { QueryWorkspace } from "../query/QueryWorkspace";
 import type { WorkspaceTab } from "../query/useWorkspacePersistence";
 
 interface RedisWorkspaceProps {
+  active?: boolean;
   profile: ConnectionProfile;
   tab: WorkspaceTab;
   theme: ResolvedTheme;
@@ -276,6 +277,7 @@ function valueCommand(type: string, key: string): string | null {
  * Side effects: runs bounded Redis reads and explicit, confirmed mutations through Tauri.
  */
 export function RedisWorkspace({
+  active = true,
   profile,
   tab,
   theme,
@@ -824,7 +826,7 @@ export function RedisWorkspace({
   }, [createOpen, mutationRunning, pendingMutation]);
 
   useEffect(() => {
-    if (mode !== "browser") {
+    if (!active || mode !== "browser") {
       return;
     }
     /** Maps shared run/find shortcuts to refresh and key search while the browser owns focus. */
@@ -851,6 +853,7 @@ export function RedisWorkspace({
     document.addEventListener("keydown", handleBrowserShortcut, true);
     return () => document.removeEventListener("keydown", handleBrowserShortcut, true);
   }, [
+    active,
     loadDetails,
     loadKeys,
     mode,
@@ -1346,6 +1349,7 @@ export function RedisWorkspace({
       >
         {mode === "cli" ? (
           <QueryWorkspace
+            active={active && mode === "cli"}
             onRetryPersistence={onRetryPersistence}
             onRunningChange={handleCliRunningChange}
             onSqlChange={onSqlChange}

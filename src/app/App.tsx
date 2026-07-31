@@ -25,7 +25,10 @@ import { ThemeToggle } from "../features/preferences/ThemeToggle";
 import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/preferences/sidebarLayout";
 import { useThemePreference } from "../features/preferences/theme";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
-import { useWorkspacePersistence } from "../features/query/useWorkspacePersistence";
+import {
+  useWorkspacePersistence,
+  type WorkspaceTab,
+} from "../features/query/useWorkspacePersistence";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { TableWorkspace } from "../features/tables/TableWorkspace";
 import {
@@ -95,6 +98,34 @@ function redisDatabaseFromWorkspaceTitle(title: string): string | null {
 }
 
 /**
+ * Resolves the executable profile used by one persisted query workspace.
+ * @param profile - Stored non-secret profile referenced by the tab.
+ * @param tab - Persisted query workspace whose Redis database may be encoded in its title.
+ * @param selectedRedisDatabases - Current navigator database selection by connection.
+ * @returns A runnable profile with its Redis database context, or `null` when unavailable.
+ * Side effects: none.
+ */
+function resolveQueryWorkspaceProfile(
+  profile: ConnectionProfile | undefined,
+  tab: WorkspaceTab | null,
+  selectedRedisDatabases: Readonly<Record<string, string>>,
+): ConnectionProfile | null {
+  if (!profile || !tab || !matchesRunnableEngine(profile.engine)) {
+    return null;
+  }
+  if (profile.engine !== "redis") {
+    return profile;
+  }
+  return {
+    ...profile,
+    database: selectedRedisDatabases[profile.id]
+      ?? redisDatabaseFromWorkspaceTitle(tab.title)
+      ?? profile.database
+      ?? "0",
+  };
+}
+
+/**
  * Composes the connection-management shell around feature-owned connection state.
  * Parameters: none.
  * @returns The React element for the persistent Pipa workspace.
@@ -140,17 +171,11 @@ export function App() {
   const activeQueryProfile = connections.profiles.find(
     (profile) => profile.id === queryWorkspace.activeTab?.connectionId,
   );
-  const activeQueryWorkspaceProfile = activeQueryProfile?.engine === "redis"
-    ? {
-        ...activeQueryProfile,
-        database: selectedRedisDatabases[activeQueryProfile.id]
-          ?? (queryWorkspace.activeTab
-            ? redisDatabaseFromWorkspaceTitle(queryWorkspace.activeTab.title)
-            : null)
-          ?? activeQueryProfile.database
-          ?? "0",
-      }
-    : activeQueryProfile;
+  const activeQueryWorkspaceProfile = resolveQueryWorkspaceProfile(
+    activeQueryProfile,
+    queryWorkspace.activeTab,
+    selectedRedisDatabases,
+  );
   const activeTableTab = openTableTabs.find((tab) => tab.id === activeTableTabId);
   const pendingCloseTable = openTableTabs.find((tab) => tab.id === pendingCloseTableId) ?? null;
   const dirtyTables = openTableTabs
@@ -1434,42 +1459,57 @@ export function App() {
                 utilityTabs={binlogWorkspaceOpen ? [BINLOG_WORKSPACE_TAB] : []}
               />
               <div className="workspace-tab-panels">
-                {activeTableTabId === null
-                && queryWorkspace.activeTab
-                && activeQueryWorkspaceProfile
-                && matchesRunnableEngine(activeQueryWorkspaceProfile.engine) ? (
-                  <div
-                    className="workspace-tab-panel"
-                    hidden={activeUtilityTabId !== null}
-                    key={queryWorkspace.activeTab.id}
-                  >
-                    {activeQueryWorkspaceProfile.engine === "redis" ? (
-                      <RedisWorkspace
-                        onDatabaseChange={(database) => handleSelectRedisDatabase(
-                          activeQueryWorkspaceProfile.id,
-                          database,
-                        )}
-                        onRetryPersistence={queryWorkspace.retrySave}
-                        onRunningChange={handleQueryRunningChange}
-                        onSqlChange={queryWorkspace.updateTabSql}
-                        persistenceError={queryWorkspace.saveError}
-                        profile={activeQueryWorkspaceProfile}
-                        tab={queryWorkspace.activeTab}
-                        theme={theme.resolvedTheme}
-                      />
-                    ) : (
-                      <QueryWorkspace
-                        onRetryPersistence={queryWorkspace.retrySave}
-                        onRunningChange={handleQueryRunningChange}
-                        onSqlChange={queryWorkspace.updateTabSql}
-                        persistenceError={queryWorkspace.saveError}
-                        profile={activeQueryWorkspaceProfile}
-                        tab={queryWorkspace.activeTab}
-                        theme={theme.resolvedTheme}
-                      />
-                    )}
-                  </div>
-                ) : null}
+                {queryWorkspace.tabs.map((queryTab) => {
+                  const storedProfile = connections.profiles.find(
+                    (profile) => profile.id === queryTab.connectionId,
+                  );
+                  const workspaceProfile = resolveQueryWorkspaceProfile(
+                    storedProfile,
+                    queryTab,
+                    selectedRedisDatabases,
+                  );
+                  if (!workspaceProfile) {
+                    return null;
+                  }
+                  const isActive = activeUtilityTabId === null
+                    && activeTableTabId === null
+                    && queryWorkspace.activeTabId === queryTab.id;
+                  return (
+                    <div
+                      className="workspace-tab-panel"
+                      hidden={!isActive}
+                      key={queryTab.id}
+                    >
+                      {workspaceProfile.engine === "redis" ? (
+                        <RedisWorkspace
+                          active={isActive}
+                          onDatabaseChange={(database) => handleSelectRedisDatabase(
+                            workspaceProfile.id,
+                            database,
+                          )}
+                          onRetryPersistence={queryWorkspace.retrySave}
+                          onRunningChange={handleQueryRunningChange}
+                          onSqlChange={queryWorkspace.updateTabSql}
+                          persistenceError={queryWorkspace.saveError}
+                          profile={workspaceProfile}
+                          tab={queryTab}
+                          theme={theme.resolvedTheme}
+                        />
+                      ) : (
+                        <QueryWorkspace
+                          active={isActive}
+                          onRetryPersistence={queryWorkspace.retrySave}
+                          onRunningChange={handleQueryRunningChange}
+                          onSqlChange={queryWorkspace.updateTabSql}
+                          persistenceError={queryWorkspace.saveError}
+                          profile={workspaceProfile}
+                          tab={queryTab}
+                          theme={theme.resolvedTheme}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
                 {openTableTabs.map((tableTab) => {
                   const profile = connections.profiles.find((item) => item.id === tableTab.connectionId);
                   return profile?.engine === "my_sql" ? (

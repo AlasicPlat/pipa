@@ -20,6 +20,7 @@ import { useQuerySession } from "./useQuerySession";
 import type { WorkspaceTab } from "./useWorkspacePersistence";
 
 interface QueryWorkspaceProps {
+  active?: boolean;
   profile: ConnectionProfile;
   tab: WorkspaceTab;
   theme: ResolvedTheme;
@@ -207,6 +208,7 @@ function queryErrorAdvice(error: AppError, isRedis: boolean): string {
  * Side effects: reports controlled SQL edits and invokes query-session commands after user actions.
  */
 export function QueryWorkspace({
+  active = true,
   profile,
   tab,
   theme,
@@ -549,6 +551,7 @@ export function QueryWorkspace({
           </div>
         ) : null}
         <QueryEditor
+          active={active}
           engine={isRedis ? "redis" : "my_sql"}
           ref={queryEditorRef}
           sql={tab.sqlText}
