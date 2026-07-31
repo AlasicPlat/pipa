@@ -382,7 +382,9 @@ async function assertQueryResultsSurviveWorkspaceSwitch(): Promise<void> {
   ).toBe(restoredWorkspace);
 
   fireEvent.click(screen.getByRole("tab", { name: "恢复的查询" }));
-  expect(screen.getByRole("searchbox", { name: "搜索结果" })).toHaveValue("inventory");
+  await waitFor(() => {
+    expect(screen.getByRole("searchbox", { name: "搜索结果" })).toHaveValue("inventory");
+  });
 }
 
 /** Verifies an edited global shortcut replaces the default workspace action immediately. */
