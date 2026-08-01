@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import { CircleCheck, Download, RefreshCw } from "lucide-react";
+import { CircleCheck, Download, RefreshCw, ShieldCheck } from "lucide-react";
 import "./updater.css";
 
 type UpdatePhase =
@@ -19,6 +19,7 @@ interface UpdateViewState {
   phase: UpdatePhase;
   downloadedBytes: number;
   totalBytes?: number;
+  bytesPerSecond?: number;
   error?: string;
 }
 
@@ -39,6 +40,24 @@ function getUpdateErrorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+/**
+ * 将下载字节数格式化为更新面板中的紧凑容量文本。
+ * @param bytes - 下载事件报告的字节数。
+ * @returns 使用 B、KB、MB 或 GB 表示的非负容量。
+ * 副作用：无。
+ */
+function formatBytes(bytes: number): string {
+  const normalizedBytes = Math.max(0, bytes);
+  if (normalizedBytes < 1024) {
+    return `${Math.round(normalizedBytes)} B`;
+  }
+
+  const units = ["KB", "MB", "GB"];
+  const unitIndex = Math.min(Math.floor(Math.log(normalizedBytes) / Math.log(1024)) - 1, units.length - 1);
+  const value = normalizedBytes / 1024 ** (unitIndex + 1);
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 /**
@@ -153,9 +172,11 @@ export function UpdateControl() {
     setState({ phase: "downloading", downloadedBytes: 0 });
     try {
       let downloadedBytes = 0;
+      let downloadStartedAt = Date.now();
       await availableUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === "Started") {
           downloadedBytes = 0;
+          downloadStartedAt = Date.now();
           setState({
             phase: "downloading",
             downloadedBytes,
@@ -165,10 +186,12 @@ export function UpdateControl() {
         }
         if (event.event === "Progress") {
           downloadedBytes += event.data.chunkLength;
+          const elapsedSeconds = (Date.now() - downloadStartedAt) / 1000;
           setState((currentState) => ({
             phase: "downloading",
             downloadedBytes,
             totalBytes: currentState.totalBytes,
+            bytesPerSecond: elapsedSeconds >= 0.25 ? downloadedBytes / elapsedSeconds : undefined,
           }));
           return;
         }
@@ -221,6 +244,12 @@ export function UpdateControl() {
   const progress = state.totalBytes
     ? Math.min(100, Math.round((state.downloadedBytes / state.totalBytes) * 100))
     : null;
+  const downloadedLabel = state.totalBytes
+    ? `${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)}`
+    : `${formatBytes(state.downloadedBytes)} 已下载`;
+  const speedLabel = state.bytesPerSecond
+    ? `${formatBytes(state.bytesPerSecond)}/s`
+    : "正在测速…";
   const updateLabel = state.phase === "available" && availableUpdate
     ? `更新 v${availableUpdate.version}`
     : state.phase === "checking"
@@ -263,9 +292,45 @@ export function UpdateControl() {
             </>
           ) : null}
           {state.phase === "downloading" ? (
-            <p role="status">正在下载已签名更新{progress === null ? "…" : `：${progress}%`}</p>
+            <div className="update-menu__download">
+              <div className="update-menu__download-heading">
+                <span className="update-menu__download-title">正在下载签名更新</span>
+                <span aria-hidden="true" className="update-menu__percentage">
+                  {progress === null ? "…" : `${progress}%`}
+                </span>
+              </div>
+              <div
+                aria-label="更新下载进度"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={progress ?? undefined}
+                aria-valuetext={progress === null ? `正在下载，${downloadedLabel}` : `${progress}%，${downloadedLabel}`}
+                className={`update-menu__progress${progress === null ? " is-indeterminate" : ""}`}
+                role="progressbar"
+              >
+                <span
+                  className="update-menu__progress-fill"
+                  style={progress === null ? undefined : { width: `${progress}%` }}
+                />
+              </div>
+              <div aria-hidden="true" className="update-menu__download-meta">
+                <span>{downloadedLabel}</span>
+                <span>{speedLabel}</span>
+              </div>
+              <p className="update-menu__assurance">
+                <ShieldCheck aria-hidden="true" size={12} /> 下载完成后自动验签并安装
+              </p>
+            </div>
           ) : null}
-          {state.phase === "installing" ? <p role="status">正在验证并安装更新…</p> : null}
+          {state.phase === "installing" ? (
+            <div className="update-menu__processing" role="status">
+              <RefreshCw aria-hidden="true" className="update-menu__spinner" size={15} />
+              <span>
+                <strong>正在验证签名并安装</strong>
+                <small>请保持 Pipa 打开</small>
+              </span>
+            </div>
+          ) : null}
           {state.phase === "restart-required" ? (
             <p className="update-menu__success"><CircleCheck aria-hidden="true" size={14} /> 更新已安装</p>
           ) : null}
