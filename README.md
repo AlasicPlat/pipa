@@ -18,11 +18,7 @@
 </div>
 
 <p align="center">
-  <a href="docs/assets/pipa-intro-short.mp4">
-    <img src="docs/assets/pipa-intro-preview.gif" width="100%" alt="Pipa SQL、MCP 与 Binlog 动态演示" />
-  </a>
-  <br />
-  <a href="docs/assets/pipa-intro-short.mp4">▶ 打开 1080p MP4</a>
+  <img src="docs/assets/pipa-intro-preview.gif" width="100%" alt="Pipa SQL、MCP 与 Binlog 动态演示" />
 </p>
 
 ## Pipa 是什么
