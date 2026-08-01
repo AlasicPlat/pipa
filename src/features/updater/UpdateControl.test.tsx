@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateControl } from "./UpdateControl";
 
@@ -58,6 +58,46 @@ describe("UpdateControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "下载、安装并重启" }));
 
     await waitFor(() => expect(update.downloadAndInstall).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(processPlugin.relaunch).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows real byte progress while downloading an update", async () => {
+    const update = createUpdate();
+    let emitDownloadEvent: ((event: unknown) => void) | undefined;
+    let finishDownload: (() => void) | undefined;
+    update.downloadAndInstall.mockImplementation((onEvent: (event: unknown) => void) => {
+      emitDownloadEvent = onEvent;
+      return new Promise<void>((resolve) => {
+        finishDownload = resolve;
+      });
+    });
+    updater.check.mockResolvedValue(update);
+    render(<UpdateControl />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "软件更新：发现 v0.2.7" }));
+    fireEvent.click(screen.getByRole("button", { name: "下载、安装并重启" }));
+    await waitFor(() => expect(emitDownloadEvent).toBeDefined());
+
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    act(() => {
+      emitDownloadEvent?.({ event: "Started", data: { contentLength: 10 * 1024 * 1024 } });
+      dateNow.mockReturnValue(2_000);
+      emitDownloadEvent?.({ event: "Progress", data: { chunkLength: 2 * 1024 * 1024 } });
+    });
+
+    const progressbar = screen.getByRole("progressbar", { name: "更新下载进度" });
+    expect(progressbar).toHaveAttribute("aria-valuenow", "20");
+    expect(progressbar).toHaveAttribute("aria-valuetext", "20%，2.0 MB / 10.0 MB");
+    expect(screen.getAllByText("20%")).toHaveLength(2);
+    expect(screen.getByText("2.0 MB / 10.0 MB")).toBeInTheDocument();
+    expect(screen.getByText("2.0 MB/s")).toBeInTheDocument();
+    dateNow.mockRestore();
+
+    await act(async () => {
+      emitDownloadEvent?.({ event: "Finished" });
+      finishDownload?.();
+      await Promise.resolve();
+    });
     await waitFor(() => expect(processPlugin.relaunch).toHaveBeenCalledTimes(1));
   });
 

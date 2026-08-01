@@ -8,9 +8,9 @@
   top: calc(100% + 8px);
   right: 0;
   display: grid;
-  width: min(320px, calc(100vw - 28px));
-  gap: 9px;
-  padding: 14px;
+  width: min(340px, calc(100vw - 28px));
+  gap: 10px;
+  padding: 16px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   background: var(--surface-raised);
@@ -58,6 +58,111 @@
   color: var(--status-danger, #c55151);
 }
 
+.update-menu__download {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-mysql) 18%, var(--border-subtle));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-mysql) 4%, var(--surface-muted));
+}
+
+.update-menu__download-heading,
+.update-menu__download-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-menu__download-title {
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.update-menu__percentage {
+  color: var(--accent-mysql);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.update-menu__progress {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 9%, var(--surface-panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+
+.update-menu__progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-mysql);
+  transition: width 180ms ease-out;
+}
+
+.update-menu__progress.is-indeterminate .update-menu__progress-fill {
+  width: 32%;
+  animation: update-menu-progress 1.2s ease-in-out infinite;
+}
+
+.update-menu__download-meta {
+  color: var(--text-tertiary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-menu .update-menu__assurance {
+  align-items: center;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.update-menu__assurance svg {
+  flex: 0 0 auto;
+  color: var(--accent-mysql);
+}
+
+.update-menu__processing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.update-menu__processing > span {
+  display: grid;
+  gap: 2px;
+}
+
+.update-menu__processing strong {
+  color: var(--text-primary);
+  font-size: 10px;
+}
+
+.update-menu__processing small {
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.update-menu__spinner {
+  flex: 0 0 auto;
+  color: var(--accent-mysql);
+  animation: update-menu-spin 900ms linear infinite;
+}
+
 .workspace__topbar-actions .update-menu__actions {
   display: flex;
   justify-content: flex-end;
@@ -75,4 +180,36 @@
   border-color: color-mix(in srgb, var(--accent-mysql) 42%, var(--border-subtle));
   background: color-mix(in srgb, var(--accent-mysql) 12%, var(--surface-panel));
   color: var(--text-primary);
+}
+
+@keyframes update-menu-progress {
+  from {
+    transform: translateX(-120%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
+@keyframes update-menu-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-menu__progress-fill {
+    transition: none;
+  }
+
+  .update-menu__progress.is-indeterminate .update-menu__progress-fill {
+    width: 100%;
+    animation: none;
+    opacity: 0.45;
+  }
+
+  .update-menu__spinner {
+    animation: none;
+  }
 }
