@@ -91,3 +91,32 @@ jobs:
           releaseAssetNamePattern: Pipa-macOS-${{ matrix.asset_arch }}[ext]
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+
+      - name: 公证并替换 DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          dmg_path="$(find "target/${{ matrix.target }}/release/bundle/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          if [[ -z "$dmg_path" ]]; then
+            echo "::error::未找到 DMG 构建产物"
+            exit 1
+          fi
+
+          xcrun notarytool submit "$dmg_path" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$dmg_path"
+          xcrun stapler validate "$dmg_path"
+          codesign --verify --strict --verbose=4 "$dmg_path"
+          spctl -a -vv --type install "$dmg_path"
+
+          release_dmg="Pipa-macOS-${{ matrix.asset_arch }}.dmg"
+          cp "$dmg_path" "$release_dmg"
+          gh release upload "$GITHUB_REF_NAME" "$release_dmg" --clobber
