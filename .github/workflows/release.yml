@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ !github.event.forced }}
     name: 构建 ${{ matrix.asset_arch }}
     runs-on: macos-latest
     timeout-minutes: 75

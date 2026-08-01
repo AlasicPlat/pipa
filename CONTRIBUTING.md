@@ -19,7 +19,7 @@ pnpm install --frozen-lockfile
 pnpm tauri dev
 ```
 
-使用 `./scripts/verify-foundation.sh` 执行完整本地门禁，其中包含 MySQL 集成服务。较小变更可先运行相关测试，最后执行：
+使用 `./scripts/verify-project.sh` 执行完整本地门禁，其中包含 MySQL 集成服务。较小变更可先运行相关测试，最后执行：
 
 ```bash
 pnpm test

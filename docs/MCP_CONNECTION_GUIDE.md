@@ -1,4 +1,4 @@
-# Pipa MCP 连接指南
+# Pipa MCP 接入指南
 
 Pipa 内置一个仅监听本机回环地址的 Streamable HTTP MCP 服务，让支持 MCP 的客户端读取 Pipa 中保存的 MySQL 连接、查看表结构、执行受限的只读查询，并离线分析一份或多份 MySQL Binlog。
 

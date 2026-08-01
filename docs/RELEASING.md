@@ -29,7 +29,7 @@ Apple 证书及其密码、公证凭据和 Tauri updater 私钥均属于秘密�
 ## 准备发布
 
 1. 确认 `main` 上的 CI 为绿色，且没有未解决的高严重度安全问题。
-2. 在可信的 macOS 开发机上运行 `./scripts/verify-foundation.sh`。
+2. 在可信的 macOS 开发机上运行 `./scripts/verify-project.sh`。
 3. 将 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 更新为同一个语义化版本，然后刷新锁文件。
 4. 在发布提交中加入面向用户的更新说明，或在打标签前准备好草稿。
 5. 将版本提交合入受保护的 `main`。

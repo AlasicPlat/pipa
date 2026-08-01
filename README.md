@@ -71,7 +71,7 @@ Pipa 为日常数据库查询与故障排查提供一个安静、清晰的桌面
 - Binlog 工具无需数据库连接，可导入本机路径或 Base64 文件并查询摘要、事务时间线、行镜像与 Reset SQL。
 - DML/DDL 不会由 MCP 直接执行，只会进入 Pipa 待确认队列。
 
-完整接入方式和安全边界见 [MCP_CONNECTION_GUIDE.md](MCP_CONNECTION_GUIDE.md)。
+完整接入方式和安全边界见 [MCP 接入指南](docs/MCP_CONNECTION_GUIDE.md)。
 
 ## 本地数据与安全边界
 
@@ -106,7 +106,7 @@ pnpm tauri dev
 仓库内的 `infra/test/mysql.compose.yml` 提供隔离的 MySQL 8.4 测试实例。以下脚本会启动测试数据库，执行前端测试与构建、Rust 格式/测试/Clippy、生成绑定一致性检查和 debug 桌面打包，结束时自动停止容器：
 
 ```bash
-./scripts/verify-foundation.sh
+./scripts/verify-project.sh
 ```
 
 也可以按需单独执行：

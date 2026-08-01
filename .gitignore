@@ -1,5 +1,4 @@
-# Logs
-.superpowers/
+# Logs and local worktrees
 .worktrees/
 
 logs
@@ -33,9 +32,6 @@ pipa-updater.key.pub
 # Local release staging
 .release/
 release-output/
-
-# Local review artifacts retained outside the public source history
-security_best_practices_report.md
 
 # Local encrypted application state
 *.db
