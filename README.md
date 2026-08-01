@@ -19,10 +19,10 @@
 
 <p align="center">
   <a href="docs/assets/pipa-intro-short.mp4">
-    <img src="https://alasicplat.github.io/images/pipa-cover.png" width="100%" alt="Pipa 数据库连接与查询工作区" />
+    <img src="docs/assets/pipa-intro-preview.gif" width="100%" alt="Pipa SQL、MCP 与 Binlog 动态演示" />
   </a>
   <br />
-  <a href="docs/assets/pipa-intro-short.mp4">▶ 观看 23 秒无声演示</a>
+  <a href="docs/assets/pipa-intro-short.mp4">▶ 打开 1080p MP4</a>
 </p>
 
 ## Pipa 是什么
