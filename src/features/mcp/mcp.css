@@ -108,7 +108,7 @@
   margin-top: 8px;
 }
 
-.mcp-panel__field input,
+.mcp-panel__field input:not([type="checkbox"]),
 .mcp-panel__field select,
 .mcp-panel__field textarea {
   width: 100%;
@@ -164,6 +164,59 @@
   margin-top: 14px;
   padding: 12px 0;
   border-block: 1px solid var(--border-subtle);
+}
+
+.mcp-panel__connection-options {
+  display: flex;
+  max-height: 184px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.mcp-panel__connection-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.mcp-panel__connection-option:hover {
+  background: var(--surface-hover);
+}
+
+.mcp-panel__connection-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent-mysql);
+}
+
+.mcp-panel__connection-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-panel__connection-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mcp-panel__connection-empty {
+  padding: 8px 6px;
+  color: var(--text-tertiary);
 }
 
 .mcp-panel__scope-heading {

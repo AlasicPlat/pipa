@@ -3,9 +3,9 @@
 
   # Pipa（枇杷）
 
-  **让数据库工作区保持清爽、专注。**
+  **不止 SQL：让 AI 受控访问数据库，让 Binlog 变成可读的事务现场。**
 
-  面向 macOS 的本地优先数据库查询工作台，由 [Alasic333](https://github.com/AlasicPlat) 创建并维护。
+  面向 macOS 的本地优先数据库工作台，由 [Alasic333](https://github.com/AlasicPlat) 创建并维护。
 
   [![Latest release](https://img.shields.io/github/v/release/AlasicPlat/pipa?label=latest)](https://github.com/AlasicPlat/pipa/releases/latest)
   [![CI](https://github.com/AlasicPlat/pipa/actions/workflows/ci.yml/badge.svg)](https://github.com/AlasicPlat/pipa/actions/workflows/ci.yml)
@@ -18,30 +18,54 @@
 </div>
 
 <p align="center">
-  <img src="https://alasicplat.github.io/images/pipa-cover.png" width="100%" alt="Pipa 数据库连接与查询工作区" />
+  <a href="docs/assets/pipa-intro-short.mp4">
+    <img src="https://alasicplat.github.io/images/pipa-cover.png" width="100%" alt="Pipa 数据库连接与查询工作区" />
+  </a>
+  <br />
+  <a href="docs/assets/pipa-intro-short.mp4">▶ 观看 23 秒无声演示</a>
 </p>
 
 ## Pipa 是什么
 
-Pipa 为日常数据库查询与故障排查提供一个安静、清晰的桌面工作区：集中整理连接，在独立标签中编写 SQL，以流式结果表格查看数据，离线分析 MySQL Binlog 事务，并通过受控的本机 MCP 服务让 AI 工具读取数据库结构和分析日志。
+Pipa 是面向 macOS 的本地优先数据库工作台，覆盖 MySQL、Redis 日常操作，并提供受控的本机 MCP 接入与离线 MySQL Binlog 分析。
 
 应用不依赖 Pipa 自建云端服务。它只会访问用户明确配置的数据库、本机回环地址上的 MCP 服务，以及用于检查和下载软件更新的 GitHub Releases；Monaco 编辑器等运行时代码均随应用本地打包。
 
-## 当前能力
+## MCP：AI 可读，写入需确认
 
-- 创建、测试、重命名和整理 MySQL、Redis 连接。
-- 在绑定 MySQL 连接的查询标签中编写与执行 SQL。
-- 离线导入一份或多份 MySQL Binlog，按事务查看 GTID/XID、表影响与 Before/After 行镜像，并按库、表和操作类型过滤。
-- 为具备完整行镜像的已提交事务生成 review-first Reset SQL；无法安全还原的变更会明确跳过。
-- 浏览 Redis 数据库与键，在不同 DB 之间切换，并执行 Redis 原生命令。
-- 查看 String、Hash、List、Set、Sorted Set、Stream 与 RedisJSON 等键详情。
+Pipa 内置仅监听 `127.0.0.1` 的 Streamable HTTP MCP 服务，让本机 AI 工具读取 MySQL 连接、表结构和数据，也能直接分析 Binlog。
+
+- 只读 SQL 通过安全策略后执行，最多返回 200 行；写入和 DDL 只进入待确认队列。
+- Bearer Token、连接作用域和本机回环监听共同限制访问范围。
+- 打开 MCP 控制台即可复制 URL、Token 或 Cursor 配置。
+
+完整配置、工具参数和安全策略见 [MCP 接入指南](docs/MCP_CONNECTION_GUIDE.md)。
+
+## Binlog：离线还原事务现场
+
+无需连接原数据库，即可导入一份或多份 MySQL Binlog，在本机完成分析。
+
+- 按事务查看 GTID/XID、提交状态、涉及库表与 Before/After 行镜像，并按库、表和操作类型过滤。
+- 检查 CRC32、截断和兼容性诊断；MCP 还支持本机路径或 Base64 文件。
+- 为可安全还原的已提交事务生成 review-first Reset SQL；结果不会自动执行，无法可靠还原的变更会明确跳过。
+
+## 日常数据库能力
+
+### MySQL 与 SQL 工作区
+
+- 创建、测试、重命名和整理连接，在独立标签中编写与执行 SQL。
 - 执行选中 SQL 或光标所在语句，并可取消运行中的查询。
 - 流式展示查询结果，保留大整数和精确小数的原始语义。
-- 在工作区之间切换时保留本次运行内的编辑器与查询结果状态。
 - 结果区支持区域选择、搜索、排序、列宽调整，以及 CSV、TSV、JSON、Markdown、SQL INSERT 与 IN 列表导出。
-- 通过 MCP 控制台向本机 AI 工具提供带连接作用域的数据库访问。
-- 重启后恢复未保存的 SQL 与标签上下文；查询结果不会被永久保存。
-- 跟随系统或手动切换亮色、暗色外观。
+- 在工作区之间切换时保留本次运行内的编辑器与查询结果状态；重启后恢复未保存的 SQL 与标签上下文，但不会永久保存查询结果。
+
+### Redis 工作区
+
+- 创建、测试和整理 Redis 连接，在不同 DB 之间切换并浏览键。
+- 查看 String、Hash、List、Set、Sorted Set、Stream 与 RedisJSON 等键详情。
+- 在命令工作区执行 Redis 原生命令。
+
+应用支持跟随系统或手动切换亮色、暗色外观。
 
 ## 数据库支持
 
@@ -62,16 +86,6 @@ Pipa 为日常数据库查询与故障排查提供一个安静、清晰的桌面
 下载后打开 DMG，将 Pipa 拖入“应用程序”文件夹即可。历史版本与更新说明可在 [Releases](https://github.com/AlasicPlat/pipa/releases) 查看。
 
 新版本通过 GitHub Releases 发布。Pipa 会在应用内检查 `latest.json`，只安装由项目 updater 私钥签名且能通过内置公钥验证的更新包；Apple Developer ID 签名与公证则负责 macOS 安装和系统信任。两套签名相互独立，任何一套私钥都不会进入本仓库。
-
-## MCP 集成
-
-- MCP 服务只监听本机回环地址，使用 Bearer Token 鉴权，可在控制台启停或轮换 Token。
-- 可向 MCP 开放全部已保存连接，或只指定一个目标连接；开启限制后，其他连接 ID 会被后端拒绝。
-- 当前支持 MySQL 表列表、表结构和受 SQL 策略保护的只读查询。
-- Binlog 工具无需数据库连接，可导入本机路径或 Base64 文件并查询摘要、事务时间线、行镜像与 Reset SQL。
-- DML/DDL 不会由 MCP 直接执行，只会进入 Pipa 待确认队列。
-
-完整接入方式和安全边界见 [MCP 接入指南](docs/MCP_CONNECTION_GUIDE.md)。
 
 ## 本地数据与安全边界
 

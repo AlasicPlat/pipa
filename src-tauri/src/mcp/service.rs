@@ -27,12 +27,12 @@ use super::{
 };
 
 /// Runtime MCP connection visibility and authorization boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct McpConnectionScope {
-    /// Whether tools may access only the selected target connection.
+    /// Whether tools may access only the selected target connections.
     pub restrict_to_connection: bool,
-    /// Connection retained as the target even while restriction is disabled.
-    pub target_connection_id: Option<Uuid>,
+    /// Connections retained as targets even while restriction is disabled.
+    pub target_connection_ids: Vec<Uuid>,
 }
 
 impl McpConnectionScope {
@@ -40,13 +40,13 @@ impl McpConnectionScope {
     pub fn from_settings(settings: &McpSettings) -> Self {
         Self {
             restrict_to_connection: settings.restrict_to_connection,
-            target_connection_id: settings.target_connection_id,
+            target_connection_ids: settings.target_connection_ids.clone(),
         }
     }
 
     /// Returns whether one saved connection is available to MCP tools.
-    pub fn allows(self, connection_id: Uuid) -> bool {
-        !self.restrict_to_connection || self.target_connection_id == Some(connection_id)
+    pub fn allows(&self, connection_id: Uuid) -> bool {
+        !self.restrict_to_connection || self.target_connection_ids.contains(&connection_id)
     }
 }
 
@@ -456,19 +456,19 @@ impl PipaMcpService {
             .local_store
             .list_connections()
             .map_err(|error| tool_error(error.message))?;
-        let scope = *self.deps.connection_scope.read().await;
+        let scope = self.deps.connection_scope.read().await;
         if !scope.restrict_to_connection {
             return Ok(profiles);
         }
         Ok(profiles
             .into_iter()
-            .filter(|profile| scope.target_connection_id == Some(profile.id))
+            .filter(|profile| scope.allows(profile.id))
             .collect())
     }
 
     /// Loads one MySQL profile only when it is inside the current MCP scope.
     async fn require_mysql(&self, connection_id: Uuid) -> Result<ConnectionProfile, McpError> {
-        let scope = *self.deps.connection_scope.read().await;
+        let scope = self.deps.connection_scope.read().await;
         if !scope.allows(connection_id) {
             return Err(tool_error(
                 "Database connection is outside the configured MCP scope",
@@ -611,25 +611,36 @@ mod tests {
             .is_some());
     }
 
-    /// Verifies restricted mode lists and authorizes only the selected target.
+    /// Verifies restricted mode lists and authorizes every selected target.
     #[tokio::test]
     async fn restricted_scope_hides_and_rejects_other_connections() {
-        let selected = profile("Selected", Engine::MySql);
+        let selected = profile("Selected A", Engine::MySql);
+        let also_selected = profile("Selected B", Engine::MySql);
         let other = profile("Other", Engine::MySql);
         let settings = McpSettings {
             restrict_to_connection: true,
-            target_connection_id: Some(selected.id),
+            target_connection_ids: vec![selected.id, also_selected.id],
             ..McpSettings::default()
         };
-        let (_directory, service) = test_service(&[selected.clone(), other.clone()], &settings);
+        let (_directory, service) = test_service(
+            &[selected.clone(), also_selected.clone(), other.clone()],
+            &settings,
+        );
 
         let profiles = service.available_connections().await.unwrap();
 
-        assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].id, selected.id);
+        assert_eq!(profiles.len(), 2);
+        assert!(profiles.iter().any(|profile| profile.id == selected.id));
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.id == also_selected.id));
         assert_eq!(
             service.require_mysql(selected.id).await.unwrap().id,
             selected.id
+        );
+        assert_eq!(
+            service.require_mysql(also_selected.id).await.unwrap().id,
+            also_selected.id
         );
         let error = service.require_mysql(other.id).await.unwrap_err();
         assert!(error.message.contains("outside the configured MCP scope"));
@@ -646,7 +657,7 @@ mod tests {
             let mut scope = service.deps.connection_scope.write().await;
             *scope = McpConnectionScope {
                 restrict_to_connection: true,
-                target_connection_id: Some(other.id),
+                target_connection_ids: vec![other.id],
             };
         }
 

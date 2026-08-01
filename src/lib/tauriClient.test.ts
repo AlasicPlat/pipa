@@ -114,11 +114,13 @@ async function assertNativeAcceleratorCommand(): Promise<void> {
 async function assertMcpConnectionScopeCommand(): Promise<void> {
   vi.mocked(invoke).mockResolvedValueOnce(EMPTY_MCP_SNAPSHOT);
 
-  await expect(mcpSetConnectionScope(true, PROFILE.id)).resolves.toEqual(EMPTY_MCP_SNAPSHOT);
+  await expect(mcpSetConnectionScope(true, [PROFILE.id, "connection-2"])).resolves.toEqual(
+    EMPTY_MCP_SNAPSHOT,
+  );
 
   expect(invoke).toHaveBeenCalledWith("mcp_set_connection_scope", {
     restrictToConnection: true,
-    targetConnectionId: PROFILE.id,
+    targetConnectionIds: [PROFILE.id, "connection-2"],
   });
 }
 

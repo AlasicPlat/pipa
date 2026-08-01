@@ -4,6 +4,10 @@ import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { McpPanel } from "./McpPanel";
 import { EMPTY_MCP_SNAPSHOT } from "./types";
 
+const mocks = vi.hoisted(() => ({
+  setConnectionScope: vi.fn(),
+}));
+
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => false,
   invoke: vi.fn(),
@@ -24,7 +28,7 @@ vi.mock("./useMcpState", () => ({
       status: {
         ...EMPTY_MCP_SNAPSHOT.status,
         running: true,
-        targetConnectionId: "conn-1",
+        targetConnectionIds: ["conn-1"],
         url: "http://127.0.0.1:3847/mcp",
         token: "abc123",
       },
@@ -59,7 +63,7 @@ vi.mock("./useMcpState", () => ({
     start: vi.fn(),
     stop: vi.fn(),
     setPort: vi.fn(),
-    setConnectionScope: vi.fn(),
+    setConnectionScope: mocks.setConnectionScope,
     regenerateToken: vi.fn(),
     executeProposal: vi.fn(),
     dismissProposal: vi.fn(),
@@ -89,6 +93,7 @@ const REDIS_PROFILE: ConnectionProfile = {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe("McpPanel", () => {
@@ -119,8 +124,12 @@ describe("McpPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("option", { name: "Redis · Local MySQL · 0" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "MySQL · Local MySQL · pipa" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Redis · Local MySQL · 0" }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "MySQL · Local MySQL · pipa" }),
+    ).toBeChecked();
     expect(
       screen.getByRole("option", { name: "MySQL · Local MySQL · pipa · 生产" }),
     ).toBeInTheDocument();
@@ -133,5 +142,19 @@ describe("McpPanel", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("adds another MCP target without replacing the existing selection", () => {
+    render(
+      <McpPanel
+        onClose={() => undefined}
+        open
+        profiles={[PROFILE, REDIS_PROFILE]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Redis · Local MySQL · 0" }));
+
+    expect(mocks.setConnectionScope).toHaveBeenCalledWith(false, ["conn-1", "conn-2"]);
   });
 });

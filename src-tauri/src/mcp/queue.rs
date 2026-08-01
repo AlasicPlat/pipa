@@ -203,7 +203,7 @@ impl McpQueue {
                     enabled: false,
                     port: 3847,
                     restrict_to_connection: false,
-                    target_connection_id: None,
+                    target_connection_ids: Vec::new(),
                     url: None,
                     token: None,
                     last_error: None,

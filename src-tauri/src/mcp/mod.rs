@@ -36,8 +36,8 @@ pub(crate) async fn mcp_get_snapshot(
 /// Starts the MCP HTTP server and persists enabled=true.
 #[tauri::command]
 pub(crate) async fn mcp_start(state: State<'_, AppState>) -> Result<McpPanelSnapshot, AppError> {
-    let scope = *state.mcp_connection_scope.read().await;
-    validate_connection_scope(&state, scope)?;
+    let scope = state.mcp_connection_scope.read().await.clone();
+    validate_connection_scope(&state, &scope)?;
     let port = {
         let guard = state.mcp_server.lock().await;
         guard.port()
@@ -53,22 +53,31 @@ pub(crate) async fn mcp_start(state: State<'_, AppState>) -> Result<McpPanelSnap
     Ok(snapshot)
 }
 
-/// Updates the optional single-connection MCP access boundary without restarting the server.
+/// Updates the optional multi-connection MCP access boundary without restarting the server.
 #[tauri::command]
 pub(crate) async fn mcp_set_connection_scope(
     state: State<'_, AppState>,
     restrict_to_connection: bool,
-    target_connection_id: Option<Uuid>,
+    target_connection_ids: Vec<Uuid>,
 ) -> Result<McpPanelSnapshot, AppError> {
+    let target_connection_ids =
+        target_connection_ids
+            .into_iter()
+            .fold(Vec::new(), |mut unique_ids, connection_id| {
+                if !unique_ids.contains(&connection_id) {
+                    unique_ids.push(connection_id);
+                }
+                unique_ids
+            });
     let scope = McpConnectionScope {
         restrict_to_connection,
-        target_connection_id,
+        target_connection_ids,
     };
-    validate_connection_scope(&state, scope)?;
+    validate_connection_scope(&state, &scope)?;
 
     {
         let mut guard = state.mcp_server.lock().await;
-        guard.set_connection_scope(restrict_to_connection, target_connection_id);
+        guard.set_connection_scope(restrict_to_connection, scope.target_connection_ids.clone());
         state.local_store.save_mcp_settings(guard.settings())?;
     }
     *state.mcp_connection_scope.write().await = scope;
@@ -280,7 +289,7 @@ pub async fn build_snapshot(state: &AppState) -> McpPanelSnapshot {
             enabled: guard.settings().enabled,
             port: guard.port(),
             restrict_to_connection: guard.settings().restrict_to_connection,
-            target_connection_id: guard.settings().target_connection_id,
+            target_connection_ids: guard.settings().target_connection_ids.clone(),
             url: guard.url(),
             token: guard.token().map(str::to_owned),
             last_error: guard.last_error().map(str::to_owned),
@@ -295,17 +304,18 @@ pub fn initial_mcp_settings(store: &pipa_store::LocalStore) -> McpSettings {
 }
 
 /// Validates a configured MCP target while allowing unrestricted mode without a selection.
-fn validate_connection_scope(state: &AppState, scope: McpConnectionScope) -> Result<(), AppError> {
-    if scope.restrict_to_connection && scope.target_connection_id.is_none() {
+fn validate_connection_scope(state: &AppState, scope: &McpConnectionScope) -> Result<(), AppError> {
+    if scope.restrict_to_connection && scope.target_connection_ids.is_empty() {
         return Err(AppError {
             code: AppErrorCode::Validation,
-            message: "Select a connection before enabling MCP connection restriction".into(),
+            message: "Select at least one connection before enabling MCP connection restriction"
+                .into(),
             technical_details: None,
             retryable: false,
         });
     }
-    if let Some(connection_id) = scope.target_connection_id {
-        state.local_store.get_connection(connection_id)?;
+    for connection_id in &scope.target_connection_ids {
+        state.local_store.get_connection(*connection_id)?;
     }
     Ok(())
 }
