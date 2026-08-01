@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ !github.event.forced }}
+    # 仅允许首次创建的新标签发布，避免历史整理时更新旧标签后重复上传资产。
+    if: ${{ github.event.created }}
     name: 构建 ${{ matrix.asset_arch }}
     runs-on: macos-latest
     timeout-minutes: 75
