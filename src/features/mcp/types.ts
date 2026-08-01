@@ -32,7 +32,7 @@ export interface McpStatus {
   enabled: boolean;
   port: number;
   restrictToConnection: boolean;
-  targetConnectionId: string | null;
+  targetConnectionIds: string[];
   url: string | null;
   token: string | null;
   lastError: string | null;
@@ -55,7 +55,7 @@ export const EMPTY_MCP_SNAPSHOT: McpPanelSnapshot = {
     enabled: false,
     port: 3847,
     restrictToConnection: false,
-    targetConnectionId: null,
+    targetConnectionIds: [],
     url: null,
     token: null,
     lastError: null,

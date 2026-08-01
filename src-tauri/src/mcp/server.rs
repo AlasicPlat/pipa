@@ -65,10 +65,10 @@ impl McpServerHandle {
     pub fn set_connection_scope(
         &mut self,
         restrict_to_connection: bool,
-        target_connection_id: Option<Uuid>,
+        target_connection_ids: Vec<Uuid>,
     ) {
         self.settings.restrict_to_connection = restrict_to_connection;
-        self.settings.target_connection_id = target_connection_id;
+        self.settings.target_connection_ids = target_connection_ids;
     }
 
     /// Active bearer token.

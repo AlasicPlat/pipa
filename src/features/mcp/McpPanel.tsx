@@ -58,7 +58,12 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const pending = mcp.snapshot.proposals.filter((item) => item.status === "pending");
   const status = mcp.snapshot.status;
   const effectivePort = portDraft || String(status.port);
-  const targetProfile = profiles.find((profile) => profile.id === status.targetConnectionId);
+  const targetProfiles = profiles.filter((profile) =>
+    status.targetConnectionIds.includes(profile.id)
+  );
+  const unavailableTargetIds = status.targetConnectionIds.filter(
+    (connectionId) => !profiles.some((profile) => profile.id === connectionId),
+  );
 
   if (!open) {
     return null;
@@ -160,19 +165,19 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
                 <strong>是否指定连接</strong>
                 <small>
                   {status.restrictToConnection
-                    ? "MCP 仅能发现和访问当前目标连接。"
-                    : "未指定时，MCP 可发现全部已保存连接。"}
+                    ? `MCP 仅能发现和访问已选中的 ${status.targetConnectionIds.length} 个连接。`
+                    : "关闭时，MCP 可发现全部已保存连接。"}
                 </small>
               </span>
               <label className="mcp-panel__switch">
                 <input
                   aria-label="是否指定 MCP 连接"
                   checked={status.restrictToConnection}
-                  disabled={mcp.busy || !status.targetConnectionId}
+                  disabled={mcp.busy || status.targetConnectionIds.length === 0}
                   onChange={(event) =>
                     void mcp.setConnectionScope(
                       event.target.checked,
-                      status.targetConnectionId,
+                      status.targetConnectionIds,
                     )}
                   role="switch"
                   type="checkbox"
@@ -180,38 +185,71 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
                 <span aria-hidden="true" />
               </label>
             </div>
-            <label className="mcp-panel__field mcp-panel__field--flush">
-              <span>MCP 目标连接</span>
-              <select
+            <div className="mcp-panel__field mcp-panel__field--flush">
+              <span>
+                MCP 目标连接 · 已选 {status.targetConnectionIds.length} 个
+              </span>
+              <div
                 aria-label="MCP 目标连接"
-                disabled={mcp.busy || profiles.length === 0}
-                onChange={(event) =>
-                  void mcp.setConnectionScope(
-                    status.restrictToConnection,
-                    event.target.value || null,
-                  )}
-                value={status.targetConnectionId ?? ""}
+                className="mcp-panel__connection-options"
+                role="group"
               >
-                <option disabled={status.restrictToConnection} value="">
-                  未指定 · 返回全部连接
-                </option>
-                {status.targetConnectionId && !targetProfile ? (
-                  <option value={status.targetConnectionId}>连接已不可用</option>
+                {profiles.length === 0 && unavailableTargetIds.length === 0 ? (
+                  <span className="mcp-panel__connection-empty">暂无已保存连接</span>
                 ) : null}
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {connectionOptionLabel(profile)}
-                  </option>
+                {unavailableTargetIds.map((connectionId) => (
+                  <label className="mcp-panel__connection-option" key={connectionId}>
+                    <input
+                      checked
+                      disabled={mcp.busy}
+                      onChange={() => {
+                        const targetConnectionIds = status.targetConnectionIds.filter(
+                          (targetId) => targetId !== connectionId,
+                        );
+                        void mcp.setConnectionScope(
+                          status.restrictToConnection && targetConnectionIds.length > 0,
+                          targetConnectionIds,
+                        );
+                      }}
+                      type="checkbox"
+                    />
+                    <span>连接已不可用 · {connectionId}</span>
+                  </label>
                 ))}
-              </select>
-            </label>
+                {profiles.map((profile) => {
+                  const checked = status.targetConnectionIds.includes(profile.id);
+                  return (
+                    <label className="mcp-panel__connection-option" key={profile.id}>
+                      <input
+                        checked={checked}
+                        disabled={mcp.busy}
+                        onChange={(event) => {
+                          const targetConnectionIds = event.target.checked
+                            ? [...status.targetConnectionIds, profile.id]
+                            : status.targetConnectionIds.filter(
+                              (connectionId) => connectionId !== profile.id,
+                            );
+                          void mcp.setConnectionScope(
+                            status.restrictToConnection && targetConnectionIds.length > 0,
+                            targetConnectionIds,
+                          );
+                        }}
+                        type="checkbox"
+                      />
+                      <span>{connectionOptionLabel(profile)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
             <p className="mcp-panel__hint">
               <code>list_connections</code> 返回值包含 <code>engine</code> 字段，用于区分
               MySQL、PostgreSQL、MongoDB 和 Redis。
             </p>
-            {targetProfile && targetProfile.engine !== "my_sql" ? (
+            {targetProfiles.some((profile) => profile.engine !== "my_sql") ? (
               <p className="mcp-panel__warning">
-                当前版本的 MCP 表结构与 SQL 查询工具仅支持 MySQL。
+                所选连接中包含非 MySQL 连接；当前版本的 MCP 表结构与 SQL 查询工具仅支持
+                MySQL。
               </p>
             ) : null}
           </div>

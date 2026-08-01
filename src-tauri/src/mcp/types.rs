@@ -85,10 +85,10 @@ pub struct McpStatus {
     pub enabled: bool,
     /// Configured loopback port.
     pub port: u16,
-    /// Whether MCP tools are restricted to one saved connection.
+    /// Whether MCP tools are restricted to selected saved connections.
     pub restrict_to_connection: bool,
-    /// Saved connection selected as the MCP target.
-    pub target_connection_id: Option<Uuid>,
+    /// Saved connections selected as MCP targets.
+    pub target_connection_ids: Vec<Uuid>,
     /// Full MCP endpoint URL when running.
     pub url: Option<String>,
     /// Current bearer token (memory-only; regenerates on start).

@@ -157,19 +157,19 @@ export function mcpSetPort(port: number): Promise<McpPanelSnapshot> {
 }
 
 /**
- * Updates the optional single-connection MCP access boundary.
- * @param restrictToConnection - Whether MCP tools may use only the selected target.
- * @param targetConnectionId - Saved connection retained as the target, or null when unset.
+ * Updates the optional multi-connection MCP access boundary.
+ * @param restrictToConnection - Whether MCP tools may use only the selected targets.
+ * @param targetConnectionIds - Saved connections retained as targets, or an empty list when unset.
  * @returns The refreshed MCP panel snapshot.
  * Side effects: persists encrypted local MCP settings and updates live MCP sessions.
  */
 export function mcpSetConnectionScope(
   restrictToConnection: boolean,
-  targetConnectionId: string | null,
+  targetConnectionIds: string[],
 ): Promise<McpPanelSnapshot> {
   return invoke<McpPanelSnapshot>("mcp_set_connection_scope", {
     restrictToConnection,
-    targetConnectionId,
+    targetConnectionIds,
   });
 }
 

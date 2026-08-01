@@ -26,7 +26,7 @@ export interface UseMcpStateResult {
   setPort: (port: number) => Promise<void>;
   setConnectionScope: (
     restrictToConnection: boolean,
-    targetConnectionId: string | null,
+    targetConnectionIds: string[],
   ) => Promise<void>;
   regenerateToken: () => Promise<void>;
   executeProposal: (proposalId: string) => Promise<void>;
@@ -112,9 +112,9 @@ export function useMcpState(enabled: boolean): UseMcpStateResult {
     start: () => runAction(mcpStart, "无法启动 MCP"),
     stop: () => runAction(mcpStop, "无法停止 MCP"),
     setPort: (port) => runAction(() => mcpSetPort(port), "无法更新 MCP 端口"),
-    setConnectionScope: (restrictToConnection, targetConnectionId) =>
+    setConnectionScope: (restrictToConnection, targetConnectionIds) =>
       runAction(
-        () => mcpSetConnectionScope(restrictToConnection, targetConnectionId),
+        () => mcpSetConnectionScope(restrictToConnection, targetConnectionIds),
         "无法更新 MCP 连接范围",
       ),
     regenerateToken: () => runAction(mcpRegenerateToken, "无法重新生成 Token"),

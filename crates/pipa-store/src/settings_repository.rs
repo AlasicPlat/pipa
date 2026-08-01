@@ -7,6 +7,7 @@ use uuid::Uuid;
 const MCP_ENABLED_KEY: &str = "mcp_enabled";
 const MCP_PORT_KEY: &str = "mcp_port";
 const MCP_RESTRICT_TO_CONNECTION_KEY: &str = "mcp_restrict_to_connection";
+const MCP_TARGET_CONNECTION_IDS_KEY: &str = "mcp_target_connection_ids";
 const MCP_TARGET_CONNECTION_ID_KEY: &str = "mcp_target_connection_id";
 const DEFAULT_MCP_PORT: u16 = 3847;
 
@@ -17,10 +18,10 @@ pub struct McpSettings {
     pub enabled: bool,
     /// Preferred loopback TCP port for the Streamable HTTP server.
     pub port: u16,
-    /// Whether MCP tools are restricted to one saved connection.
+    /// Whether MCP tools are restricted to selected saved connections.
     pub restrict_to_connection: bool,
-    /// Saved connection selected as the MCP target, including while restriction is disabled.
-    pub target_connection_id: Option<Uuid>,
+    /// Saved connections selected as MCP targets, including while restriction is disabled.
+    pub target_connection_ids: Vec<Uuid>,
 }
 
 impl Default for McpSettings {
@@ -29,7 +30,7 @@ impl Default for McpSettings {
             enabled: false,
             port: DEFAULT_MCP_PORT,
             restrict_to_connection: false,
-            target_connection_id: None,
+            target_connection_ids: Vec::new(),
         }
     }
 }
@@ -71,14 +72,19 @@ impl LocalStore {
             .get_setting(MCP_RESTRICT_TO_CONNECTION_KEY)?
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let target_connection_id = self
-            .get_setting(MCP_TARGET_CONNECTION_ID_KEY)?
-            .and_then(|value| Uuid::parse_str(value.trim()).ok());
+        let target_connection_ids = match self.get_setting(MCP_TARGET_CONNECTION_IDS_KEY)? {
+            Some(value) => parse_connection_ids(&value),
+            None => self
+                .get_setting(MCP_TARGET_CONNECTION_ID_KEY)?
+                .and_then(|value| Uuid::parse_str(value.trim()).ok())
+                .into_iter()
+                .collect(),
+        };
         Ok(McpSettings {
             enabled,
             port,
             restrict_to_connection,
-            target_connection_id,
+            target_connection_ids,
         })
     }
 
@@ -96,10 +102,21 @@ impl LocalStore {
             },
         )?;
         self.set_setting(
+            MCP_TARGET_CONNECTION_IDS_KEY,
+            &settings
+                .target_connection_ids
+                .iter()
+                .map(Uuid::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )?;
+        // Keep the legacy key synchronized so older app versions retain one safe target.
+        self.set_setting(
             MCP_TARGET_CONNECTION_ID_KEY,
             &settings
-                .target_connection_id
-                .map(|connection_id| connection_id.to_string())
+                .target_connection_ids
+                .first()
+                .map(Uuid::to_string)
                 .unwrap_or_default(),
         )?;
         Ok(())
@@ -151,6 +168,19 @@ impl LocalStore {
     }
 }
 
+/// Parses the persisted comma-delimited UUID list while preserving order and removing duplicates.
+fn parse_connection_ids(value: &str) -> Vec<Uuid> {
+    value
+        .split(',')
+        .filter_map(|item| Uuid::parse_str(item.trim()).ok())
+        .fold(Vec::new(), |mut connection_ids, connection_id| {
+            if !connection_ids.contains(&connection_id) {
+                connection_ids.push(connection_id);
+            }
+            connection_ids
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::McpSettings;
@@ -168,14 +198,32 @@ mod tests {
     fn mcp_settings_default_and_round_trip() {
         let (_dir, store) = test_store();
         assert_eq!(store.load_mcp_settings().unwrap(), McpSettings::default());
-        let target_connection_id = Uuid::new_v4();
+        let target_connection_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
         let settings = McpSettings {
             enabled: true,
             port: 4099,
             restrict_to_connection: true,
-            target_connection_id: Some(target_connection_id),
+            target_connection_ids,
         };
         store.save_mcp_settings(&settings).unwrap();
         assert_eq!(store.load_mcp_settings().unwrap(), settings);
+    }
+
+    /// Verifies settings saved by the single-target release migrate without losing scope.
+    #[test]
+    fn mcp_settings_loads_legacy_target_connection() {
+        let (_dir, store) = test_store();
+        let target_connection_id = Uuid::new_v4();
+        store
+            .set_setting(
+                super::MCP_TARGET_CONNECTION_ID_KEY,
+                &target_connection_id.to_string(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.load_mcp_settings().unwrap().target_connection_ids,
+            vec![target_connection_id]
+        );
     }
 }
