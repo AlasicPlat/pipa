@@ -20,20 +20,20 @@ export function ConnectionTypePicker({ onCancel, onSelect }: ConnectionTypePicke
         <span>
           <span className="eyebrow">NEW CONNECTION</span>
           <h2 id="connection-type-title">选择数据库类型</h2>
-          <p>连接配置和凭据均只保存在本机。</p>
+          <p>先选引擎，再填写连接信息。配置与凭据只保存在本机。</p>
         </span>
       </header>
       <div className="connection-type-grid">
         <button autoFocus onClick={() => onSelect("my_sql")} type="button">
           <span className="connection-type-grid__icon connection-type-grid__icon--mysql"><Database size={20} /></span>
           <strong>MySQL</strong>
-          <small>SQL 查询、数据编辑、表结构与索引</small>
+          <small>SQL 查询、表编辑、Binlog 与 MCP</small>
           <b>可用</b>
         </button>
         <button onClick={() => onSelect("redis")} type="button">
           <span className="connection-type-grid__icon connection-type-grid__icon--redis"><Zap size={20} /></span>
           <strong>Redis</strong>
-          <small>连接测试与本地凭据保存</small>
+          <small>键浏览、类型查看与原生命令</small>
           <b>可用</b>
         </button>
         <button disabled type="button">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Command as CommandIcon, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Trash2 } from "lucide-react";
+import { AlertTriangle, Command as CommandIcon, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Sparkles, Trash2 } from "lucide-react";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { Engine } from "../bindings/Engine";
 import { BinlogWorkspace } from "../features/binlog/BinlogWorkspace";
@@ -1620,20 +1620,23 @@ export function App() {
               aria-labelledby="workspace-recovery-title"
               role="alert"
             >
+              <span className="connection-overview__glow" aria-hidden="true" />
               <span className="connection-overview__icon" aria-hidden="true">
                 <Database size={24} strokeWidth={1.6} />
               </span>
               <span className="eyebrow">RECOVERY REQUIRED</span>
               <h2 id="workspace-recovery-title">无法恢复上次工作区</h2>
               <p>{queryWorkspace.loadError}</p>
-              <button
-                className="button button--primary"
-                disabled={queryWorkspace.loading}
-                onClick={handleRetryWorkspaceRecovery}
-                type="button"
-              >
-                {queryWorkspace.loading ? "正在恢复…" : "重新恢复"}
-              </button>
+              <div className="connection-overview__actions">
+                <button
+                  className="button button--primary"
+                  disabled={queryWorkspace.loading}
+                  onClick={handleRetryWorkspaceRecovery}
+                  type="button"
+                >
+                  {queryWorkspace.loading ? "正在恢复…" : "重新恢复"}
+                </button>
+              </div>
             </section>
           ) : queryWorkspace.loading && !isBinlogWorkspaceActive ? (
             <p className="panel-status" role="status">
@@ -1744,15 +1747,28 @@ export function App() {
             </section>
           ) : queryWorkspace.activeTab ? (
             <section className="connection-overview" aria-labelledby="connection-overview-title">
+              <span className="connection-overview__glow" aria-hidden="true" />
               <span className="connection-overview__icon" aria-hidden="true">
                 <Database size={24} strokeWidth={1.6} />
               </span>
               <span className="eyebrow">CONNECTION UNAVAILABLE</span>
               <h2 id="connection-overview-title">无法恢复查询连接</h2>
               <p>此标签仍保留原连接标识，不会改绑到当前侧栏连接。</p>
+              <div className="connection-overview__hints">
+                <button onClick={handleAddConnection} type="button">
+                  <Plus size={13} aria-hidden="true" />
+                  添加可用连接
+                </button>
+                <button onClick={openCommandPalette} type="button">
+                  <CommandIcon size={13} aria-hidden="true" />
+                  命令面板
+                  <kbd>{shortcutLabel("commandPalette")}</kbd>
+                </button>
+              </div>
             </section>
           ) : selectedProfile ? (
             <section className="connection-overview" aria-labelledby="connection-overview-title">
+              <span className="connection-overview__glow" aria-hidden="true" />
               <span className="connection-overview__icon" aria-hidden="true">
                 <Database size={24} strokeWidth={1.6} />
               </span>
@@ -1760,22 +1776,115 @@ export function App() {
               <h2 id="connection-overview-title">{selectedProfile.name}</h2>
               <p>
                 {selectedProfile.engine === "redis"
-                  ? "请选择“新建 Redis 工作区”，或展开连接浏览键。"
-                  : "请选择一个 MySQL 连接继续。"}
+                  ? "已选中 Redis 连接。创建命令工作区，或在侧栏展开浏览键。"
+                  : selectedProfile.engine === "my_sql"
+                    ? "已选中 MySQL 连接。创建查询工作区，或展开侧栏打开数据表。"
+                    : "此引擎界面位置已预留，当前请改用 MySQL 或 Redis 连接继续。"}
               </p>
+              {newQueryProfile ? (
+                <div className="connection-overview__actions">
+                  <button className="button button--primary" onClick={handleCreateQuery} type="button">
+                    <Plus size={16} aria-hidden="true" />
+                    {newQueryProfile.engine === "redis" ? "新建 Redis 工作区" : "新建 SQL 查询"}
+                  </button>
+                  <button className="button button--secondary" onClick={openCommandPalette} type="button">
+                    <CommandIcon size={14} aria-hidden="true" />
+                    命令面板
+                    <kbd>{shortcutLabel("commandPalette")}</kbd>
+                  </button>
+                </div>
+              ) : (
+                <div className="connection-overview__actions">
+                  <button className="button button--primary" onClick={handleAddConnection} type="button">
+                    <Plus size={16} aria-hidden="true" />
+                    添加连接
+                  </button>
+                </div>
+              )}
+              {newQueryProfile ? (
+                <ol className="connection-overview__guide">
+                  <li>
+                    <span className="connection-overview__guide-index" aria-hidden="true">1</span>
+                    <span>
+                      <strong>在侧栏展开连接</strong>
+                      <span>
+                        {selectedProfile.engine === "redis"
+                          ? "浏览逻辑库与键，双击键可打开检查工作区。"
+                          : "展开后加载数据表，点击即可进入表工作区。"}
+                      </span>
+                    </span>
+                    <kbd>{shortcutLabel("toggleSidebar")}</kbd>
+                  </li>
+                  <li>
+                    <span className="connection-overview__guide-index" aria-hidden="true">2</span>
+                    <span>
+                      <strong>{selectedProfile.engine === "redis" ? "执行 Redis 命令" : "编写并执行 SQL"}</strong>
+                      <span>在工作区编辑器中运行语句，结果会流式展示在下方。</span>
+                    </span>
+                    <kbd>{shortcutLabel("executeQuery")}</kbd>
+                  </li>
+                </ol>
+              ) : null}
             </section>
           ) : (
             <section className="connection-overview" aria-labelledby="connection-overview-title">
+              <span className="connection-overview__glow" aria-hidden="true" />
               <span className="connection-overview__icon" aria-hidden="true">
-                <Database size={24} strokeWidth={1.6} />
+                <Sparkles size={24} strokeWidth={1.6} />
               </span>
               <span className="eyebrow">GET STARTED</span>
               <h2 id="connection-overview-title">选择或创建一个数据库连接</h2>
-              <p>连接会按数据库引擎独立整理。当前支持 MySQL 与 Redis。</p>
-              <button className="button button--primary" onClick={handleAddConnection} type="button">
-                <Plus size={16} aria-hidden="true" />
-                添加连接
-              </button>
+              <p>连接按引擎整理，凭据仅保存在本机。当前支持 MySQL 与 Redis。</p>
+              <div className="connection-overview__actions">
+                <button className="button button--primary" onClick={handleAddConnection} type="button">
+                  <Plus size={16} aria-hidden="true" />
+                  添加连接
+                </button>
+                <button className="button button--secondary" onClick={openCommandPalette} type="button">
+                  <CommandIcon size={14} aria-hidden="true" />
+                  命令面板
+                  <kbd>{shortcutLabel("commandPalette")}</kbd>
+                </button>
+              </div>
+              <ol className="connection-overview__guide">
+                <li>
+                  <span className="connection-overview__guide-index" aria-hidden="true">1</span>
+                  <span>
+                    <strong>添加本机连接</strong>
+                    <span>选择 MySQL 或 Redis，测试通过后保存到本地加密存储。</span>
+                  </span>
+                </li>
+                <li>
+                  <span className="connection-overview__guide-index" aria-hidden="true">2</span>
+                  <span>
+                    <strong>打开工作区</strong>
+                    <span>新建查询、浏览数据表 / 键，或导入 Binlog 做离线分析。</span>
+                  </span>
+                </li>
+                <li>
+                  <span className="connection-overview__guide-index" aria-hidden="true">3</span>
+                  <span>
+                    <strong>用命令面板加速</strong>
+                    <span>搜索连接、表、工作区与常用操作，无需离开键盘。</span>
+                  </span>
+                  <kbd>{shortcutLabel("commandPalette")}</kbd>
+                </li>
+              </ol>
+              <div className="connection-overview__hints">
+                <button onClick={handleOpenBinlogWorkspace} type="button">
+                  <FileClock size={13} aria-hidden="true" />
+                  Binlog 分析
+                </button>
+                <button onClick={() => setMcpPanelOpen(true)} type="button">
+                  <Server size={13} aria-hidden="true" />
+                  MCP 控制台
+                </button>
+                <button onClick={() => openShortcutDialog("help")} type="button">
+                  <Keyboard size={13} aria-hidden="true" />
+                  快捷键
+                  <kbd>{shortcutLabel("shortcutHelp")}</kbd>
+                </button>
+              </div>
             </section>
           )}
         </div>

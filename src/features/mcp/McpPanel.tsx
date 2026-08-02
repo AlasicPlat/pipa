@@ -1,4 +1,4 @@
-import { Copy, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import type { Engine } from "../../bindings/Engine";
@@ -6,7 +6,7 @@ import type { SqlRisk } from "../../bindings/SqlRisk";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isTauri } from "@tauri-apps/api/core";
 import { useMcpState } from "./useMcpState";
-import type { PendingSqlProposal } from "./types";
+import type { McpActivityEntry, PendingSqlProposal } from "./types";
 import "./mcp.css";
 
 interface McpPanelProps {
@@ -41,11 +41,34 @@ function connectionOptionLabel(profile: ConnectionProfile): string {
 }
 
 /**
+ * Formats an ISO timestamp into a compact local clock for activity rows.
+ * @param iso - Activity entry timestamp from the backend.
+ * @returns Local `HH:MM:SS` text, or the original string when parsing fails.
+ * Side effects: none.
+ */
+function formatActivityTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
  * Main-window MCP console: server controls, pending SQL confirmation, activity, manual SQL.
  */
 export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const mcp = useMcpState(open);
   const [expanded, setExpanded] = useState(false);
+  const [targetsExpanded, setTargetsExpanded] = useState(true);
+  const [expandedActivityIds, setExpandedActivityIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [portDraft, setPortDraft] = useState("");
   const [manualConnectionId, setManualConnectionId] = useState("");
   const [manualSql, setManualSql] = useState("");
@@ -64,6 +87,10 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const unavailableTargetIds = status.targetConnectionIds.filter(
     (connectionId) => !profiles.some((profile) => profile.id === connectionId),
   );
+  const selectedTargetSummary = [
+    ...targetProfiles.map((profile) => connectionOptionLabel(profile)),
+    ...unavailableTargetIds.map((connectionId) => `连接已不可用 · ${connectionId}`),
+  ];
 
   if (!open) {
     return null;
@@ -100,6 +127,19 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
     }
   }
 
+  /** Toggles one activity row without forcing sibling rows open or closed. */
+  function toggleActivityEntry(entryId: string): void {
+    setExpandedActivityIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        next.add(entryId);
+      }
+      return next;
+    });
+  }
+
   return (
     <div
       className={`mcp-panel${expanded ? " mcp-panel--expanded" : ""}`}
@@ -131,15 +171,18 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
       </header>
 
       <div className="mcp-panel__body">
+        <div className="mcp-panel__column mcp-panel__column--primary">
         <section
           className="mcp-panel__section mcp-panel__section--status"
           aria-labelledby="mcp-status-title"
         >
-          <h3 id="mcp-status-title">服务状态</h3>
-          <div className="mcp-panel__status-row">
+          <div className="mcp-panel__section-header">
+            <h3 id="mcp-status-title">服务状态</h3>
             <span className={`mcp-panel__badge ${status.running ? "mcp-panel__badge--on" : ""}`}>
               {status.running ? "运行中" : "已停止"}
             </span>
+          </div>
+          <div className="mcp-panel__status-row">
             <button
               className="button button--primary"
               disabled={mcp.busy}
@@ -157,101 +200,6 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
               <RefreshCw size={14} aria-hidden="true" />
               重新生成 Token
             </button>
-          </div>
-
-          <div className="mcp-panel__scope">
-            <div className="mcp-panel__scope-heading">
-              <span>
-                <strong>是否指定连接</strong>
-                <small>
-                  {status.restrictToConnection
-                    ? `MCP 仅能发现和访问已选中的 ${status.targetConnectionIds.length} 个连接。`
-                    : "关闭时，MCP 可发现全部已保存连接。"}
-                </small>
-              </span>
-              <label className="mcp-panel__switch">
-                <input
-                  aria-label="是否指定 MCP 连接"
-                  checked={status.restrictToConnection}
-                  disabled={mcp.busy || status.targetConnectionIds.length === 0}
-                  onChange={(event) =>
-                    void mcp.setConnectionScope(
-                      event.target.checked,
-                      status.targetConnectionIds,
-                    )}
-                  role="switch"
-                  type="checkbox"
-                />
-                <span aria-hidden="true" />
-              </label>
-            </div>
-            <div className="mcp-panel__field mcp-panel__field--flush">
-              <span>
-                MCP 目标连接 · 已选 {status.targetConnectionIds.length} 个
-              </span>
-              <div
-                aria-label="MCP 目标连接"
-                className="mcp-panel__connection-options"
-                role="group"
-              >
-                {profiles.length === 0 && unavailableTargetIds.length === 0 ? (
-                  <span className="mcp-panel__connection-empty">暂无已保存连接</span>
-                ) : null}
-                {unavailableTargetIds.map((connectionId) => (
-                  <label className="mcp-panel__connection-option" key={connectionId}>
-                    <input
-                      checked
-                      disabled={mcp.busy}
-                      onChange={() => {
-                        const targetConnectionIds = status.targetConnectionIds.filter(
-                          (targetId) => targetId !== connectionId,
-                        );
-                        void mcp.setConnectionScope(
-                          status.restrictToConnection && targetConnectionIds.length > 0,
-                          targetConnectionIds,
-                        );
-                      }}
-                      type="checkbox"
-                    />
-                    <span>连接已不可用 · {connectionId}</span>
-                  </label>
-                ))}
-                {profiles.map((profile) => {
-                  const checked = status.targetConnectionIds.includes(profile.id);
-                  return (
-                    <label className="mcp-panel__connection-option" key={profile.id}>
-                      <input
-                        checked={checked}
-                        disabled={mcp.busy}
-                        onChange={(event) => {
-                          const targetConnectionIds = event.target.checked
-                            ? [...status.targetConnectionIds, profile.id]
-                            : status.targetConnectionIds.filter(
-                              (connectionId) => connectionId !== profile.id,
-                            );
-                          void mcp.setConnectionScope(
-                            status.restrictToConnection && targetConnectionIds.length > 0,
-                            targetConnectionIds,
-                          );
-                        }}
-                        type="checkbox"
-                      />
-                      <span>{connectionOptionLabel(profile)}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-            <p className="mcp-panel__hint">
-              <code>list_connections</code> 返回值包含 <code>engine</code> 字段，用于区分
-              MySQL、PostgreSQL、MongoDB 和 Redis。
-            </p>
-            {targetProfiles.some((profile) => profile.engine !== "my_sql") ? (
-              <p className="mcp-panel__warning">
-                所选连接中包含非 MySQL 连接；当前版本的 MCP 表结构与 SQL 查询工具仅支持
-                MySQL。
-              </p>
-            ) : null}
           </div>
 
           <label className="mcp-panel__field">
@@ -337,10 +285,148 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
         </section>
 
         <section
+          className="mcp-panel__section mcp-panel__section--targets"
+          aria-labelledby="mcp-targets-title"
+        >
+          <div className="mcp-panel__scope-heading">
+            <span>
+              <strong>是否指定连接</strong>
+              <small>
+                {status.restrictToConnection
+                  ? `MCP 仅能发现和访问已选中的 ${status.targetConnectionIds.length} 个连接。`
+                  : "关闭时，MCP 可发现全部已保存连接。"}
+              </small>
+            </span>
+            <label className="mcp-panel__switch">
+              <input
+                aria-label="是否指定 MCP 连接"
+                checked={status.restrictToConnection}
+                disabled={mcp.busy || status.targetConnectionIds.length === 0}
+                onChange={(event) =>
+                  void mcp.setConnectionScope(
+                    event.target.checked,
+                    status.targetConnectionIds,
+                  )}
+                role="switch"
+                type="checkbox"
+              />
+              <span aria-hidden="true" />
+            </label>
+          </div>
+
+          <div className="mcp-panel__disclosure-block">
+            <button
+              aria-controls="mcp-target-connections"
+              aria-expanded={targetsExpanded}
+              className="mcp-panel__disclosure"
+              id="mcp-targets-title"
+              onClick={() => setTargetsExpanded((current) => !current)}
+              type="button"
+            >
+              {targetsExpanded
+                ? <ChevronDown size={15} aria-hidden="true" />
+                : <ChevronRight size={15} aria-hidden="true" />}
+              <span>
+                <strong>MCP 目标连接</strong>
+                <small>已选 {status.targetConnectionIds.length} 个</small>
+              </span>
+            </button>
+            {!targetsExpanded ? (
+              <div className="mcp-panel__collapsed-summary">
+                {selectedTargetSummary.length === 0 ? (
+                  <span className="mcp-panel__collapsed-empty">未选择目标连接</span>
+                ) : (
+                  <ul className="mcp-panel__selected-chips">
+                    {selectedTargetSummary.slice(0, 3).map((label) => (
+                      <li key={label} title={label}>{label}</li>
+                    ))}
+                    {selectedTargetSummary.length > 3 ? (
+                      <li className="mcp-panel__selected-chips-more">
+                        +{selectedTargetSummary.length - 3}
+                      </li>
+                    ) : null}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+            <div
+              aria-label="MCP 目标连接"
+              className="mcp-panel__connection-options"
+              hidden={!targetsExpanded}
+              id="mcp-target-connections"
+              role="group"
+            >
+              {profiles.length === 0 && unavailableTargetIds.length === 0 ? (
+                <span className="mcp-panel__connection-empty">暂无已保存连接</span>
+              ) : null}
+              {unavailableTargetIds.map((connectionId) => (
+                <label className="mcp-panel__connection-option" key={connectionId}>
+                  <input
+                    checked
+                    disabled={mcp.busy}
+                    onChange={() => {
+                      const targetConnectionIds = status.targetConnectionIds.filter(
+                        (targetId) => targetId !== connectionId,
+                      );
+                      void mcp.setConnectionScope(
+                        status.restrictToConnection && targetConnectionIds.length > 0,
+                        targetConnectionIds,
+                      );
+                    }}
+                    type="checkbox"
+                  />
+                  <span>连接已不可用 · {connectionId}</span>
+                </label>
+              ))}
+              {profiles.map((profile) => {
+                const checked = status.targetConnectionIds.includes(profile.id);
+                return (
+                  <label className="mcp-panel__connection-option" key={profile.id}>
+                    <input
+                      checked={checked}
+                      disabled={mcp.busy}
+                      onChange={(event) => {
+                        const targetConnectionIds = event.target.checked
+                          ? [...status.targetConnectionIds, profile.id]
+                          : status.targetConnectionIds.filter(
+                            (connectionId) => connectionId !== profile.id,
+                          );
+                        void mcp.setConnectionScope(
+                          status.restrictToConnection && targetConnectionIds.length > 0,
+                          targetConnectionIds,
+                        );
+                      }}
+                      type="checkbox"
+                    />
+                    <span>{connectionOptionLabel(profile)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <p className="mcp-panel__hint">
+            <code>list_connections</code> 返回值包含 <code>engine</code> 字段，用于区分
+            MySQL、PostgreSQL、MongoDB 和 Redis。
+          </p>
+          {targetProfiles.some((profile) => profile.engine !== "my_sql") ? (
+            <p className="mcp-panel__warning">
+              所选连接中包含非 MySQL 连接；当前版本的 MCP 表结构与 SQL 查询工具仅支持
+              MySQL。
+            </p>
+          ) : null}
+        </section>
+        </div>
+
+        <div className="mcp-panel__column mcp-panel__column--secondary">
+        <section
           className="mcp-panel__section mcp-panel__section--pending"
           aria-labelledby="mcp-pending-title"
         >
-          <h3 id="mcp-pending-title">待确认 SQL ({pending.length})</h3>
+          <div className="mcp-panel__section-header">
+            <h3 id="mcp-pending-title">待确认 SQL</h3>
+            <span className="mcp-panel__count">{pending.length}</span>
+          </div>
           {pending.length === 0 ? (
             <p className="mcp-panel__hint">MCP 提出的 DML/DDL 会显示在这里，确认后才会执行。</p>
           ) : (
@@ -360,10 +446,39 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
         </section>
 
         <section
+          className="mcp-panel__section mcp-panel__section--activity"
+          aria-labelledby="mcp-activity-title"
+        >
+          <div className="mcp-panel__section-header">
+            <h3 id="mcp-activity-title">活动日志</h3>
+            <span className="mcp-panel__count">{mcp.snapshot.activity.length}</span>
+          </div>
+          {mcp.snapshot.activity.length === 0 ? (
+            <p className="mcp-panel__hint">尚无 MCP 活动。</p>
+          ) : (
+            <ul className="mcp-panel__activity">
+              {mcp.snapshot.activity.map((entry) => (
+                <ActivityEntryRow
+                  entry={entry}
+                  expanded={expandedActivityIds.has(entry.id)}
+                  key={entry.id}
+                  onToggle={() => toggleActivityEntry(entry.id)}
+                  profiles={profiles}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+        </div>
+
+        <div className="mcp-panel__column mcp-panel__column--manual">
+        <section
           className="mcp-panel__section mcp-panel__section--manual"
           aria-labelledby="mcp-manual-title"
         >
-          <h3 id="mcp-manual-title">手动 SQL</h3>
+          <div className="mcp-panel__section-header">
+            <h3 id="mcp-manual-title">手动 SQL</h3>
+          </div>
           <p className="mcp-panel__hint">在此可执行 DML/DDL；与工作台相同，不走 MCP 只读限制。</p>
           <label className="mcp-panel__field">
             <span>连接</span>
@@ -399,31 +514,58 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
             执行
           </button>
         </section>
-
-        <section
-          className="mcp-panel__section mcp-panel__section--activity"
-          aria-labelledby="mcp-activity-title"
-        >
-          <h3 id="mcp-activity-title">活动日志</h3>
-          {mcp.snapshot.activity.length === 0 ? (
-            <p className="mcp-panel__hint">尚无 MCP 活动。</p>
-          ) : (
-            <ul className="mcp-panel__activity">
-              {mcp.snapshot.activity.map((entry) => (
-                <li key={entry.id}>
-                  <span className={entry.ok ? "mcp-panel__ok" : "mcp-panel__fail"}>
-                    {entry.ok ? "OK" : "ERR"}
-                  </span>
-                  <strong>{entry.tool}</strong>
-                  <code>{entry.summary}</code>
-                  {entry.detail ? <small>{entry.detail}</small> : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        </div>
       </div>
     </div>
+  );
+}
+
+interface ActivityEntryRowProps {
+  entry: McpActivityEntry;
+  expanded: boolean;
+  onToggle: () => void;
+  profiles: ConnectionProfile[];
+}
+
+/**
+ * Renders one activity log row with a compact summary and optional detail pane.
+ * @param props - Entry data, expand state, toggle handler, and connection labels.
+ * @returns A list item for the MCP activity feed.
+ * Side effects: invokes `onToggle` after explicit button interaction.
+ */
+function ActivityEntryRow({ entry, expanded, onToggle, profiles }: ActivityEntryRowProps) {
+  const connectionName = entry.connectionId
+    ? profiles.find((profile) => profile.id === entry.connectionId)?.name ?? entry.connectionId
+    : null;
+  const detailId = `mcp-activity-detail-${entry.id}`;
+
+  return (
+    <li className={`mcp-panel__activity-item${expanded ? " is-expanded" : ""}${entry.ok ? "" : " is-error"}`}>
+      <button
+        aria-controls={detailId}
+        aria-expanded={expanded}
+        className="mcp-panel__activity-toggle"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className={entry.ok ? "mcp-panel__ok" : "mcp-panel__fail"}>
+          {entry.ok ? "OK" : "ERR"}
+        </span>
+        <span className="mcp-panel__activity-main">
+          <strong>{entry.tool}</strong>
+          <code className={expanded ? undefined : "is-truncated"}>{entry.summary}</code>
+        </span>
+        <time dateTime={entry.createdAt}>{formatActivityTime(entry.createdAt)}</time>
+        {expanded
+          ? <ChevronDown size={14} aria-hidden="true" />
+          : <ChevronRight size={14} aria-hidden="true" />}
+      </button>
+      <div className="mcp-panel__activity-detail" hidden={!expanded} id={detailId}>
+        {connectionName ? <p>连接 · {connectionName}</p> : null}
+        <code>{entry.summary}</code>
+        {entry.detail ? <pre>{entry.detail}</pre> : <small>无额外详情</small>}
+      </div>
+    </li>
   );
 }
 
