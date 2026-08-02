@@ -144,6 +144,53 @@ describe("McpPanel", () => {
     );
   });
 
+  it("collapses and expands the MCP target connection list", () => {
+    render(
+      <McpPanel
+        onClose={() => undefined}
+        open
+        profiles={[PROFILE, REDIS_PROFILE]}
+      />,
+    );
+
+    const disclosure = screen.getByRole("button", { name: /MCP 目标连接/ });
+    const targetGroup = document.getElementById("mcp-target-connections");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(targetGroup).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("checkbox", { name: "MySQL · Local MySQL · pipa" })).toBeVisible();
+
+    fireEvent.click(disclosure);
+
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(targetGroup).toHaveAttribute("hidden");
+    expect(document.querySelector(".mcp-panel__selected-chips")).toHaveTextContent(
+      "MySQL · Local MySQL · pipa",
+    );
+
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(targetGroup).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("checkbox", { name: "MySQL · Local MySQL · pipa" })).toBeVisible();
+  });
+
+  it("expands and collapses individual activity log rows", () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    const rowToggle = screen.getByRole("button", { name: /list_connections/ });
+    const detail = document.getElementById("mcp-activity-detail-act-1");
+    expect(rowToggle).toHaveAttribute("aria-expanded", "false");
+    expect(detail).toHaveAttribute("hidden");
+
+    fireEvent.click(rowToggle);
+    expect(rowToggle).toHaveAttribute("aria-expanded", "true");
+    expect(detail).not.toHaveAttribute("hidden");
+    expect(screen.getByText("无额外详情")).toBeVisible();
+
+    fireEvent.click(rowToggle);
+    expect(rowToggle).toHaveAttribute("aria-expanded", "false");
+    expect(detail).toHaveAttribute("hidden");
+  });
+
   it("adds another MCP target without replacing the existing selection", () => {
     render(
       <McpPanel

@@ -15,9 +15,10 @@
   overflow: hidden;
   padding: 5px;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-md, 8px);
   background: var(--surface-raised);
-  box-shadow: 0 14px 34px color-mix(in srgb, #000000 24%, transparent);
+  box-shadow: var(--shadow-md, 0 14px 34px color-mix(in srgb, #000000 24%, transparent));
+  animation: pipa-overlay-in var(--duration-base, 200ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
 
 .theme-menu__heading {

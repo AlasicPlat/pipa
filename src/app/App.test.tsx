@@ -226,6 +226,20 @@ async function assertNonMySqlSelectionCannotCreateQuery(): Promise<void> {
   expect(screen.getByRole("region", { name: "开发主库 查询工作区" })).toBeVisible();
 }
 
+/** Verifies unsupported engines do not inherit actionable MySQL guidance on the empty screen. */
+async function assertUnsupportedSelectionHidesMySqlGuidance(): Promise<void> {
+  vi.mocked(loadWorkspace).mockResolvedValueOnce([]);
+  render(<App />);
+  const mongodbRow = await screen.findByRole("button", { name: /文档开发库/ });
+
+  fireEvent.click(mongodbRow);
+
+  expect(await screen.findByRole("heading", { name: "文档开发库" })).toBeVisible();
+  expect(screen.getByText(/当前请改用 MySQL 或 Redis 连接继续/)).toBeVisible();
+  expect(screen.queryByText("编写并执行 SQL")).not.toBeInTheDocument();
+  expect(screen.queryByText("展开后加载数据表，点击即可进入表工作区。")).not.toBeInTheDocument();
+}
+
 /** Verifies restore failure is actionable and retry restores the original immutable tab. */
 async function assertRecoveryFailureRequiresSuccessfulRetry(): Promise<void> {
   vi.mocked(loadWorkspace)
@@ -261,7 +275,7 @@ async function assertGlobalAddSupportsRedis(): Promise<void> {
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "添加连接" }));
   expect(screen.getByRole("heading", { name: "选择数据库类型" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: /连接测试与本地凭据保存/ }));
+  fireEvent.click(screen.getByRole("button", { name: /键浏览、类型查看与原生命令/ }));
   expect(screen.getByRole("heading", { name: "添加 Redis 连接" })).toBeVisible();
   expect(screen.getByLabelText("端口")).toHaveValue(6379);
   expect(screen.getByLabelText("默认数据库")).toHaveValue(null);
@@ -837,6 +851,7 @@ function registerAppTests(): void {
   it("keeps a restored tab bound while another sidebar connection is selected", assertRestoredTabConnectionIsImmutable);
   it("creates a selected-connection tab without rebinding restored tabs", assertNewQueryUsesSelectedConnectionWithoutRebinding);
   it("does not create a SQL tab for a non-MySQL selection", assertNonMySqlSelectionCannotCreateQuery);
+  it("hides MySQL guidance for unsupported connection engines", assertUnsupportedSelectionHidesMySqlGuidance);
   it("blocks workspace replacement until an explicit recovery retry succeeds", assertRecoveryFailureRequiresSuccessfulRetry);
   it("adds Redis through the global connection type picker", assertGlobalAddSupportsRedis);
   it("creates a native command workspace for Redis", assertRedisConnectionCreatesCommandWorkspace);
