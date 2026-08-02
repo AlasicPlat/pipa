@@ -1,6 +1,8 @@
 import { FileClock, FileCode2, Plus, Table2, X } from "lucide-react";
+import { type DragEvent } from "react";
 import { getShortcutKeyLabels, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { WorkspaceTab } from "../query/useWorkspacePersistence";
+import { isScreenPointOutsideWindow, type ScreenPoint } from "./detachedWorkspace";
 
 export interface OpenTableTab {
   id: string;
@@ -13,6 +15,12 @@ export interface UtilityWorkspaceTab {
   id: string;
   kind: "binlog";
   title: string;
+}
+
+export interface WorkspaceDetachRequest {
+  kind: "query" | "table";
+  point: ScreenPoint;
+  tabId: string;
 }
 
 interface WorkspaceTabsProps {
@@ -30,6 +38,7 @@ interface WorkspaceTabsProps {
   onCloseTable: (tabId: string) => void;
   onCloseUtility: (tabId: string) => void;
   onCreateQuery: () => void;
+  onDetach?: (request: WorkspaceDetachRequest) => void;
   onSelectQuery: (tabId: string) => void;
   onSelectTable: (tabId: string) => void;
   onSelectUtility: (tabId: string) => void;
@@ -56,6 +65,7 @@ export function WorkspaceTabs({
   onCloseTable,
   onCloseUtility,
   onCreateQuery,
+  onDetach,
   onSelectQuery,
   onSelectTable,
   onSelectUtility,
@@ -64,6 +74,30 @@ export function WorkspaceTabs({
   const closeShortcut = getShortcutKeyLabels(shortcuts.bindings.closeWorkspace).join(" + ");
   const newQueryShortcut = getShortcutKeyLabels(shortcuts.bindings.newQuery).join(" + ");
   const newQueryKind = newQueryEngine === "redis" ? "Redis 工作区" : "SQL 查询";
+
+  /** Starts one native move drag without triggering an expensive workspace rerender. */
+  function handleWorkspaceDragStart(
+    event: DragEvent<HTMLButtonElement>,
+    tabId: string,
+  ): void {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", tabId);
+    event.currentTarget.parentElement?.classList.add("is-dragging");
+  }
+
+  /** Requests detachment only when a native drag ends beyond the current window rectangle. */
+  function handleWorkspaceDragEnd(
+    event: DragEvent<HTMLButtonElement>,
+    kind: WorkspaceDetachRequest["kind"],
+    tabId: string,
+  ): void {
+    event.currentTarget.parentElement?.classList.remove("is-dragging");
+    const point = { x: event.screenX, y: event.screenY };
+    if (onDetach && isScreenPointOutsideWindow(point)) {
+      onDetach({ kind, point, tabId });
+    }
+  }
+
   return (
     <div className="query-tabs-bar">
       <div className="query-tabs" role="tablist" aria-label="工作区标签">
@@ -77,8 +111,12 @@ export function WorkspaceTabs({
                 aria-selected={isActive}
                 className="query-tab__select"
                 disabled={busyQueryTabId !== null && busyQueryTabId !== tab.id}
+                draggable={Boolean(onDetach) && busyQueryTabId === null}
+                onDragEnd={(event) => handleWorkspaceDragEnd(event, "query", tab.id)}
+                onDragStart={(event) => handleWorkspaceDragStart(event, tab.id)}
                 onClick={() => onSelectQuery(tab.id)}
                 role="tab"
+                title={onDetach && busyQueryTabId === null ? "拖出当前窗口以分离工作区" : undefined}
                 type="button"
               >
                 <FileCode2 size={12} aria-hidden="true" />
@@ -108,8 +146,14 @@ export function WorkspaceTabs({
                 className="query-tab__select"
                 data-workspace-tab-id={tab.id}
                 disabled={busyQueryTabId !== null}
+                draggable={Boolean(onDetach) && busyQueryTabId === null && !isDirty}
+                onDragEnd={(event) => handleWorkspaceDragEnd(event, "table", tab.id)}
+                onDragStart={(event) => handleWorkspaceDragStart(event, tab.id)}
                 onClick={() => onSelectTable(tab.id)}
                 role="tab"
+                title={isDirty
+                  ? "请先提交或撤销表修改，再拖出工作区"
+                  : onDetach && busyQueryTabId === null ? "拖出当前窗口以分离工作区" : undefined}
                 type="button"
               >
                 <Table2 size={12} aria-hidden="true" />

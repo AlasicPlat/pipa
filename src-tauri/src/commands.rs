@@ -4,7 +4,10 @@ use pipa_core::{
     AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, Engine, QueryEvent, QueryRequest,
     RecordQueryHistoryInput, SaveConnectionInput,
 };
-use pipa_store::{QueryHistoryEntry, WorkspaceTab as StoredWorkspaceTab};
+use pipa_store::{
+    CommonSql as StoredCommonSql, QueryHistoryEntry, SqlFolder as StoredSqlFolder,
+    SqlLibrary as StoredSqlLibrary, WorkspaceTab as StoredWorkspaceTab,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tauri::{ipc::Channel, State};
@@ -52,6 +55,120 @@ impl From<WorkspaceTabPayload> for StoredWorkspaceTab {
             title: tab.title,
             sql_text: tab.sql_text,
             position: tab.position,
+        }
+    }
+}
+
+/// IPC input for idempotently creating or renaming one engine-scoped SQL directory.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveSqlFolderInput {
+    /// Stable client-generated directory identifier.
+    id: Uuid,
+    /// Database engine that owns the directory.
+    engine: Engine,
+    /// User-visible directory name.
+    name: String,
+}
+
+/// IPC input for idempotently creating or editing one reusable statement.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveCommonSqlInput {
+    /// Stable client-generated statement identifier.
+    id: Uuid,
+    /// Database engine required by the statement.
+    engine: Engine,
+    /// Optional containing directory.
+    folder_id: Option<Uuid>,
+    /// User-visible statement name.
+    name: String,
+    /// Exact reusable SQL or native command text.
+    sql_text: String,
+}
+
+/// Serializable directory returned to the React SQL library.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SqlFolderPayload {
+    /// Stable directory identifier.
+    id: Uuid,
+    /// Database engine that owns the directory.
+    engine: Engine,
+    /// User-visible directory name.
+    name: String,
+    /// UTC timestamp of the latest update.
+    updated_at: String,
+}
+
+/// Serializable reusable statement returned to the React SQL library.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CommonSqlPayload {
+    /// Stable statement identifier.
+    id: Uuid,
+    /// Database engine required by the statement.
+    engine: Engine,
+    /// Optional containing directory.
+    folder_id: Option<Uuid>,
+    /// User-visible statement name.
+    name: String,
+    /// Exact reusable SQL or native command text.
+    sql_text: String,
+    /// UTC timestamp of the latest update.
+    updated_at: String,
+}
+
+/// Complete engine-scoped SQL library returned in one consistent snapshot.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SqlLibraryPayload {
+    /// User-managed directories for the requested engine.
+    folders: Vec<SqlFolderPayload>,
+    /// Reusable statements for the requested engine.
+    entries: Vec<CommonSqlPayload>,
+}
+
+impl From<StoredSqlFolder> for SqlFolderPayload {
+    /// Maps one store-owned directory to its non-secret IPC representation.
+    fn from(folder: StoredSqlFolder) -> Self {
+        Self {
+            id: folder.id,
+            engine: folder.engine,
+            name: folder.name,
+            updated_at: folder.updated_at,
+        }
+    }
+}
+
+impl From<StoredCommonSql> for CommonSqlPayload {
+    /// Maps one store-owned reusable statement to its IPC representation.
+    fn from(entry: StoredCommonSql) -> Self {
+        Self {
+            id: entry.id,
+            engine: entry.engine,
+            folder_id: entry.folder_id,
+            name: entry.name,
+            sql_text: entry.sql_text,
+            updated_at: entry.updated_at,
+        }
+    }
+}
+
+impl From<StoredSqlLibrary> for SqlLibraryPayload {
+    /// Maps one atomic store snapshot into its frontend collection shape.
+    fn from(library: StoredSqlLibrary) -> Self {
+        Self {
+            folders: library
+                .folders
+                .into_iter()
+                .map(SqlFolderPayload::from)
+                .collect(),
+            entries: library
+                .entries
+                .into_iter()
+                .map(CommonSqlPayload::from)
+                .collect(),
         }
     }
 }
@@ -151,17 +268,41 @@ pub(crate) async fn cancel_query(
 #[tauri::command]
 pub(crate) fn load_workspace(
     state: State<'_, AppState>,
+    window_label: String,
 ) -> Result<Vec<WorkspaceTabPayload>, AppError> {
-    load_workspace_inner(&state)
+    load_workspace_inner(&state, &window_label)
 }
 
-/// Transactionally replaces all persisted workspace tabs.
+/// Transactionally replaces the persisted workspace tabs owned by one window.
 #[tauri::command]
 pub(crate) fn save_workspace(
     state: State<'_, AppState>,
+    window_label: String,
     tabs: Vec<WorkspaceTabPayload>,
 ) -> Result<(), AppError> {
-    save_workspace_inner(&state, tabs)
+    save_workspace_inner(&state, &window_label, tabs)
+}
+
+/// Atomically transfers one persisted query tab between desktop windows.
+#[tauri::command]
+pub(crate) fn transfer_workspace_tab(
+    state: State<'_, AppState>,
+    tab: WorkspaceTabPayload,
+    source_window_label: String,
+    target_window_label: String,
+) -> Result<(), AppError> {
+    let tab = StoredWorkspaceTab::from(tab);
+    state
+        .local_store
+        .transfer_workspace_tab(&tab, &source_window_label, &target_window_label)
+}
+
+/// Lists detached desktop window labels that still own persisted query tabs.
+#[tauri::command]
+pub(crate) fn list_workspace_window_labels(
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    state.local_store.list_workspace_window_labels()
 }
 
 /// Records one query after its matching streamed execution emits `Started`.
@@ -171,6 +312,48 @@ pub(crate) fn record_query_history(
     input: RecordQueryHistoryInput,
 ) -> Result<(), AppError> {
     record_query_history_inner(&state, input)
+}
+
+/// Loads the reusable SQL collection for exactly one database engine.
+#[tauri::command]
+pub(crate) fn load_sql_library(
+    state: State<'_, AppState>,
+    engine: Engine,
+) -> Result<SqlLibraryPayload, AppError> {
+    load_sql_library_inner(&state, engine)
+}
+
+/// Idempotently creates or renames one common SQL directory.
+#[tauri::command]
+pub(crate) fn save_sql_folder(
+    state: State<'_, AppState>,
+    input: SaveSqlFolderInput,
+) -> Result<SqlFolderPayload, AppError> {
+    save_sql_folder_inner(&state, input)
+}
+
+/// Idempotently deletes a directory and moves its statements to the uncategorized collection.
+#[tauri::command]
+pub(crate) fn delete_sql_folder(
+    state: State<'_, AppState>,
+    folder_id: Uuid,
+) -> Result<(), AppError> {
+    state.local_store.delete_sql_folder(folder_id)
+}
+
+/// Idempotently creates or edits one reusable statement.
+#[tauri::command]
+pub(crate) fn save_common_sql(
+    state: State<'_, AppState>,
+    input: SaveCommonSqlInput,
+) -> Result<CommonSqlPayload, AppError> {
+    save_common_sql_inner(&state, input)
+}
+
+/// Idempotently deletes one reusable statement.
+#[tauri::command]
+pub(crate) fn delete_common_sql(state: State<'_, AppState>, sql_id: Uuid) -> Result<(), AppError> {
+    state.local_store.delete_common_sql(sql_id)
 }
 
 /// Reads all non-secret connection profiles from encrypted local storage.
@@ -400,20 +583,27 @@ async fn cancel_query_inner(state: &AppState, query_id: Uuid) -> Result<(), AppE
 }
 
 /// Loads ordered workspace tabs and maps only their existing store-owned fields.
-fn load_workspace_inner(state: &AppState) -> Result<Vec<WorkspaceTabPayload>, AppError> {
+fn load_workspace_inner(
+    state: &AppState,
+    window_label: &str,
+) -> Result<Vec<WorkspaceTabPayload>, AppError> {
     state
         .local_store
-        .load_workspace()
+        .load_workspace(window_label)
         .map(|tabs| tabs.into_iter().map(WorkspaceTabPayload::from).collect())
 }
 
-/// Replaces workspace tabs after mapping their transport representation to store types.
-fn save_workspace_inner(state: &AppState, tabs: Vec<WorkspaceTabPayload>) -> Result<(), AppError> {
+/// Replaces one window's tabs after mapping their transport representation to store types.
+fn save_workspace_inner(
+    state: &AppState,
+    window_label: &str,
+    tabs: Vec<WorkspaceTabPayload>,
+) -> Result<(), AppError> {
     let tabs = tabs
         .into_iter()
         .map(StoredWorkspaceTab::from)
         .collect::<Vec<_>>();
-    state.local_store.save_workspace(&tabs)
+    state.local_store.save_workspace(window_label, &tabs)
 }
 
 /// Stores a started query with server-owned UTC time and query-id idempotency.
@@ -427,6 +617,78 @@ fn record_query_history_inner(
         sql_text: input.sql,
         executed_at: Utc::now(),
     })
+}
+
+/// Loads and maps one engine-specific common SQL snapshot.
+fn load_sql_library_inner(state: &AppState, engine: Engine) -> Result<SqlLibraryPayload, AppError> {
+    state
+        .local_store
+        .load_sql_library(engine)
+        .map(SqlLibraryPayload::from)
+}
+
+/// Validates and persists one common SQL directory without allowing engine reassignment.
+fn save_sql_folder_inner(
+    state: &AppState,
+    input: SaveSqlFolderInput,
+) -> Result<SqlFolderPayload, AppError> {
+    let name = validated_library_name(input.name, "Directory name")?;
+    state
+        .local_store
+        .save_sql_folder(input.id, input.engine, &name)
+        .map(SqlFolderPayload::from)
+}
+
+/// Validates and persists one reusable statement while preserving its exact SQL text.
+fn save_common_sql_inner(
+    state: &AppState,
+    input: SaveCommonSqlInput,
+) -> Result<CommonSqlPayload, AppError> {
+    let name = validated_library_name(input.name, "Common SQL name")?;
+    if input.sql_text.trim().is_empty() {
+        return Err(library_validation_error("Common SQL cannot be empty"));
+    }
+    if input.sql_text.len() > 1_000_000 {
+        return Err(library_validation_error(
+            "Common SQL cannot be larger than 1 MB",
+        ));
+    }
+    state
+        .local_store
+        .save_common_sql(
+            input.id,
+            input.engine,
+            input.folder_id,
+            &name,
+            &input.sql_text,
+        )
+        .map(CommonSqlPayload::from)
+}
+
+/// Trims and bounds one library label before it reaches encrypted persistence.
+fn validated_library_name(value: String, field: &'static str) -> Result<String, AppError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(library_validation_error(&format!(
+            "{field} cannot be empty"
+        )));
+    }
+    if value.chars().count() > 120 {
+        return Err(library_validation_error(&format!(
+            "{field} cannot be longer than 120 characters"
+        )));
+    }
+    Ok(value.into())
+}
+
+/// Builds one safe validation failure without echoing SQL content.
+fn library_validation_error(message: &str) -> AppError {
+    AppError {
+        code: AppErrorCode::Validation,
+        message: message.into(),
+        technical_details: None,
+        retryable: false,
+    }
 }
 
 /// Forwards ordered query events and removes cancellation state on every exit path.
@@ -462,10 +724,11 @@ async fn forward_query_events(
 mod tests {
     use super::{
         cancel_query_inner, delete_connection_inner, forward_query_events, list_connections_inner,
-        load_workspace_inner, reconnect_connection_inner, record_query_history_inner,
-        rename_connection_inner, run_query_inner, save_mysql_connection_inner,
-        save_redis_connection_inner, save_workspace_inner, test_mysql_connection_inner,
-        WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
+        load_sql_library_inner, load_workspace_inner, reconnect_connection_inner,
+        record_query_history_inner, rename_connection_inner, run_query_inner,
+        save_common_sql_inner, save_mysql_connection_inner, save_redis_connection_inner,
+        save_sql_folder_inner, save_workspace_inner, test_mysql_connection_inner,
+        SaveCommonSqlInput, SaveSqlFolderInput, WorkspaceTabPayload, QUERY_EVENT_CHANNEL_CAPACITY,
     };
     use crate::state::AppState;
     use pipa_core::{
@@ -740,8 +1003,8 @@ mod tests {
             position: 4,
         };
 
-        save_workspace_inner(&state, vec![tab.clone()]).unwrap();
-        let loaded = load_workspace_inner(&state).unwrap();
+        save_workspace_inner(&state, "main", vec![tab.clone()]).unwrap();
+        let loaded = load_workspace_inner(&state, "main").unwrap();
 
         assert_eq!(loaded, vec![tab]);
         assert_eq!(
@@ -754,6 +1017,54 @@ mod tests {
                 "position": 4
             })
         );
+    }
+
+    /// Verifies SQL-library commands trim labels and retain an engine-scoped round trip.
+    #[test]
+    fn sql_library_commands_validate_and_round_trip_inputs() {
+        let (_directory, state) = test_state();
+        let folder_id = Uuid::new_v4();
+        let entry_id = Uuid::new_v4();
+        let folder = save_sql_folder_inner(
+            &state,
+            SaveSqlFolderInput {
+                id: folder_id,
+                engine: Engine::MySql,
+                name: "  Reporting  ".into(),
+            },
+        )
+        .unwrap();
+        let entry = save_common_sql_inner(
+            &state,
+            SaveCommonSqlInput {
+                id: entry_id,
+                engine: Engine::MySql,
+                folder_id: Some(folder_id),
+                name: "  Daily orders  ".into(),
+                sql_text: "SELECT * FROM orders;".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(folder.name, "Reporting");
+        assert_eq!(entry.name, "Daily orders");
+        let snapshot =
+            serde_json::to_value(load_sql_library_inner(&state, Engine::MySql).unwrap()).unwrap();
+        assert_eq!(snapshot["folders"][0]["id"], folder_id.to_string());
+        assert_eq!(snapshot["entries"][0]["folderId"], folder_id.to_string());
+
+        let error = save_common_sql_inner(
+            &state,
+            SaveCommonSqlInput {
+                id: Uuid::new_v4(),
+                engine: Engine::MySql,
+                folder_id: None,
+                name: "Empty".into(),
+                sql_text: " \n ".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error.code, AppErrorCode::Validation));
     }
 
     /// Verifies replaying a Started event records one history row with backend UTC time.

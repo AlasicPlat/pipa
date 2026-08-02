@@ -1,6 +1,6 @@
 use crate::{storage_error, LocalStore};
 use chrono::{DateTime, Utc};
-use pipa_core::AppError;
+use pipa_core::{AppError, AppErrorCode};
 use rusqlite::{params, types::Type, Error as SqlError};
 use std::io;
 use uuid::Uuid;
@@ -34,17 +34,24 @@ pub struct QueryHistoryEntry {
 }
 
 impl LocalStore {
-    /// Replaces all persisted workspace tabs in one transaction.
-    pub fn save_workspace(&self, tabs: &[WorkspaceTab]) -> Result<(), AppError> {
+    /// Replaces one window's persisted workspace tabs in one transaction.
+    pub fn save_workspace(
+        &self,
+        window_label: &str,
+        tabs: &[WorkspaceTab],
+    ) -> Result<(), AppError> {
         let mut connection = self.connection()?;
         let result = (|| -> rusqlite::Result<()> {
             let transaction = connection.transaction()?;
-            transaction.execute("DELETE FROM workspace_tabs", [])?;
+            transaction.execute(
+                "DELETE FROM workspace_tabs WHERE window_label = ?1",
+                [window_label],
+            )?;
             {
                 let mut statement = transaction.prepare(
                     "INSERT INTO workspace_tabs (
-                       id, connection_id, title, sql_text, position
-                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                       id, connection_id, title, sql_text, position, window_label
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 )?;
                 for tab in tabs {
                     statement.execute(params![
@@ -53,6 +60,7 @@ impl LocalStore {
                         tab.title,
                         tab.sql_text,
                         tab.position,
+                        window_label,
                     ])?;
                 }
             }
@@ -68,13 +76,14 @@ impl LocalStore {
         })
     }
 
-    /// Loads workspace tabs in ascending position order.
-    pub fn load_workspace(&self) -> Result<Vec<WorkspaceTab>, AppError> {
+    /// Loads one window's workspace tabs in ascending position order.
+    pub fn load_workspace(&self, window_label: &str) -> Result<Vec<WorkspaceTab>, AppError> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
                 "SELECT id, connection_id, title, sql_text, position
                  FROM workspace_tabs
+                 WHERE window_label = ?1
                  ORDER BY position ASC, id ASC",
             )
             .map_err(|error| {
@@ -85,7 +94,7 @@ impl LocalStore {
                 )
             })?;
         statement
-            .query_map([], |row| {
+            .query_map([window_label], |row| {
                 Ok(WorkspaceTab {
                     id: row.get(0)?,
                     connection_id: row.get(1)?,
@@ -99,6 +108,82 @@ impl LocalStore {
                 storage_error(
                     "Could not load query workspace",
                     "read workspace tabs",
+                    error,
+                )
+            })
+    }
+
+    /// Atomically transfers one query tab between desktop windows.
+    pub fn transfer_workspace_tab(
+        &self,
+        tab: &WorkspaceTab,
+        source_window_label: &str,
+        target_window_label: &str,
+    ) -> Result<(), AppError> {
+        let connection = self.connection()?;
+        let updated = connection
+            .execute(
+                "INSERT INTO workspace_tabs (
+                   id, connection_id, title, sql_text, position, window_label
+                 ) VALUES (?1, ?2, ?3, ?4, 0, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                   connection_id = excluded.connection_id,
+                   title = excluded.title,
+                   sql_text = excluded.sql_text,
+                   position = 0,
+                   window_label = excluded.window_label
+                 WHERE workspace_tabs.window_label = ?6",
+                params![
+                    tab.id,
+                    tab.connection_id,
+                    tab.title,
+                    tab.sql_text,
+                    target_window_label,
+                    source_window_label,
+                ],
+            )
+            .map_err(|error| {
+                storage_error(
+                    "Could not move query workspace",
+                    "transfer workspace tab",
+                    error,
+                )
+            })?;
+        if updated == 0 {
+            return Err(AppError {
+                code: AppErrorCode::NotFound,
+                message: "Query workspace was not found in the source window".into(),
+                technical_details: None,
+                retryable: false,
+            });
+        }
+        Ok(())
+    }
+
+    /// Lists non-main window labels that still own persisted query tabs.
+    pub fn list_workspace_window_labels(&self) -> Result<Vec<String>, AppError> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT DISTINCT window_label
+                 FROM workspace_tabs
+                 WHERE window_label <> 'main'
+                 ORDER BY window_label ASC",
+            )
+            .map_err(|error| {
+                storage_error(
+                    "Could not list detached workspaces",
+                    "prepare detached workspace query",
+                    error,
+                )
+            })?;
+        statement
+            .query_map([], |row| row.get(0))
+            .and_then(Iterator::collect)
+            .map_err(|error| {
+                storage_error(
+                    "Could not list detached workspaces",
+                    "read detached workspace labels",
                     error,
                 )
             })

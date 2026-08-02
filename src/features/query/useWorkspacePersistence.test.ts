@@ -47,6 +47,7 @@ async function assertLoadOnceAndDebounce(): Promise<void> {
   await settleStartupLoad();
 
   expect(loadWorkspace).toHaveBeenCalledTimes(1);
+  expect(loadWorkspace).toHaveBeenCalledWith("main");
   hook.rerender();
   expect(loadWorkspace).toHaveBeenCalledTimes(1);
   expect(hook.result.current.tabs).toEqual([RESTORED_TAB]);
@@ -57,9 +58,37 @@ async function assertLoadOnceAndDebounce(): Promise<void> {
 
   await vi.advanceTimersByTimeAsync(1);
   expect(saveWorkspace).toHaveBeenCalledTimes(1);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 2;" },
   ]);
+}
+
+/** Verifies a detached window loads and saves only under its own stable native label. */
+async function assertDetachedWindowScopesPersistence(): Promise<void> {
+  const hook = renderHook(() => useWorkspacePersistence("workspace-query-1"));
+  await settleStartupLoad();
+
+  expect(loadWorkspace).toHaveBeenCalledWith("workspace-query-1");
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'detached';"));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenLastCalledWith("workspace-query-1", [
+    { ...RESTORED_TAB, sqlText: "SELECT 'detached';" },
+  ]);
+}
+
+/** Verifies an explicitly closed detached window persists an empty recovery snapshot. */
+async function assertDetachedWindowDiscardClearsPersistence(): Promise<void> {
+  const hook = renderHook(() => useWorkspacePersistence("workspace-query-1"));
+  await settleStartupLoad();
+
+  await act(async () => {
+    await hook.result.current.discardWorkspace();
+  });
+  expect(saveWorkspace).toHaveBeenLastCalledWith("workspace-query-1", []);
+
+  act(() => hook.result.current.updateTabSql("tab-1", "SELECT 'stale';"));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(saveWorkspace).toHaveBeenCalledTimes(1);
 }
 
 /** Verifies hidden and unmount lifecycle boundaries flush the newest editor contents. */
@@ -72,7 +101,7 @@ async function assertLifecycleFlushesLatestState(): Promise<void> {
   visibility.mockReturnValue("hidden");
   document.dispatchEvent(new Event("visibilitychange"));
   await act(async () => Promise.resolve());
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'hidden';" },
   ]);
   hiddenHook.unmount();
@@ -84,7 +113,7 @@ async function assertLifecycleFlushesLatestState(): Promise<void> {
   act(() => unmountHook.result.current.updateTabSql("tab-1", "SELECT 'unmount';"));
   unmountHook.unmount();
   await act(async () => Promise.resolve());
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'unmount';" },
   ]);
 }
@@ -109,7 +138,7 @@ async function assertLifecycleFlushesSerializeBehindActiveSave(): Promise<void> 
 
   await act(async () => hiddenFirst.resolve(undefined));
   expect(saveWorkspace).toHaveBeenCalledTimes(2);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'hidden latest';" },
   ]);
   await act(async () => hiddenLatest.resolve(undefined));
@@ -132,7 +161,7 @@ async function assertLifecycleFlushesSerializeBehindActiveSave(): Promise<void> 
 
   await act(async () => unmountFirst.resolve(undefined));
   expect(saveWorkspace).toHaveBeenCalledTimes(2);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'unmount latest';" },
   ]);
   await act(async () => unmountLatest.resolve(undefined));
@@ -160,7 +189,7 @@ async function assertFailurePreservesSafeInMemoryTabs(): Promise<void> {
 
   expect(hook.result.current.tabs[0].sqlText).toBe("SELECT 'kept';");
   expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
-  const serialized = JSON.stringify(vi.mocked(saveWorkspace).mock.calls[0][0]);
+  const serialized = JSON.stringify(vi.mocked(saveWorkspace).mock.calls[0][1]);
   expect(serialized).not.toMatch(/password|rows|error|must-not-save|transient/);
   expect(hook.result.current.retrySave).toEqual(expect.any(Function));
 }
@@ -195,7 +224,7 @@ async function assertSerialLatestWriteAndNewFailure(): Promise<void> {
   await act(async () => obsoleteSuccess.resolve(undefined));
   expect(saveWorkspace).toHaveBeenCalledTimes(3);
   expect(hook.result.current.saveError).toMatch(/编辑内容仍保留/);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'latest';" },
   ]);
 
@@ -225,7 +254,7 @@ async function assertStaleFailureCannotPolluteLatestSuccess(): Promise<void> {
 
   await act(async () => secondSave.resolve(undefined));
   expect(hook.result.current.saveError).toBeNull();
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...RESTORED_TAB, sqlText: "SELECT 'latest';" },
   ]);
 }
@@ -299,7 +328,7 @@ async function assertCloseTabsForConnection(): Promise<void> {
   expect(hook.result.current.tabs).toEqual([{ ...retainedTab, position: 0 }]);
   expect(hook.result.current.activeTabId).toBe(retainedTab.id);
   await vi.advanceTimersByTimeAsync(500);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([{ ...retainedTab, position: 0 }]);
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [{ ...retainedTab, position: 0 }]);
 }
 
 /** Verifies connection renames update generated tab prefixes while preserving custom titles. */
@@ -313,7 +342,7 @@ async function assertRenameConnectionTabTitles(): Promise<void> {
   act(() => hook.result.current.renameConnectionTabTitles("connection-1", "旧连接", "新连接"));
   expect(hook.result.current.tabs.map((tab) => tab.title)).toEqual(["新连接 · 查询 1", "月度报表"]);
   await vi.advanceTimersByTimeAsync(500);
-  expect(saveWorkspace).toHaveBeenLastCalledWith([
+  expect(saveWorkspace).toHaveBeenLastCalledWith("main", [
     { ...generatedTab, title: "新连接 · 查询 1" },
     customTab,
   ]);
@@ -332,6 +361,8 @@ function registerWorkspacePersistenceTests(): void {
     vi.useRealTimers();
   });
   it("loads once and saves only after 500ms", assertLoadOnceAndDebounce);
+  it("isolates detached-window persistence by native label", assertDetachedWindowScopesPersistence);
+  it("clears restart persistence when a detached window is explicitly closed", assertDetachedWindowDiscardClearsPersistence);
   it("flushes the latest SQL when hidden or unmounted", assertLifecycleFlushesLatestState);
   it("serializes hidden and unmount flushes behind an active save", assertLifecycleFlushesSerializeBehindActiveSave);
   it("keeps memory intact and serializes only safe tab fields after failure", assertFailurePreservesSafeInMemoryTabs);

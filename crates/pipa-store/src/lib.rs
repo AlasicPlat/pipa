@@ -4,6 +4,7 @@
 
 mod connection_repository;
 mod settings_repository;
+mod sql_library_repository;
 mod workspace_repository;
 
 use pipa_core::{AppError, AppErrorCode};
@@ -15,6 +16,7 @@ use std::{
 };
 
 pub use settings_repository::McpSettings;
+pub use sql_library_repository::{CommonSql, SqlFolder, SqlLibrary};
 pub use workspace_repository::{QueryHistoryEntry, WorkspaceTab};
 
 /// Encrypted SQLite storage for local application data and database credentials.
@@ -61,7 +63,8 @@ impl LocalStore {
                        connection_id TEXT NOT NULL,
                        title TEXT NOT NULL,
                        sql_text TEXT NOT NULL,
-                       position INTEGER NOT NULL
+                       position INTEGER NOT NULL,
+                       window_label TEXT NOT NULL DEFAULT 'main'
                      );
                      CREATE TABLE IF NOT EXISTS query_history (
                        id TEXT PRIMARY KEY,
@@ -72,9 +75,30 @@ impl LocalStore {
                      CREATE TABLE IF NOT EXISTS app_settings (
                        key TEXT PRIMARY KEY,
                        value TEXT NOT NULL
-                     );",
+                     );
+                     CREATE TABLE IF NOT EXISTS sql_folders (
+                       id TEXT PRIMARY KEY,
+                       engine TEXT NOT NULL,
+                       name TEXT NOT NULL,
+                       updated_at TEXT NOT NULL,
+                       UNIQUE(engine, name COLLATE NOCASE)
+                     );
+                     CREATE TABLE IF NOT EXISTS common_sql (
+                       id TEXT PRIMARY KEY,
+                       engine TEXT NOT NULL,
+                       folder_id TEXT,
+                       name TEXT NOT NULL,
+                       sql_text TEXT NOT NULL,
+                       updated_at TEXT NOT NULL,
+                       FOREIGN KEY(folder_id) REFERENCES sql_folders(id) ON DELETE SET NULL
+                     );
+                     CREATE INDEX IF NOT EXISTS common_sql_engine_index
+                       ON common_sql(engine, updated_at DESC);
+                     CREATE INDEX IF NOT EXISTS common_sql_folder_index
+                       ON common_sql(folder_id);",
                 )
             })
+            .and_then(|_| ensure_workspace_window_scope(&connection))
             .map_err(|error| {
                 storage_error(
                     "Could not open local storage",
@@ -103,6 +127,28 @@ impl LocalStore {
             retryable: false,
         })
     }
+}
+
+/** Adds per-window workspace ownership to databases created before detached windows existed. */
+fn ensure_workspace_window_scope(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(workspace_tabs)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "window_label") {
+        connection.execute(
+            "ALTER TABLE workspace_tabs
+             ADD COLUMN window_label TEXT NOT NULL DEFAULT 'main'",
+            [],
+        )?;
+    }
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS workspace_tabs_window_index
+         ON workspace_tabs(window_label, position)",
+        [],
+    )?;
+    Ok(())
 }
 
 impl fmt::Debug for LocalStore {
@@ -134,6 +180,7 @@ mod tests {
     use super::{LocalStore, QueryHistoryEntry, WorkspaceTab};
     use chrono::{Duration, TimeZone, Utc};
     use pipa_core::{ConnectionProfile, Engine, Environment, TlsMode};
+    use rusqlite::params;
     use secrecy::{ExposeSecret, SecretString};
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -343,7 +390,7 @@ mod tests {
             position: 1,
         };
         store
-            .save_workspace(&[deleted_tab, retained_tab.clone()])
+            .save_workspace("main", &[deleted_tab, retained_tab.clone()])
             .unwrap();
         store
             .record_query_history(&QueryHistoryEntry {
@@ -377,7 +424,7 @@ mod tests {
                 .expose_secret(),
             "retained-password"
         );
-        assert_eq!(store.load_workspace().unwrap(), vec![retained_tab]);
+        assert_eq!(store.load_workspace("main").unwrap(), vec![retained_tab]);
         let history = store.list_query_history(10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].connection_id, retained_profile.id);
@@ -418,9 +465,9 @@ mod tests {
         };
 
         store
-            .save_workspace(&[second.clone(), first.clone()])
+            .save_workspace("main", &[second.clone(), first.clone()])
             .unwrap();
-        assert_eq!(store.load_workspace().unwrap(), vec![first, second]);
+        assert_eq!(store.load_workspace("main").unwrap(), vec![first, second]);
 
         let replacement = WorkspaceTab {
             id: Uuid::new_v4(),
@@ -430,9 +477,9 @@ mod tests {
             position: 0,
         };
         store
-            .save_workspace(std::slice::from_ref(&replacement))
+            .save_workspace("main", std::slice::from_ref(&replacement))
             .unwrap();
-        assert_eq!(store.load_workspace().unwrap(), vec![replacement]);
+        assert_eq!(store.load_workspace("main").unwrap(), vec![replacement]);
     }
 
     /// Verifies a failed replacement rolls back the deletion of existing tabs.
@@ -447,7 +494,7 @@ mod tests {
             position: 0,
         };
         store
-            .save_workspace(std::slice::from_ref(&existing))
+            .save_workspace("main", std::slice::from_ref(&existing))
             .unwrap();
         let duplicate = WorkspaceTab {
             id: Uuid::new_v4(),
@@ -458,9 +505,101 @@ mod tests {
         };
 
         assert!(store
-            .save_workspace(&[duplicate.clone(), duplicate])
+            .save_workspace("main", &[duplicate.clone(), duplicate])
             .is_err());
-        assert_eq!(store.load_workspace().unwrap(), vec![existing]);
+        assert_eq!(store.load_workspace("main").unwrap(), vec![existing]);
+    }
+
+    /// Verifies window-scoped replacement and atomic transfer never overwrite another window.
+    #[test]
+    fn workspace_tabs_are_isolated_and_transfer_between_windows() {
+        let (_directory, store) = test_store("workspace-window-key");
+        let main_tab = WorkspaceTab {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            title: "Main query".into(),
+            sql_text: "SELECT 'main'".into(),
+            position: 0,
+        };
+        let detached_tab = WorkspaceTab {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            title: "Detached query".into(),
+            sql_text: "SELECT 'detached'".into(),
+            position: 0,
+        };
+
+        store
+            .save_workspace("main", &[main_tab.clone(), detached_tab.clone()])
+            .unwrap();
+        store
+            .transfer_workspace_tab(&detached_tab, "main", "workspace-detached")
+            .unwrap();
+        store
+            .save_workspace("main", std::slice::from_ref(&main_tab))
+            .unwrap();
+
+        assert_eq!(store.load_workspace("main").unwrap(), vec![main_tab]);
+        assert_eq!(
+            store.load_workspace("workspace-detached").unwrap(),
+            vec![WorkspaceTab {
+                position: 0,
+                ..detached_tab
+            }]
+        );
+        assert_eq!(
+            store.list_workspace_window_labels().unwrap(),
+            vec!["workspace-detached"]
+        );
+    }
+
+    /// Verifies legacy workspace rows are retained and assigned to the main desktop window.
+    #[test]
+    fn legacy_workspace_schema_migrates_to_main_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("legacy-workspace.db");
+        let tab = WorkspaceTab {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            title: "Legacy query".into(),
+            sql_text: "SELECT 'legacy'".into(),
+            position: 0,
+        };
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        connection.pragma_update(None, "key", "legacy-key").unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE workspace_tabs (
+                   id TEXT PRIMARY KEY,
+                   connection_id TEXT NOT NULL,
+                   title TEXT NOT NULL,
+                   sql_text TEXT NOT NULL,
+                   position INTEGER NOT NULL
+                 );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspace_tabs (id, connection_id, title, sql_text, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    tab.id,
+                    tab.connection_id,
+                    tab.title,
+                    tab.sql_text,
+                    tab.position,
+                ],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = LocalStore::open(database_path, "legacy-key").unwrap();
+
+        assert_eq!(store.load_workspace("main").unwrap(), vec![tab]);
+        assert!(store
+            .load_workspace("workspace-detached")
+            .unwrap()
+            .is_empty());
     }
 
     /// Verifies history is newest-first, honors limit clamping, and retains 1,000 rows.

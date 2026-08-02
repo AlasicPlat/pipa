@@ -36,8 +36,23 @@ import {
   WorkspaceTabs,
   type OpenTableTab,
   type UtilityWorkspaceTab,
+  type WorkspaceDetachRequest,
 } from "../features/workspace/WorkspaceTabs";
-import { deleteConnection, reconnectConnection, renameConnection, setExecuteQueryAccelerator } from "../lib/tauriClient";
+import {
+  createDetachedWorkspaceWindow,
+  MAIN_WORKSPACE_WINDOW_LABEL,
+  readWorkspaceWindowContext,
+  registerDetachedWorkspaceCloseHandler,
+  restoreDetachedQueryWindow,
+} from "../features/workspace/detachedWorkspace";
+import {
+  deleteConnection,
+  listWorkspaceWindowLabels,
+  reconnectConnection,
+  renameConnection,
+  setExecuteQueryAccelerator,
+  transferWorkspaceTab,
+} from "../lib/tauriClient";
 import "./tokens.css";
 import "./app.css";
 
@@ -71,6 +86,42 @@ function getConnectionActionError(error: unknown, fallback: string): string {
  */
 function matchesRunnableEngine(engine: Engine): engine is Extract<Engine, "my_sql" | "redis"> {
   return engine === "my_sql" || engine === "redis";
+}
+
+/** Returns the display/search label for one supported database engine. */
+function connectionEngineLabel(engine: Engine): string {
+  return {
+    my_sql: "MySQL",
+    postgre_sql: "PostgreSQL",
+    mongo_db: "MongoDB",
+    redis: "Redis",
+  }[engine];
+}
+
+/** Returns connection metadata fields shared by global object and workspace search. */
+function connectionSearchTerms(profile: ConnectionProfile | undefined): string[] {
+  if (!profile) return [];
+  const environment = {
+    production: "生产",
+    development: "开发",
+    unspecified: "未指定",
+  }[profile.environment];
+  return [
+    profile.name,
+    connectionEngineLabel(profile.engine),
+    profile.host,
+    `${profile.host}:${profile.port}`,
+    String(profile.port),
+    profile.username,
+    profile.database ?? "",
+    profile.environment,
+    environment,
+  ];
+}
+
+/** Formats the compact connection identity displayed in global search results. */
+function connectionPaletteDetail(profile: ConnectionProfile): string {
+  return `${connectionEngineLabel(profile.engine)} · ${profile.host}:${profile.port}${profile.database ? ` · ${profile.database}` : ""}`;
 }
 
 /**
@@ -134,13 +185,24 @@ function resolveQueryWorkspaceProfile(
  */
 export function App() {
   const connections = useConnections();
-  const queryWorkspace = useWorkspacePersistence();
+  const [workspaceWindowContext] = useState(readWorkspaceWindowContext);
+  const queryWorkspace = useWorkspacePersistence(workspaceWindowContext.windowLabel);
   const theme = useThemePreference();
   const shortcuts = useShortcutSettings();
+  const detachedTableTab = workspaceWindowContext.descriptor?.kind === "table"
+    ? workspaceWindowContext.descriptor
+    : null;
   const [isAddingConnection, setIsAddingConnection] = useState(false);
   const [connectionFormEngine, setConnectionFormEngine] = useState<Extract<Engine, "my_sql" | "redis"> | null>(null);
-  const [openTableTabs, setOpenTableTabs] = useState<OpenTableTab[]>([]);
-  const [activeTableTabId, setActiveTableTabId] = useState<string | null>(null);
+  const [openTableTabs, setOpenTableTabs] = useState<OpenTableTab[]>(() => detachedTableTab
+    ? [{
+      id: detachedTableTab.id,
+      connectionId: detachedTableTab.connectionId,
+      tableName: detachedTableTab.tableName,
+      title: detachedTableTab.title,
+    }]
+    : []);
+  const [activeTableTabId, setActiveTableTabId] = useState<string | null>(detachedTableTab?.id ?? null);
   const [binlogWorkspaceOpen, setBinlogWorkspaceOpen] = useState(false);
   const [activeUtilityTabId, setActiveUtilityTabId] = useState<string | null>(null);
   const [busyQueryTabId, setBusyQueryTabId] = useState<string | null>(null);
@@ -164,8 +226,68 @@ export function App() {
   const [tableCatalog, setTableCatalog] = useState<Record<string, string[]>>({});
   const [selectedRedisDatabases, setSelectedRedisDatabases] = useState<Record<string, string>>({});
   const [recentItemTimestamps, setRecentItemTimestamps] = useState<Record<string, number>>({});
+  const [detachingWorkspaceId, setDetachingWorkspaceId] = useState<string | null>(null);
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const detachedWindowRestoreStartedRef = useRef(false);
+
+  // Only the main window recreates detached labels that still own persisted query tabs.
+  useEffect(() => {
+    if (
+      !isTauri()
+      || workspaceWindowContext.windowLabel !== MAIN_WORKSPACE_WINDOW_LABEL
+      || detachedWindowRestoreStartedRef.current
+    ) {
+      return;
+    }
+    detachedWindowRestoreStartedRef.current = true;
+    void listWorkspaceWindowLabels()
+      .then(async (windowLabels) => {
+        await Promise.all(windowLabels.map(restoreDetachedQueryWindow));
+      })
+      .catch((error: unknown) => {
+        console.error("Pipa detached workspace restore failed", error);
+        setConnectionActionError("部分独立工作窗口无法恢复，请重新拖出对应工作区。");
+      });
+  }, [workspaceWindowContext.windowLabel]);
+
+  // A non-empty detached label drives restart restoration, so manual close must clear it first.
+  useEffect(() => {
+    if (
+      !isTauri()
+      || workspaceWindowContext.windowLabel === MAIN_WORKSPACE_WINDOW_LABEL
+    ) {
+      return;
+    }
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void registerDetachedWorkspaceCloseHandler(
+      queryWorkspace.discardWorkspace,
+      (error: unknown) => {
+        console.error("Pipa detached workspace close failed", error);
+        setConnectionActionError(getConnectionActionError(
+          error,
+          "无法关闭独立工作窗口，请重试。",
+        ));
+      },
+    )
+      .then((registeredUnlisten) => {
+        if (disposed) {
+          registeredUnlisten();
+          return;
+        }
+        unlisten = registeredUnlisten;
+      })
+      .catch((error: unknown) => {
+        console.error("Pipa detached workspace close listener failed", error);
+        setConnectionActionError("无法监听独立工作窗口关闭事件，请重试。");
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryWorkspace.discardWorkspace, workspaceWindowContext.windowLabel]);
+
   const selectedProfile = connections.profiles.find(
     (profile) => profile.id === connections.selectedConnectionId,
   );
@@ -370,8 +492,9 @@ export function App() {
       id: `connection:${profile.id}`,
       type: "connection" as const,
       label: profile.name,
-      detail: `${profile.engine === "my_sql" ? "MySQL" : profile.engine === "redis" ? "Redis" : profile.engine} · ${profile.host}:${profile.port}`,
-      keywords: [profile.database ?? "", profile.username, profile.environment],
+      detail: connectionPaletteDetail(profile),
+      keywords: connectionSearchTerms(profile),
+      connectionId: profile.id,
       lastUsedAt: recentItemTimestamps[`connection:${profile.id}`],
     })),
     ...Object.entries(tableCatalog).flatMap(([connectionId, tableNames]) => {
@@ -380,27 +503,36 @@ export function App() {
         id: `table:${connectionId}:${tableName}`,
         type: "table" as const,
         label: tableName,
-        detail: `${profile.name} · ${profile.database ?? "未指定数据库"}`,
-        keywords: [profile.name, profile.database ?? ""],
+        detail: `${profile.name} · ${profile.host}:${profile.port} · ${profile.database ?? "未指定数据库"}`,
+        keywords: connectionSearchTerms(profile),
+        connectionId,
         lastUsedAt: recentItemTimestamps[`table:${connectionId}:${tableName}`],
       })) : [];
     }),
-    ...queryWorkspace.tabs.map((tab) => ({
-      id: `workspace:query:${tab.id}`,
-      type: "workspace" as const,
-      label: tab.title,
-      detail: connections.profiles.find((profile) => profile.id === tab.connectionId)?.name ?? "连接不可用",
-      keywords: [tab.sqlText.slice(0, 160), "SQL 查询"],
-      lastUsedAt: recentItemTimestamps[`workspace:query:${tab.id}`],
-    })),
-    ...openTableTabs.map((tab) => ({
-      id: `workspace:table:${tab.id}`,
-      type: "workspace" as const,
-      label: tab.title,
-      detail: "表工作区",
-      keywords: [tab.tableName],
-      lastUsedAt: recentItemTimestamps[`workspace:table:${tab.id}`],
-    })),
+    ...queryWorkspace.tabs.map((tab) => {
+      const profile = connections.profiles.find((item) => item.id === tab.connectionId);
+      return {
+        id: `workspace:query:${tab.id}`,
+        type: "workspace" as const,
+        label: tab.title,
+        detail: profile ? `${profile.name} · ${profile.host}:${profile.port}` : "连接不可用",
+        keywords: [tab.sqlText.slice(0, 160), "SQL 查询", ...connectionSearchTerms(profile)],
+        connectionId: tab.connectionId,
+        lastUsedAt: recentItemTimestamps[`workspace:query:${tab.id}`],
+      };
+    }),
+    ...openTableTabs.map((tab) => {
+      const profile = connections.profiles.find((item) => item.id === tab.connectionId);
+      return {
+        id: `workspace:table:${tab.id}`,
+        type: "workspace" as const,
+        label: tab.title,
+        detail: profile ? `${profile.name} · ${profile.host}:${profile.port}` : "表工作区",
+        keywords: [tab.tableName, ...connectionSearchTerms(profile)],
+        connectionId: tab.connectionId,
+        lastUsedAt: recentItemTimestamps[`workspace:table:${tab.id}`],
+      };
+    }),
     ...(binlogWorkspaceOpen ? [{
       id: `workspace:utility:${BINLOG_WORKSPACE_TAB.id}`,
       type: "workspace" as const,
@@ -1052,6 +1184,74 @@ export function App() {
     }
   }
 
+  /** Moves one safe query or table workspace into a newly created native desktop window. */
+  async function handleDetachWorkspace(request: WorkspaceDetachRequest): Promise<void> {
+    if (!isTauri() || detachingWorkspaceId !== null) return;
+    const targetWindowLabel = `workspace-${crypto.randomUUID()}`;
+    setConnectionActionError(null);
+    setDetachingWorkspaceId(request.tabId);
+    if (request.kind === "query") {
+      const tab = queryWorkspace.tabs.find((item) => item.id === request.tabId);
+      if (!tab || busyQueryTabId === tab.id) {
+        setDetachingWorkspaceId(null);
+        return;
+      }
+      let transferred = false;
+      try {
+        await queryWorkspace.retrySave();
+        await transferWorkspaceTab(
+          tab,
+          workspaceWindowContext.windowLabel,
+          targetWindowLabel,
+        );
+        transferred = true;
+        await createDetachedWorkspaceWindow(
+          { kind: "query", id: tab.id, title: tab.title },
+          request.point,
+          targetWindowLabel,
+        );
+        handleCloseQueryTab(tab.id);
+      } catch (error: unknown) {
+        console.error("Pipa query workspace detach failed", error);
+        if (transferred) {
+          try {
+            await transferWorkspaceTab(
+              tab,
+              targetWindowLabel,
+              workspaceWindowContext.windowLabel,
+            );
+          } catch (rollbackError: unknown) {
+            console.error("Pipa query workspace detach rollback failed", rollbackError);
+          }
+        }
+        setConnectionActionError(getConnectionActionError(error, "无法分离查询工作区，请重试。"));
+      } finally {
+        setDetachingWorkspaceId(null);
+      }
+      return;
+    }
+
+    const tableTab = openTableTabs.find((tab) => tab.id === request.tabId);
+    if (!tableTab || dirtyTableTabIds.has(tableTab.id)) {
+      setConnectionActionError("请先提交或撤销表修改，再分离该工作区。");
+      setDetachingWorkspaceId(null);
+      return;
+    }
+    try {
+      await createDetachedWorkspaceWindow(
+        { kind: "table", ...tableTab },
+        request.point,
+        targetWindowLabel,
+      );
+      closeTableImmediately(tableTab.id);
+    } catch (error: unknown) {
+      console.error("Pipa table workspace detach failed", error);
+      setConnectionActionError(getConnectionActionError(error, "无法分离表工作区，请重试。"));
+    } finally {
+      setDetachingWorkspaceId(null);
+    }
+  }
+
   /** Cycles through shared tabs, limiting a busy query to itself and the read-only Binlog workspace. */
   function cycleWorkspaceTabs(reverse: boolean): void {
     const orderedTabs = [
@@ -1453,6 +1653,7 @@ export function App() {
                 onCloseTable={handleCloseTable}
                 onCloseUtility={handleCloseUtilityTab}
                 onCreateQuery={handleCreateQuery}
+                onDetach={isTauri() ? (request) => void handleDetachWorkspace(request) : undefined}
                 onSelectQuery={handleSelectQueryTab}
                 onSelectTable={handleSelectTableTab}
                 onSelectUtility={handleSelectUtilityTab}

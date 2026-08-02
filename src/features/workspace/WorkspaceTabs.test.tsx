@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 
@@ -114,8 +114,61 @@ function assertBusyQueryAllowsUtilitySwitching(): void {
   expect(actions.closeUtility).toHaveBeenCalledWith(UTILITY_TAB.id);
 }
 
+/** Verifies dragging a safe tab beyond the native window requests one detached workspace. */
+function assertDraggingOutsideRequestsDetach(): void {
+  const onDetach = vi.fn();
+  const onSelectQuery = vi.fn();
+  render(
+    <WorkspaceTabs
+      activeQueryTabId={QUERY_TAB.id}
+      activeTableTabId={null}
+      activeUtilityTabId={null}
+      busyQueryTabId={null}
+      dirtyTableTabIds={new Set([TABLE_TAB.id])}
+      newQueryConnectionName="本地开发"
+      onCloseQuery={vi.fn()}
+      onCloseTable={vi.fn()}
+      onCloseUtility={vi.fn()}
+      onCreateQuery={vi.fn()}
+      onDetach={onDetach}
+      onSelectQuery={onSelectQuery}
+      onSelectTable={vi.fn()}
+      onSelectUtility={vi.fn()}
+      queryTabs={[QUERY_TAB]}
+      tableTabs={[TABLE_TAB]}
+      utilityTabs={[]}
+    />,
+  );
+
+  const queryTab = screen.getByRole("tab", { name: QUERY_TAB.title });
+  const tableTab = screen.getByRole("tab", { name: /orders，有未提交修改/ });
+  expect(queryTab).toHaveAttribute("draggable", "true");
+  expect(tableTab).toHaveAttribute("draggable", "false");
+  const setData = vi.fn();
+  fireEvent.dragStart(queryTab, {
+    dataTransfer: { effectAllowed: "none", setData },
+  });
+  expect(setData).toHaveBeenCalledWith("text/plain", QUERY_TAB.id);
+  expect(onSelectQuery).not.toHaveBeenCalled();
+  expect(queryTab.parentElement).toHaveClass("is-dragging");
+  const outsideX = window.screenX + window.outerWidth + 20;
+  const dragEnd = createEvent.dragEnd(queryTab);
+  Object.defineProperties(dragEnd, {
+    screenX: { value: outsideX },
+    screenY: { value: 200 },
+  });
+  fireEvent(queryTab, dragEnd);
+  expect(queryTab.parentElement).not.toHaveClass("is-dragging");
+  expect(onDetach).toHaveBeenCalledWith({
+    kind: "query",
+    point: { x: outsideX, y: 200 },
+    tabId: QUERY_TAB.id,
+  });
+}
+
 describe("WorkspaceTabs", () => {
   afterEach(cleanup);
   it("shares query and table workspace actions", assertSharedWorkspaceActions);
   it("allows utility switching while a query is busy", assertBusyQueryAllowsUtilitySwitching);
+  it("requests detachment when a safe tab is dragged outside", assertDraggingOutsideRequestsDetach);
 });

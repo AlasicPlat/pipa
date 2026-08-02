@@ -1,10 +1,11 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Copy, Download, Play, Search, X } from "lucide-react";
+import { AlertTriangle, Bookmark, Copy, Download, Play, Search, X } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { ResolvedTheme } from "../preferences/theme";
+import { SqlLibraryDialog } from "../sql-library/SqlLibraryDialog";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
 import {
@@ -228,6 +229,7 @@ export function QueryWorkspace({
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [sqlLibraryOpen, setSqlLibraryOpen] = useState(false);
   const [pendingProductionRedisCommand, setPendingProductionRedisCommand] = useState<string | null>(null);
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
   const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
@@ -524,17 +526,27 @@ export function QueryWorkspace({
       <div className={`query-editor-panel${isRedis ? " query-editor-panel--redis" : ""}`}>
         <div className="query-toolbar">
           <span className="query-toolbar__title">{tab.title}</span>
-          <button
-            className="query-run-button"
-            disabled={session.state.running}
-            onClick={handleToolbarExecute}
-            title={`执行选中${isRedis ? "命令" : " SQL 或当前语句"}（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
-            type="button"
-          >
-            <Play size={13} fill="currentColor" aria-hidden="true" />
-            执行
-            <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
-          </button>
+          <span className="query-toolbar__actions">
+            <button
+              className="query-library-button"
+              onClick={() => setSqlLibraryOpen(true)}
+              type="button"
+            >
+              <Bookmark size={13} aria-hidden="true" />
+              常用 SQL
+            </button>
+            <button
+              className="query-run-button"
+              disabled={session.state.running}
+              onClick={handleToolbarExecute}
+              title={`执行选中${isRedis ? "命令" : " SQL 或当前语句"}（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
+              type="button"
+            >
+              <Play size={13} fill="currentColor" aria-hidden="true" />
+              执行
+              <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
+            </button>
+          </span>
         </div>
         {isRedis ? (
           <div className="redis-command-presets" aria-label="Redis 常用命令">
@@ -692,6 +704,15 @@ export function QueryWorkspace({
           <div className="query-results__empty">执行完成</div>
         ) : null}
       </section>
+
+      {sqlLibraryOpen ? (
+        <SqlLibraryDialog
+          currentSql={tab.sqlText}
+          engine={profile.engine}
+          onApply={(sqlText) => onSqlChange(tab.id, sqlText)}
+          onClose={() => setSqlLibraryOpen(false)}
+        />
+      ) : null}
 
       {pendingProductionRedisCommand ? (
         <div className="redis-dialog-backdrop">
