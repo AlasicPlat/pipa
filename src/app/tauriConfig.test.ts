@@ -12,13 +12,14 @@ function assertUsableDefaultWindow(): void {
   expect(window.minHeight).toBeGreaterThanOrEqual(640);
 }
 
-/** Verifies dynamically created workspace windows receive the same scoped desktop capability. */
+/** Verifies dynamically created workspace windows can complete their native lifecycle. */
 function assertDetachedWindowCapability(): void {
   expect(mainCapability.windows).toContain("workspace-*");
   expect(mainCapability.permissions).toContain("core:webview:allow-create-webview-window");
+  expect(mainCapability.permissions).toContain("core:window:allow-destroy");
 }
 
 describe("Tauri window configuration", () => {
   it("keeps default and minimum dimensions usable", assertUsableDefaultWindow);
-  it("allows scoped detached workspace windows", assertDetachedWindowCapability);
+  it("allows the scoped detached workspace lifecycle", assertDetachedWindowCapability);
 });

@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:event:default",
+    "core:window:allow-destroy",
     "core:webview:allow-create-webview-window",
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",
