@@ -4,17 +4,24 @@ import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
 import {
   deleteConnection,
+  deleteCommonSql,
+  deleteSqlFolder,
   getBinlogResetSql,
+  listWorkspaceWindowLabels,
   listConnections,
+  loadSqlLibrary,
   loadWorkspace,
   mcpSetConnectionScope,
   reconnectConnection,
   recordQueryHistory,
   renameConnection,
+  saveCommonSql,
   saveMySqlConnection,
+  saveSqlFolder,
   setExecuteQueryAccelerator,
   saveWorkspace,
   testMySqlConnection,
+  transferWorkspaceTab,
   type WorkspaceTabPayload,
 } from "./tauriClient";
 import { EMPTY_MCP_SNAPSHOT } from "../features/mcp/types";
@@ -90,15 +97,71 @@ async function assertExactWorkspaceCommands(): Promise<void> {
   vi.mocked(invoke)
     .mockResolvedValueOnce(tabs)
     .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(["workspace-query-1"])
     .mockResolvedValueOnce(undefined);
 
-  await expect(loadWorkspace()).resolves.toEqual(tabs);
-  await expect(saveWorkspace(tabs)).resolves.toBeUndefined();
+  await expect(loadWorkspace("main")).resolves.toEqual(tabs);
+  await expect(saveWorkspace("main", tabs)).resolves.toBeUndefined();
+  await expect(
+    transferWorkspaceTab(tabs[0], "main", "workspace-query-1"),
+  ).resolves.toBeUndefined();
+  await expect(listWorkspaceWindowLabels()).resolves.toEqual(["workspace-query-1"]);
   await expect(recordQueryHistory(history)).resolves.toBeUndefined();
 
-  expect(invoke).toHaveBeenNthCalledWith(1, "load_workspace");
-  expect(invoke).toHaveBeenNthCalledWith(2, "save_workspace", { tabs });
-  expect(invoke).toHaveBeenNthCalledWith(3, "record_query_history", { input: history });
+  expect(invoke).toHaveBeenNthCalledWith(1, "load_workspace", { windowLabel: "main" });
+  expect(invoke).toHaveBeenNthCalledWith(2, "save_workspace", { windowLabel: "main", tabs });
+  expect(invoke).toHaveBeenNthCalledWith(3, "transfer_workspace_tab", {
+    tab: tabs[0],
+    sourceWindowLabel: "main",
+    targetWindowLabel: "workspace-query-1",
+  });
+  expect(invoke).toHaveBeenNthCalledWith(4, "list_workspace_window_labels");
+  expect(invoke).toHaveBeenNthCalledWith(5, "record_query_history", { input: history });
+}
+
+/** Verifies exact engine-scoped common SQL persistence commands and envelopes. */
+async function assertExactSqlLibraryCommands(): Promise<void> {
+  const folder = {
+    id: "10000000-0000-4000-8000-000000000001",
+    engine: "my_sql" as const,
+    name: "Reporting",
+    updatedAt: "2026-08-02T08:00:00Z",
+  };
+  const entry = {
+    id: "20000000-0000-4000-8000-000000000001",
+    engine: "my_sql" as const,
+    folderId: folder.id,
+    name: "Daily orders",
+    sqlText: "SELECT * FROM orders;",
+    updatedAt: "2026-08-02T08:01:00Z",
+  };
+  const folderInput = { id: folder.id, engine: folder.engine, name: folder.name };
+  const entryInput = {
+    id: entry.id,
+    engine: entry.engine,
+    folderId: entry.folderId,
+    name: entry.name,
+    sqlText: entry.sqlText,
+  };
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({ folders: [folder], entries: [entry] })
+    .mockResolvedValueOnce(folder)
+    .mockResolvedValueOnce(entry)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(undefined);
+
+  await loadSqlLibrary("my_sql");
+  await saveSqlFolder(folderInput);
+  await saveCommonSql(entryInput);
+  await deleteSqlFolder(folder.id);
+  await deleteCommonSql(entry.id);
+
+  expect(invoke).toHaveBeenNthCalledWith(1, "load_sql_library", { engine: "my_sql" });
+  expect(invoke).toHaveBeenNthCalledWith(2, "save_sql_folder", { input: folderInput });
+  expect(invoke).toHaveBeenNthCalledWith(3, "save_common_sql", { input: entryInput });
+  expect(invoke).toHaveBeenNthCalledWith(4, "delete_sql_folder", { folderId: folder.id });
+  expect(invoke).toHaveBeenNthCalledWith(5, "delete_common_sql", { sqlId: entry.id });
 }
 
 /** Verifies the native query-menu accelerator uses an explicit typed IPC envelope. */
@@ -157,6 +220,7 @@ function registerTauriClientTests(): void {
   beforeEach(() => vi.clearAllMocks());
   it("uses the exact connection command contract", assertExactConnectionCommands);
   it("uses the exact safe workspace command contracts", assertExactWorkspaceCommands);
+  it("uses the exact common SQL library command contracts", assertExactSqlLibraryCommands);
   it("updates the native execute-query accelerator", assertNativeAcceleratorCommand);
   it("updates the MCP connection scope", assertMcpConnectionScopeCommand);
   it("generates Binlog Reset SQL with the active projection", assertBinlogResetSqlCommand);

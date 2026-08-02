@@ -21,6 +21,7 @@ interface WorkspacePersistenceController {
   renameConnectionTabTitles: (connectionId: string, previousName: string, nextName: string) => void;
   selectTab: (tabId: string) => void;
   updateTabSql: (tabId: string, sqlText: string) => void;
+  discardWorkspace: () => Promise<void>;
   retryLoad: () => Promise<void>;
   retrySave: () => Promise<void>;
 }
@@ -54,11 +55,11 @@ function sanitizeWorkspaceTabs(tabs: WorkspaceTabPayload[]): WorkspaceTab[] {
 
 /**
  * Restores ordered tabs and serializes revisioned workspace snapshots after quiet editor periods.
- * Parameters: none.
+ * @param windowLabel - Stable desktop window label used to isolate concurrent snapshots.
  * @returns Ordered tabs, immutable active context, recovery state, and explicit tab/save actions.
  * Side effects: invokes local Tauri commands and queues pending state when hidden or unmounted.
  */
-export function useWorkspacePersistence(): WorkspacePersistenceController {
+export function useWorkspacePersistence(windowLabel = "main"): WorkspacePersistenceController {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +72,8 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
   const queuedSaveRef = useRef<QueuedWorkspaceSave | null>(null);
   const inFlightRevisionRef = useRef<number | null>(null);
   const drainPromiseRef = useRef<Promise<void> | null>(null);
+  const discardPromiseRef = useRef<Promise<void> | null>(null);
+  const discardingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadStartedRef = useRef(false);
   const loadPromiseRef = useRef<Promise<void> | null>(null);
@@ -84,7 +87,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
       queuedSaveRef.current = null;
       inFlightRevisionRef.current = queuedSave.revision;
       try {
-        await saveWorkspace(queuedSave.snapshot);
+        await saveWorkspace(windowLabel, queuedSave.snapshot);
         persistedRevisionRef.current = Math.max(
           persistedRevisionRef.current,
           queuedSave.revision,
@@ -102,7 +105,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
         }
       }
     }
-  }, []);
+  }, [windowLabel]);
 
   /** Starts the one drain loop and restarts it if a request lands during finalization. */
   const beginSaveDrain = useCallback((): Promise<void> => {
@@ -125,6 +128,9 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
 
   /** Queues only the latest dirty revision and never overlaps backend replacements. */
   const flushWorkspace = useCallback((): Promise<void> => {
+    if (discardingRef.current) {
+      return discardPromiseRef.current ?? Promise.resolve();
+    }
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -157,7 +163,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
       setLoading(true);
     }
 
-    const load = loadWorkspace()
+    const load = loadWorkspace(windowLabel)
       .then((restoredTabs) => {
         const safeTabs = sanitizeWorkspaceTabs(restoredTabs);
         tabsRef.current = safeTabs;
@@ -193,12 +199,12 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
       });
     loadPromiseRef.current = load;
     return load;
-  }, []);
+  }, [windowLabel]);
 
   /** Replaces in-memory tabs and schedules the single 500ms persistence boundary. */
   const updateTabs = useCallback(
     (nextTabs: WorkspaceTab[]): void => {
-      if (recoveryBlockedRef.current) {
+      if (recoveryBlockedRef.current || discardingRef.current) {
         return;
       }
       const safeTabs = sanitizeWorkspaceTabs(nextTabs).map((tab, position) => ({
@@ -218,6 +224,46 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
     },
     [flushWorkspace],
   );
+
+  /**
+   * Deletes one detached window's persisted recovery snapshot before native destruction.
+   * @returns A promise that resolves only after earlier saves finish and the empty snapshot is stored.
+   * Side effects: blocks new editor mutations and replaces this window's encrypted snapshot.
+   */
+  const discardWorkspace = useCallback((): Promise<void> => {
+    if (discardPromiseRef.current !== null) {
+      return discardPromiseRef.current;
+    }
+    discardingRef.current = true;
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    queuedSaveRef.current = null;
+
+    const discard = (async (): Promise<void> => {
+      while (drainPromiseRef.current !== null) {
+        await drainPromiseRef.current;
+      }
+      await saveWorkspace(windowLabel, []);
+    })();
+    const trackedDiscard = discard
+      .catch((error: unknown) => {
+        discardingRef.current = false;
+        if (mountedRef.current) {
+          setSaveError(SAVE_ERROR);
+        }
+        void flushWorkspace();
+        throw error;
+      })
+      .finally(() => {
+        if (discardPromiseRef.current === trackedDiscard) {
+          discardPromiseRef.current = null;
+        }
+      });
+    discardPromiseRef.current = trackedDiscard;
+    return trackedDiscard;
+  }, [flushWorkspace, windowLabel]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -383,6 +429,7 @@ export function useWorkspacePersistence(): WorkspacePersistenceController {
     renameConnectionTabTitles,
     selectTab,
     updateTabSql,
+    discardWorkspace,
     retryLoad: restoreWorkspace,
     retrySave: flushWorkspace,
   };

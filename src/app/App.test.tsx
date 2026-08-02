@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CellValue } from "../bindings/CellValue";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
@@ -11,13 +11,43 @@ import {
 import { executeQueryOnce } from "../features/query/executeQueryOnce";
 import {
   deleteConnection,
+  listWorkspaceWindowLabels,
   listConnections,
   loadWorkspace,
   reconnectConnection,
   renameConnection,
   saveWorkspace,
+  setExecuteQueryAccelerator,
+  transferWorkspaceTab,
 } from "../lib/tauriClient";
 import { App } from "./App";
+
+const desktopRuntime = vi.hoisted(() => ({
+  createWindow: vi.fn(),
+  registerClose: vi.fn(),
+  restoreWindow: vi.fn(),
+  tauri: false,
+  windowLabel: "main",
+}));
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tauri-apps/api/core")>(),
+  isTauri: () => desktopRuntime.tauri,
+}));
+
+vi.mock("../features/workspace/detachedWorkspace", () => ({
+  MAIN_WORKSPACE_WINDOW_LABEL: "main",
+  createDetachedWorkspaceWindow: desktopRuntime.createWindow,
+  isScreenPointOutsideWindow: ({ x, y }: { x: number; y: number }) => (
+    x < window.screenX
+    || y < window.screenY
+    || x > window.screenX + window.outerWidth
+    || y > window.screenY + window.outerHeight
+  ),
+  readWorkspaceWindowContext: () => ({ descriptor: null, windowLabel: desktopRuntime.windowLabel }),
+  registerDetachedWorkspaceCloseHandler: desktopRuntime.registerClose,
+  restoreDetachedQueryWindow: desktopRuntime.restoreWindow,
+}));
 
 vi.mock("../features/binlog/BinlogWorkspace", () => ({
   BinlogWorkspace: () => <section aria-label="Binlog 分析工作区">Binlog integration fixture</section>,
@@ -25,6 +55,7 @@ vi.mock("../features/binlog/BinlogWorkspace", () => ({
 
 vi.mock("../lib/tauriClient", () => ({
   deleteConnection: vi.fn(),
+  listWorkspaceWindowLabels: vi.fn(),
   listConnections: vi.fn(),
   loadWorkspace: vi.fn(),
   recordQueryHistory: vi.fn(),
@@ -33,8 +64,10 @@ vi.mock("../lib/tauriClient", () => ({
   saveMySqlConnection: vi.fn(),
   saveRedisConnection: vi.fn(),
   saveWorkspace: vi.fn(),
+  setExecuteQueryAccelerator: vi.fn(),
   testMySqlConnection: vi.fn(),
   testRedisConnection: vi.fn(),
+  transferWorkspaceTab: vi.fn(),
 }));
 
 const clipboardState = vi.hoisted(() => ({ writeText: vi.fn() }));
@@ -433,7 +466,10 @@ async function assertGlobalCommandPalette(): Promise<void> {
   const palette = screen.getByRole("dialog", { name: "快速打开" });
   expect(palette).toBeVisible();
   const search = screen.getByRole("combobox", { name: /搜索连接/ });
-  fireEvent.change(search, { target: { value: "生产主库" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "按连接过滤" }), {
+    target: { value: PRODUCTION_PROFILE.id },
+  });
+  fireEvent.change(search, { target: { value: "mysql.production.internal" } });
   fireEvent.keyDown(search, { key: "Enter" });
   await waitFor(() => expect(document.querySelector(
     `[data-connection-id="${PRODUCTION_PROFILE.id}"]`,
@@ -670,6 +706,75 @@ async function assertSecondaryConnectionActions(): Promise<void> {
   await waitFor(() => expect(reconnectConnection).toHaveBeenCalledWith(PRODUCTION_PROFILE.id));
 }
 
+/** Verifies an idle query dragged outside is transferred before its new native window opens. */
+async function assertQueryWorkspaceDetachesIntoNativeWindow(): Promise<void> {
+  desktopRuntime.tauri = true;
+  render(<App />);
+  const queryTab = await screen.findByRole("tab", { name: "恢复的查询" });
+  const outsideX = window.screenX + window.outerWidth + 40;
+  const dragEnd = createEvent.dragEnd(queryTab);
+  Object.defineProperties(dragEnd, {
+    screenX: { value: outsideX },
+    screenY: { value: 240 },
+  });
+
+  fireEvent(queryTab, dragEnd);
+
+  await waitFor(() => expect(transferWorkspaceTab).toHaveBeenCalledTimes(1));
+  const targetWindowLabel = vi.mocked(transferWorkspaceTab).mock.calls[0][2];
+  expect(transferWorkspaceTab).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "restored-tab", sqlText: "SELECT * FROM inventory;" }),
+    "main",
+    targetWindowLabel,
+  );
+  expect(targetWindowLabel).toMatch(/^workspace-/u);
+  await waitFor(() => expect(desktopRuntime.createWindow).toHaveBeenCalledWith(
+    { kind: "query", id: "restored-tab", title: "恢复的查询" },
+    { x: outsideX, y: 240 },
+    targetWindowLabel,
+  ));
+  await waitFor(() => expect(screen.queryByRole("tab", { name: "恢复的查询" })).not.toBeInTheDocument());
+}
+
+/** Verifies a native-window creation failure transfers the query back and leaves its tab visible. */
+async function assertFailedQueryDetachRollsBack(): Promise<void> {
+  desktopRuntime.tauri = true;
+  desktopRuntime.createWindow.mockRejectedValueOnce(new Error("window creation denied"));
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  render(<App />);
+  const queryTab = await screen.findByRole("tab", { name: "恢复的查询" });
+  const dragEnd = createEvent.dragEnd(queryTab);
+  Object.defineProperties(dragEnd, {
+    screenX: { value: window.screenX + window.outerWidth + 40 },
+    screenY: { value: 260 },
+  });
+
+  fireEvent(queryTab, dragEnd);
+
+  await waitFor(() => expect(transferWorkspaceTab).toHaveBeenCalledTimes(2));
+  const targetWindowLabel = vi.mocked(transferWorkspaceTab).mock.calls[0][2];
+  expect(vi.mocked(transferWorkspaceTab).mock.calls[1]).toEqual([
+    expect.objectContaining({ id: "restored-tab" }),
+    targetWindowLabel,
+    "main",
+  ]);
+  expect(screen.getByRole("tab", { name: "恢复的查询" })).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent("window creation denied");
+}
+
+/** Verifies closing one detached native window removes the snapshot that drives restart restoration. */
+async function assertDetachedWindowCloseClearsRestoreSnapshot(): Promise<void> {
+  desktopRuntime.tauri = true;
+  desktopRuntime.windowLabel = "workspace-query-1";
+  render(<App />);
+
+  await waitFor(() => expect(desktopRuntime.registerClose).toHaveBeenCalledTimes(1));
+  const discardWorkspace = desktopRuntime.registerClose.mock.calls[0]?.[0] as () => Promise<void>;
+  await discardWorkspace();
+
+  expect(saveWorkspace).toHaveBeenCalledWith("workspace-query-1", []);
+}
+
 /**
  * Registers the App smoke tests with Vitest.
  * Parameters: none.
@@ -681,6 +786,11 @@ function registerAppTests(): void {
     window.localStorage.clear();
     reloadShortcutBindings();
     vi.clearAllMocks();
+    desktopRuntime.tauri = false;
+    desktopRuntime.windowLabel = "main";
+    desktopRuntime.createWindow.mockResolvedValue("workspace-test");
+    desktopRuntime.registerClose.mockResolvedValue(() => undefined);
+    desktopRuntime.restoreWindow.mockResolvedValue(undefined);
     querySessionFixture.columns = [];
     querySessionFixture.rows = [];
     querySessionFixture.running = false;
@@ -708,11 +818,14 @@ function registerAppTests(): void {
       affectedRows: 0,
     });
     vi.mocked(deleteConnection).mockResolvedValue(undefined);
+    vi.mocked(listWorkspaceWindowLabels).mockResolvedValue([]);
     vi.mocked(reconnectConnection).mockResolvedValue(undefined);
     vi.mocked(renameConnection).mockImplementation(async (connectionId, name) => ({
       ...(connectionId === PRODUCTION_PROFILE.id ? PRODUCTION_PROFILE : DEVELOPMENT_PROFILE),
       name: name.trim(),
     }));
+    vi.mocked(setExecuteQueryAccelerator).mockResolvedValue(undefined);
+    vi.mocked(transferWorkspaceTab).mockResolvedValue(undefined);
   });
   afterEach(() => {
     cleanup();
@@ -742,6 +855,9 @@ function registerAppTests(): void {
   it("reveals the active connection from the collapsed context chip", assertCollapsedContextBarRevealsConnection);
   it("expands a collapsed sidebar when the palette opens a connection", assertPaletteNavigationExpandsSidebar);
   it("renames, copies, and reconnects from the connection context menu", assertSecondaryConnectionActions);
+  it("moves an idle query into a new native window when dragged outside", assertQueryWorkspaceDetachesIntoNativeWindow);
+  it("rolls a query back when native window creation fails", assertFailedQueryDetachRollsBack);
+  it("removes a detached window from restart recovery when it closes", assertDetachedWindowCloseClearsRestoreSnapshot);
 }
 
 describe("App", registerAppTests);

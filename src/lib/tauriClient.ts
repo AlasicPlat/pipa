@@ -12,6 +12,13 @@ import type {
   BinlogTransactionPage,
 } from "../features/binlog/types";
 import type { McpPanelSnapshot } from "../features/mcp/types";
+import type {
+  CommonSql,
+  SaveCommonSqlInput,
+  SaveSqlFolderInput,
+  SqlFolder,
+  SqlLibrary,
+} from "../features/sql-library/types";
 
 /** Exact non-secret workspace-tab payload shared with the Rust persistence command. */
 export interface WorkspaceTabPayload {
@@ -107,23 +114,42 @@ export function saveRedisConnection(input: SaveConnectionInput): Promise<Connect
 }
 
 /**
- * Loads ordered unsaved query tabs from encrypted local storage.
- * Parameters: none.
+ * Loads ordered unsaved query tabs for one desktop window from encrypted local storage.
+ * @param windowLabel - Stable Tauri window label that owns the tabs.
  * @returns A promise containing only safe workspace fields in display order.
  * Side effects: invokes the Tauri `load_workspace` command.
  */
-export function loadWorkspace(): Promise<WorkspaceTabPayload[]> {
-  return invoke<WorkspaceTabPayload[]>("load_workspace");
+export function loadWorkspace(windowLabel: string): Promise<WorkspaceTabPayload[]> {
+  return invoke<WorkspaceTabPayload[]>("load_workspace", { windowLabel });
 }
 
 /**
- * Transactionally replaces the ordered local workspace snapshot.
+ * Transactionally replaces one desktop window's ordered local workspace snapshot.
+ * @param windowLabel - Stable Tauri window label that owns the tabs.
  * @param tabs - Safe tab identity, immutable connection context, title, SQL, and position.
  * @returns A promise that resolves when encrypted local persistence completes.
  * Side effects: invokes the Tauri `save_workspace` command.
  */
-export function saveWorkspace(tabs: WorkspaceTabPayload[]): Promise<void> {
-  return invoke<void>("save_workspace", { tabs });
+export function saveWorkspace(windowLabel: string, tabs: WorkspaceTabPayload[]): Promise<void> {
+  return invoke<void>("save_workspace", { windowLabel, tabs });
+}
+
+/** Atomically transfers one persisted query tab between desktop windows. */
+export function transferWorkspaceTab(
+  tab: WorkspaceTabPayload,
+  sourceWindowLabel: string,
+  targetWindowLabel: string,
+): Promise<void> {
+  return invoke<void>("transfer_workspace_tab", {
+    tab,
+    sourceWindowLabel,
+    targetWindowLabel,
+  });
+}
+
+/** Lists detached window labels that still own persisted query workspaces. */
+export function listWorkspaceWindowLabels(): Promise<string[]> {
+  return invoke<string[]>("list_workspace_window_labels");
 }
 
 /**
@@ -134,6 +160,56 @@ export function saveWorkspace(tabs: WorkspaceTabPayload[]): Promise<void> {
  */
 export function recordQueryHistory(input: RecordQueryHistoryInput): Promise<void> {
   return invoke<void>("record_query_history", { input });
+}
+
+/**
+ * Loads directories and reusable statements for exactly one database engine.
+ * @param engine - Database type whose isolated collection should be returned.
+ * @returns The consistent directory and statement snapshot for that engine.
+ * Side effects: reads encrypted local persistence through Tauri.
+ */
+export function loadSqlLibrary(engine: ConnectionProfile["engine"]): Promise<SqlLibrary> {
+  return invoke<SqlLibrary>("load_sql_library", { engine });
+}
+
+/**
+ * Idempotently creates or renames one engine-scoped common SQL directory.
+ * @param input - Stable directory identity, immutable engine, and requested name.
+ * @returns The backend-confirmed persisted directory.
+ * Side effects: mutates encrypted local persistence through Tauri.
+ */
+export function saveSqlFolder(input: SaveSqlFolderInput): Promise<SqlFolder> {
+  return invoke<SqlFolder>("save_sql_folder", { input });
+}
+
+/**
+ * Deletes one directory while retaining its statements in the uncategorized collection.
+ * @param folderId - Stable directory identifier to remove.
+ * @returns A promise resolved after the idempotent deletion commits.
+ * Side effects: mutates encrypted local persistence through Tauri.
+ */
+export function deleteSqlFolder(folderId: string): Promise<void> {
+  return invoke<void>("delete_sql_folder", { folderId });
+}
+
+/**
+ * Idempotently creates or edits one reusable SQL statement or native command.
+ * @param input - Stable identity, engine, optional directory, name, and exact text.
+ * @returns The backend-confirmed persisted reusable statement.
+ * Side effects: mutates encrypted local persistence through Tauri.
+ */
+export function saveCommonSql(input: SaveCommonSqlInput): Promise<CommonSql> {
+  return invoke<CommonSql>("save_common_sql", { input });
+}
+
+/**
+ * Idempotently deletes one reusable SQL statement or native command.
+ * @param sqlId - Stable reusable statement identifier to remove.
+ * @returns A promise resolved after the deletion commits.
+ * Side effects: mutates encrypted local persistence through Tauri.
+ */
+export function deleteCommonSql(sqlId: string): Promise<void> {
+  return invoke<void>("delete_common_sql", { sqlId });
 }
 
 /** Loads the current MCP server status, proposals, and activity log. */

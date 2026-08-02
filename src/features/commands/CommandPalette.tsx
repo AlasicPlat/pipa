@@ -8,6 +8,7 @@ export interface CommandPaletteItem {
   label: string;
   detail?: string;
   keywords?: readonly string[];
+  connectionId?: string;
   lastUsedAt?: number;
 }
 
@@ -97,14 +98,24 @@ export function scoreCommandPaletteItem(item: CommandPaletteItem, query: string)
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) return 0;
 
-  const fieldScores = [
-    { score: fuzzyMatchScore(item.label, normalizedQuery), weight: 120 },
-    { score: fuzzyMatchScore(item.detail ?? "", normalizedQuery), weight: 40 },
-    ...item.keywords?.map((keyword) => ({ score: fuzzyMatchScore(keyword, normalizedQuery), weight: 70 })) ?? [],
+  const fields = [
+    { value: item.label, weight: 120 },
+    { value: item.detail ?? "", weight: 40 },
+    ...(item.keywords?.map((keyword) => ({ value: keyword, weight: 70 })) ?? []),
   ];
-  const matches = fieldScores.filter((match): match is { score: number; weight: number } => match.score !== null);
-  if (matches.length === 0) return null;
-  return Math.max(...matches.map((match) => match.score + match.weight));
+  const terms = normalizedQuery.split(/\s+/u);
+  let totalScore = 0;
+  for (const term of terms) {
+    const termScores = fields
+      .map((field) => {
+        const score = fuzzyMatchScore(field.value, term);
+        return score === null ? null : score + field.weight;
+      })
+      .filter((score): score is number => score !== null);
+    if (termScores.length === 0) return null;
+    totalScore += Math.max(...termScores);
+  }
+  return totalScore;
 }
 
 /**
@@ -167,8 +178,19 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
+  const [connectionFilter, setConnectionFilter] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const rankedItems = useMemo(() => rankCommandPaletteItems(items, query), [items, query]);
+  const connectionItems = useMemo(
+    () => items.filter((item) => item.type === "connection" && item.connectionId),
+    [items],
+  );
+  const filteredItems = useMemo(
+    () => connectionFilter
+      ? items.filter((item) => item.connectionId === connectionFilter)
+      : items,
+    [connectionFilter, items],
+  );
+  const rankedItems = useMemo(() => rankCommandPaletteItems(filteredItems, query), [filteredItems, query]);
   const groups = useMemo(() => groupCommandPaletteItems(rankedItems, query), [query, rankedItems]);
   const displayedItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const activeItem = displayedItems[activeIndex];
@@ -176,6 +198,7 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setConnectionFilter("");
     setActiveIndex(0);
     inputRef.current?.focus();
   }, [open]);
@@ -246,6 +269,27 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
           <kbd>Esc</kbd>
         </label>
 
+        {connectionItems.length > 0 ? (
+          <label className="command-palette__connection-filter">
+            <span>连接范围</span>
+            <select
+              aria-label="按连接过滤"
+              onChange={(event) => {
+                setConnectionFilter(event.target.value);
+                setActiveIndex(0);
+              }}
+              value={connectionFilter}
+            >
+              <option value="">全部连接</option>
+              {connectionItems.map((item) => (
+                <option key={item.id} value={item.connectionId}>
+                  {item.label}{item.detail ? ` · ${item.detail}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         <div aria-label="命令面板结果" className="command-palette__results" id={listboxId} role="listbox">
           {groups.map((group) => (
             <section aria-labelledby={`${listboxId}-${group.id}-heading`} key={group.id} role="group">
@@ -279,7 +323,7 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
           {rankedItems.length === 0 ? (
             <p className="command-palette__empty" role="status">
               没有匹配结果
-              <small>尝试输入连接名、表名或操作关键词</small>
+              <small>尝试输入连接名、主机、数据库、表名或操作关键词</small>
             </p>
           ) : null}
         </div>

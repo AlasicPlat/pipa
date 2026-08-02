@@ -97,8 +97,13 @@ pub fn run() {
             if !is_execute_query_menu(event.id().0.as_str()) {
                 return;
             }
-            let Some(window) = app.get_webview_window("main") else {
-                eprintln!("Pipa native execute shortcut could not find the main window");
+            let window = app
+                .webview_windows()
+                .into_values()
+                .find(|window| window.is_focused().unwrap_or(false))
+                .or_else(|| app.get_webview_window("main"));
+            let Some(window) = window else {
+                eprintln!("Pipa native execute shortcut could not find a focused workspace window");
                 return;
             };
             if let Err(error) = window.emit_to(
@@ -161,7 +166,14 @@ pub fn run() {
             commands::cancel_query,
             commands::load_workspace,
             commands::save_workspace,
+            commands::transfer_workspace_tab,
+            commands::list_workspace_window_labels,
             commands::record_query_history,
+            commands::load_sql_library,
+            commands::save_sql_folder,
+            commands::delete_sql_folder,
+            commands::save_common_sql,
+            commands::delete_common_sql,
             binlog_commands::binlog_start_import,
             binlog_commands::binlog_cancel_import,
             binlog_commands::binlog_get_summary,

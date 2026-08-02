@@ -1,6 +1,8 @@
 <div align="center">
   <img src="https://alasicplat.github.io/brand/alasic.png" width="72" height="72" alt="Alasic" />
 
+  <strong>简体中文</strong> · <a href="README_EN.md">English</a>
+
   # Pipa（枇杷）
 
   **不止 SQL：让 AI 受控访问数据库，让 Binlog 变成可读的事务现场。**
@@ -46,6 +48,10 @@ Pipa 内置仅监听 `127.0.0.1` 的 Streamable HTTP MCP 服务，让本机 AI �
 - 为可安全还原的已提交事务生成 review-first Reset SQL；结果不会自动执行，无法可靠还原的变更会明确跳过。
 
 ## 日常数据库能力
+
+- 常用语句按数据库类型而非数据库连接保存，支持目录管理，可在同类型的测试、生产连接间直接复用。
+- 快捷搜索支持按连接信息过滤，重名表也能快速定位到目标环境。
+- 查询与数据表工作区可拖出当前窗口形成独立工作窗口。
 
 ### MySQL 与 SQL 工作区
 

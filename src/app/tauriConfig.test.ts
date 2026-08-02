@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import mainCapability from "../../src-tauri/capabilities/main.json";
 import tauriConfig from "../../src-tauri/tauri.conf.json";
 
 /** Verifies the native window opens above the fixed workspace layout floor. */
@@ -11,6 +12,13 @@ function assertUsableDefaultWindow(): void {
   expect(window.minHeight).toBeGreaterThanOrEqual(640);
 }
 
+/** Verifies dynamically created workspace windows receive the same scoped desktop capability. */
+function assertDetachedWindowCapability(): void {
+  expect(mainCapability.windows).toContain("workspace-*");
+  expect(mainCapability.permissions).toContain("core:webview:allow-create-webview-window");
+}
+
 describe("Tauri window configuration", () => {
   it("keeps default and minimum dimensions usable", assertUsableDefaultWindow);
+  it("allows scoped detached workspace windows", assertDetachedWindowCapability);
 });
