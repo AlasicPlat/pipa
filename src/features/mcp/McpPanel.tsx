@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import type { Engine } from "../../bindings/Engine";
@@ -60,7 +60,7 @@ function formatActivityTime(iso: string): string {
 }
 
 /**
- * Main-window MCP console: server controls, pending SQL confirmation, activity, manual SQL.
+ * Main-window MCP console for server controls, pending SQL confirmation, and activity.
  */
 export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const mcp = useMcpState(open);
@@ -70,8 +70,6 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
     () => new Set(),
   );
   const [portDraft, setPortDraft] = useState("");
-  const [manualConnectionId, setManualConnectionId] = useState("");
-  const [manualSql, setManualSql] = useState("");
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   const mysqlProfiles = useMemo(
@@ -202,30 +200,32 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
             </button>
           </div>
 
-          <label className="mcp-panel__field">
-            <span>端口</span>
-            <span className="mcp-panel__inline">
-              <input
-                inputMode="numeric"
-                onChange={(event) => setPortDraft(event.target.value)}
-                value={effectivePort}
-              />
-              <button
-                className="button"
-                disabled={mcp.busy}
-                onClick={() => {
-                  const port = Number(effectivePort);
-                  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-                    return;
-                  }
-                  void mcp.setPort(port).then(() => setPortDraft(""));
-                }}
-                type="button"
-              >
-                应用
-              </button>
-            </span>
-          </label>
+          <div className="mcp-panel__port-control">
+            <label htmlFor="mcp-port">端口</label>
+            <input
+              id="mcp-port"
+              inputMode="numeric"
+              max={65535}
+              min={1}
+              onChange={(event) => setPortDraft(event.target.value)}
+              type="number"
+              value={effectivePort}
+            />
+            <button
+              className="button"
+              disabled={mcp.busy}
+              onClick={() => {
+                const port = Number(effectivePort);
+                if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                  return;
+                }
+                void mcp.setPort(port).then(() => setPortDraft(""));
+              }}
+              type="button"
+            >
+              应用
+            </button>
+          </div>
 
           {status.url ? (
             <label className="mcp-panel__field">
@@ -471,50 +471,6 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
         </section>
         </div>
 
-        <div className="mcp-panel__column mcp-panel__column--manual">
-        <section
-          className="mcp-panel__section mcp-panel__section--manual"
-          aria-labelledby="mcp-manual-title"
-        >
-          <div className="mcp-panel__section-header">
-            <h3 id="mcp-manual-title">手动 SQL</h3>
-          </div>
-          <p className="mcp-panel__hint">在此可执行 DML/DDL；与工作台相同，不走 MCP 只读限制。</p>
-          <label className="mcp-panel__field">
-            <span>连接</span>
-            <select
-              onChange={(event) => setManualConnectionId(event.target.value)}
-              value={manualConnectionId}
-            >
-              <option value="">选择 MySQL 连接</option>
-              {mysqlProfiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {connectionOptionLabel(profile)}
-                  {profile.environment === "production" ? " · 生产" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="mcp-panel__field">
-            <span>SQL</span>
-            <textarea
-              onChange={(event) => setManualSql(event.target.value)}
-              placeholder="INSERT / UPDATE / ALTER …"
-              rows={5}
-              value={manualSql}
-            />
-          </label>
-          <button
-            className="button button--primary"
-            disabled={mcp.busy || !manualConnectionId || !manualSql.trim()}
-            onClick={() => void mcp.runManualSql(manualConnectionId, manualSql)}
-            type="button"
-          >
-            <Play size={14} aria-hidden="true" />
-            执行
-          </button>
-        </section>
-        </div>
       </div>
     </div>
   );

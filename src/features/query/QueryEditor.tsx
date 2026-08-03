@@ -4,6 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import { NATIVE_EXECUTE_QUERY_EVENT } from "../../lib/nativeEvents";
 import { matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { ResolvedTheme } from "../preferences/theme";
+import { PIPA_MONACO_THEME_DARK, PIPA_MONACO_THEME_LIGHT } from "./monacoThemes";
 import { sqlToExecute } from "./sqlSelection";
 
 interface QueryEditorProps {
@@ -225,7 +226,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(funct
           scrollBeyondLastLine: false,
           tabSize: 2,
         }}
-        theme={theme === "dark" ? "vs-dark" : "vs"}
+        theme={theme === "dark" ? PIPA_MONACO_THEME_DARK : PIPA_MONACO_THEME_LIGHT}
         value={sql}
       />
     </div>

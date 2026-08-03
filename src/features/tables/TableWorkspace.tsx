@@ -46,12 +46,16 @@ interface TableIndexDefinition {
 interface EditingCell {
   rowIndex: number;
   columnName: string;
+  value: EditableCellValue;
 }
 
 type TableView = "data" | "structure" | "ddl";
 type MutationKind = "ddl" | "dml";
 
 const PAGE_SIZES = [20, 50, 100] as const;
+const DATA_SELECTOR_WIDTH = 42;
+const DATA_COLUMN_DEFAULT_WIDTH = 150;
+const DATA_COLUMN_MIN_WIDTH = 80;
 
 /** Converts a transport-safe cell into exact text while retaining SQL NULL. */
 function schemaCell(cell: CellValue | undefined): string | null {
@@ -122,6 +126,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
+  const [dataColumnWidths, setDataColumnWidths] = useState<(number | null)[]>([]);
   const [dataSearch, setDataSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(50);
@@ -131,6 +136,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const mutationKindRef = useRef<MutationKind | null>(null);
   const dataSearchInputRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const resizeSessionRef = useRef<{ columnIndex: number; startX: number; startWidth: number } | null>(null);
 
   const target = `${quoteIdentifier(database)}.${quoteIdentifier(tableName)}`;
   const schemaSql = useMemo(
@@ -230,8 +236,24 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const dmlChangeCount = updatedRows.size + deletedRows.size + insertedRows.length;
   const hasDmlChanges = dmlChangeCount > 0;
   const allRowsSelected = dataSession.state.rows.length > 0 && selectedRows.size === dataSession.state.rows.length;
-  const dataGridTemplate = `42px repeat(${dataSession.state.columns.length}, minmax(150px, 1fr))`;
-  const dataGridMinimumWidth = `${42 + dataSession.state.columns.length * 150}px`;
+  const dataColumnKey = dataSession.state.columns.map((column) => column.name).join("\u0000");
+  const hasResizedDataColumn = dataSession.state.columns.some((_, index) => dataColumnWidths[index] !== null && dataColumnWidths[index] !== undefined);
+  const dataGridTemplate = hasResizedDataColumn
+    ? [
+        `${DATA_SELECTOR_WIDTH}px`,
+        ...dataSession.state.columns.map((_, index) => {
+          const width = dataColumnWidths[index];
+          return width === null || width === undefined ? `minmax(${DATA_COLUMN_DEFAULT_WIDTH}px, 1fr)` : `${width}px`;
+        }),
+      ].join(" ")
+    : `${DATA_SELECTOR_WIDTH}px repeat(${dataSession.state.columns.length}, minmax(${DATA_COLUMN_DEFAULT_WIDTH}px, 1fr))`;
+  const dataGridMinimumWidth = `${DATA_SELECTOR_WIDTH + dataSession.state.columns.reduce(
+    (total, _, index) => total + (dataColumnWidths[index] ?? DATA_COLUMN_DEFAULT_WIDTH),
+    0,
+  )}px`;
+  const editingColumn = editingCell
+    ? dataSession.state.columns.find((column) => column.name === editingCell.columnName) ?? null
+    : null;
   const ddlStatements = useMemo(
     () => buildDdlStatements(database, tableName, schema, draftColumns),
     [database, draftColumns, schema, tableName],
@@ -262,6 +284,38 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   useEffect(() => {
     onDirtyChange?.(hasDirtyChanges);
   }, [hasDirtyChanges, onDirtyChange]);
+
+  useEffect(() => {
+    setDataColumnWidths(dataSession.state.columns.map(() => null));
+  }, [dataColumnKey]);
+
+  useEffect(() => {
+    /** Updates the active data-column width while its header edge is dragged. */
+    function handlePointerMove(event: PointerEvent): void {
+      const session = resizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+      const nextWidth = Math.max(DATA_COLUMN_MIN_WIDTH, session.startWidth + event.clientX - session.startX);
+      setDataColumnWidths((current) => {
+        const next = dataSession.state.columns.map((_, index) => current[index] ?? null);
+        next[session.columnIndex] = nextWidth;
+        return next;
+      });
+    }
+
+    /** Ends an active data-column resize gesture. */
+    function handlePointerUp(): void {
+      resizeSessionRef.current = null;
+    }
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [dataColumnKey]);
 
   /** Updates one field in the local visual schema draft. */
   function updateDraftColumn(index: number, field: keyof TableColumnDefinition, value: string | boolean | null): void {
@@ -301,7 +355,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     });
   }
 
-  /** Removes one cell override when Escape cancels its edit. */
+  /** Removes one cell override when its edited value returns to the database snapshot. */
   function revertExistingCell(rowIndex: number, columnName: string): void {
     setUpdatedRows((current) => {
       const next = new Map(current);
@@ -314,6 +368,56 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       }
       return next;
     });
+  }
+
+  /** Opens a modal editor with the cell's current staged or database value. */
+  function openCellEditor(rowIndex: number, columnName: string, value: EditableCellValue): void {
+    setSelectedRows(new Set([rowIndex]));
+    setEditingCell({ rowIndex, columnName, value });
+  }
+
+  /** Saves the modal value into the DML change set, removing no-op overrides. */
+  function saveCellEdit(): void {
+    if (!editingCell) {
+      return;
+    }
+    const columnIndex = dataSession.state.columns.findIndex((column) => column.name === editingCell.columnName);
+    const originalValue = cellValueToEditable(dataSession.state.rows[editingCell.rowIndex]?.[columnIndex]);
+    if (editingCell.value === originalValue) {
+      revertExistingCell(editingCell.rowIndex, editingCell.columnName);
+    } else {
+      updateExistingCell(editingCell.rowIndex, editingCell.columnName, editingCell.value);
+    }
+    setPendingProductionAction(null);
+    setEditingCell(null);
+  }
+
+  /** Handles modal editor cancellation and the explicit Mod+Enter save gesture. */
+  function handleCellEditorKeyDown(event: KeyboardEvent<HTMLFormElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setEditingCell(null);
+    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      saveCellEdit();
+    }
+  }
+
+  /** Starts dragging one data-column edge from its rendered width. */
+  function handleDataColumnResizeMouseDown(event: MouseEvent<HTMLSpanElement>, columnIndex: number): void {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const renderedWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+    resizeSessionRef.current = {
+      columnIndex,
+      startX: event.clientX,
+      startWidth: renderedWidth || dataColumnWidths[columnIndex] || DATA_COLUMN_DEFAULT_WIDTH,
+    };
   }
 
   /** Returns the staged value when present, otherwise the database snapshot value. */
@@ -482,6 +586,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     setInsertedRows([]);
     setSelectedRows(new Set());
     setSelectionAnchorIndex(null);
+    setEditingCell(null);
     setPendingProductionAction(null);
   }
 
@@ -511,7 +616,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
         {database && activeView === "data" ? (
           <section className="data-editor" aria-label="数据编辑器">
             <header className="table-editor-toolbar">
-              <span>{`已选择 ${selectedRows.size} / 当前页 ${dataSession.state.rows.length} 行 · 双击单元格编辑`}{primaryColumns.length > 0 ? ` · 主键 ${primaryColumns.join(", ")}` : " · 无主键，仅允许新增"}</span>
+              <span>{`已选择 ${selectedRows.size} / 当前页 ${dataSession.state.rows.length} 行 · 双击单元格弹窗编辑`}{primaryColumns.length > 0 ? ` · 主键 ${primaryColumns.join(", ")}` : " · 无主键，仅允许新增"}</span>
               <label className="table-data-search">
                 <Search size={12} aria-hidden="true" />
                 <input
@@ -536,7 +641,19 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
               <div className="editable-grid" role="table" aria-label={`${tableName} 数据`} onKeyDown={handleGridKeyDown} tabIndex={0}>
                 <div className="editable-grid__row editable-grid__header" role="row" style={{ gridTemplateColumns: dataGridTemplate, minWidth: dataGridMinimumWidth }}>
                   <span role="columnheader"><input aria-label="选择当前页全部行" checked={allRowsSelected} onChange={toggleSelectAllRows} type="checkbox" /></span>
-                  {dataSession.state.columns.map((column) => <span key={column.name} role="columnheader">{column.name}<small>{column.databaseType}</small></span>)}
+                  {dataSession.state.columns.map((column, columnIndex) => (
+                    <span className="editable-grid__column" key={column.name} role="columnheader" title="拖拽右缘调整列宽">
+                      {column.name}
+                      <small>{column.databaseType}</small>
+                      <span
+                        aria-label={`调整 ${column.name} 列宽`}
+                        aria-orientation="vertical"
+                        className="editable-grid__resize-handle"
+                        onMouseDown={(event) => handleDataColumnResizeMouseDown(event, columnIndex)}
+                        role="separator"
+                      />
+                    </span>
+                  ))}
                 </div>
                 {dataSession.state.rows.map((row, rowIndex) => {
                   const deleted = deletedRows.has(rowIndex);
@@ -558,33 +675,14 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                       <span className="editable-grid__selector" role="cell"><input aria-label={`选择第 ${rowIndex + 1} 行`} checked={selected} onChange={() => toggleSelectedRow(rowIndex)} type="checkbox" /></span>
                       {dataSession.state.columns.map((column, columnIndex) => {
                         const value = currentCellValue(rowIndex, column.name, row[columnIndex]);
-                        const editing = editingCell?.rowIndex === rowIndex && editingCell.columnName === column.name;
                         const searchMatch = cellMatchesDataSearch(rowIndex, column.name, row[columnIndex]);
                         return (
-                          <span className={`editable-grid__cell${editing ? " is-editing" : ""}${searchMatch ? " is-search-match" : ""}`} key={column.name} onDoubleClick={() => {
+                          <span className={`editable-grid__cell${searchMatch ? " is-search-match" : ""}`} key={column.name} onDoubleClick={() => {
                             if (!deleted && primaryColumns.length > 0) {
-                              setSelectedRows(new Set([rowIndex]));
-                              setEditingCell({ rowIndex, columnName: column.name });
+                              openCellEditor(rowIndex, column.name, value);
                             }
                           }} role="cell">
-                            {editing ? (
-                              <input
-                                aria-label={`${column.name} 第 ${rowIndex + 1} 行`}
-                                autoFocus
-                                onBlur={() => setEditingCell(null)}
-                                onChange={(event) => updateExistingCell(rowIndex, column.name, event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    setEditingCell(null);
-                                  } else if (event.key === "Escape") {
-                                    event.stopPropagation();
-                                    revertExistingCell(rowIndex, column.name);
-                                    setEditingCell(null);
-                                  }
-                                }}
-                                value={value ?? ""}
-                              />
-                            ) : value === null ? <em>NULL</em> : <span>{value}</span>}
+                            {value === null ? <em>NULL</em> : <span>{value}</span>}
                           </span>
                         );
                       })}
@@ -619,6 +717,51 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                 <button aria-label="最后一页" disabled={page >= totalPages || hasDmlChanges || dataSession.state.running} onClick={() => loadPage(totalPages)} type="button"><ChevronLast size={14} aria-hidden="true" /></button>
               </span>
             </footer>
+            {editingCell && editingColumn ? (
+              <div className="table-cell-editor-backdrop" onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setEditingCell(null);
+                }
+              }} role="presentation">
+                <form
+                  aria-labelledby="table-cell-editor-title"
+                  aria-modal="true"
+                  className="table-cell-editor"
+                  onKeyDown={handleCellEditorKeyDown}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    saveCellEdit();
+                  }}
+                  role="dialog"
+                >
+                  <header>
+                    <div>
+                      <strong id="table-cell-editor-title">编辑单元格</strong>
+                      <span>第 {editingCell.rowIndex + 1} 行 · {editingCell.columnName} · {editingColumn.databaseType}</span>
+                    </div>
+                    <button aria-label="关闭单元格编辑器" onClick={() => setEditingCell(null)} type="button"><X size={14} aria-hidden="true" /></button>
+                  </header>
+                  <label className="table-cell-editor__field">
+                    <span>单元格内容</span>
+                    <textarea
+                      aria-label={`${editingCell.columnName} 第 ${editingCell.rowIndex + 1} 行`}
+                      autoFocus
+                      onChange={(event) => setEditingCell((current) => current ? { ...current, value: event.target.value } : current)}
+                      placeholder={editingCell.value === null ? "当前值为 NULL；输入内容后将改为文本" : undefined}
+                      value={editingCell.value ?? ""}
+                    />
+                  </label>
+                  <footer>
+                    <small>Esc 取消 · ⌘/Ctrl + Enter 保存</small>
+                    <span>
+                      <button onClick={() => setEditingCell(null)} type="button">取消</button>
+                      <button className="table-cell-editor__save" type="submit">保存修改</button>
+                    </span>
+                  </footer>
+                </form>
+              </div>
+            ) : null}
           </section>
         ) : null}
 

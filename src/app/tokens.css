@@ -2,54 +2,57 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Surfaces — cool instrument neutrals with a touch of warmth */
-  --surface-canvas: #eef0f3;
-  --surface-panel: #fafbfc;
-  --surface-muted: #f3f5f7;
-  --surface-raised: #ffffff;
-  --surface-hover: #e9eef3;
-  --surface-selected: #f3e9d8;
-  --surface-inset: #e6eaef;
+  /* Surfaces - cool instrument neutrals */
+  --surface-canvas: #f4f5f7;
+  --surface-panel: #ffffff;
+  --surface-muted: #eef0f3;
+  --surface-raised: #f8f9fb;
+  --surface-toolbar: #f1f3f6;
+  --surface-hover: #e8ebf0;
+  --surface-selected: #ebe4d8;
+  --surface-inset: #f6f7f9;
 
   /* Text */
-  --text-primary: #1c2128;
-  --text-secondary: #5a6570;
-  --text-tertiary: #87919c;
-  --text-inverse: #1a1308;
+  --text-primary: #1a1d21;
+  --text-secondary: #5c6570;
+  --text-tertiary: #8a929c;
+  --text-inverse: #ffffff;
 
   /* Borders & focus */
-  --border-subtle: #dfe3e8;
-  --border-strong: #c4ccd4;
+  --border-grid: #e6e9ee;
+  --border-subtle: #d8dde5;
+  --border-strong: #b8c0cb;
   --focus-ring: #c47a1a;
 
-  /* Brand — loquat amber */
+  /* Brand - loquat amber (identity only) */
   --brand: #c47a1a;
-  --brand-strong: #9d5f10;
-  --brand-soft: color-mix(in srgb, var(--brand) 14%, var(--surface-panel));
-  --brand-glow: color-mix(in srgb, var(--brand) 28%, transparent);
+  --brand-strong: #9a5c0d;
+  --brand-soft: color-mix(in srgb, var(--brand) 12%, var(--surface-panel));
+  --brand-glow: color-mix(in srgb, var(--brand) 18%, transparent);
 
   /* Engine accents */
   --accent-mysql: #2f7aa3;
   --accent-postgresql: #356f9c;
   --accent-mongodb: #3d9145;
-  --accent-redis: #cf3e35;
+  --accent-redis: #c94b42;
 
-  /* Status */
+  /* Status - distinct from brand / engine accents */
   --status-success: #2f8f5b;
-  --status-warning: #c47a1a;
-  --status-danger: #cf3e35;
+  --status-warning: #d0891a;
+  --status-danger: #c0392b;
 
   /* Elevation */
-  --shadow-xs: 0 1px 2px color-mix(in srgb, #1c2128 6%, transparent);
-  --shadow-sm: 0 4px 12px color-mix(in srgb, #1c2128 8%, transparent);
-  --shadow-md: 0 12px 32px color-mix(in srgb, #1c2128 12%, transparent);
-  --shadow-lg: 0 24px 64px color-mix(in srgb, #1c2128 18%, transparent);
+  --shadow-xs: 0 1px 2px color-mix(in srgb, #121417 6%, transparent);
+  --shadow-sm: 0 6px 18px color-mix(in srgb, #121417 8%, transparent);
+  --shadow-md: 0 16px 40px color-mix(in srgb, #121417 12%, transparent);
+  --shadow-lg: 0 28px 70px color-mix(in srgb, #121417 16%, transparent);
   --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 34%, transparent);
+  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent);
 
   /* Radius */
   --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 8px;
+  --radius-md: 9px;
   --radius-lg: 12px;
   --radius-xl: 16px;
 
@@ -60,93 +63,99 @@
   --space-4: 24px;
 
   /* Motion */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --duration-fast: 140ms;
-  --duration-base: 200ms;
-  --duration-slow: 320ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
 
   /* Type */
-  --font-sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Noto Sans SC", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Noto Sans SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
-  --font-display: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-canvas: #111316;
-  --surface-panel: #181b1f;
-  --surface-muted: #22262b;
-  --surface-raised: #1e2227;
-  --surface-hover: #2a2f36;
-  --surface-selected: #2a2418;
-  --surface-inset: #0d0f12;
+  --surface-canvas: #121417;
+  --surface-panel: #1a1d21;
+  --surface-muted: #22262c;
+  --surface-raised: #1e2228;
+  --surface-toolbar: #181b20;
+  --surface-hover: #2a2f37;
+  --surface-selected: #3a3228;
+  --surface-inset: #0e1013;
 
-  --text-primary: #eef1f4;
-  --text-secondary: #a8b0b8;
-  --text-tertiary: #7d8792;
-  --text-inverse: #1a1308;
+  --text-primary: #e8eaed;
+  --text-secondary: #a8b0ba;
+  --text-tertiary: #7a8490;
+  --text-inverse: #ffffff;
 
-  --border-subtle: #2e343b;
-  --border-strong: #454d56;
-  --focus-ring: #e8a84a;
+  --border-grid: #2a2f36;
+  --border-subtle: #323840;
+  --border-strong: #4a5360;
+  --focus-ring: #e0a04a;
 
-  --brand: #e8a84a;
-  --brand-strong: #f0c06e;
-  --brand-soft: color-mix(in srgb, var(--brand) 16%, var(--surface-panel));
-  --brand-glow: color-mix(in srgb, var(--brand) 32%, transparent);
+  --brand: #e0a04a;
+  --brand-strong: #f0bd6b;
+  --brand-soft: color-mix(in srgb, var(--brand) 14%, var(--surface-panel));
+  --brand-glow: color-mix(in srgb, var(--brand) 20%, transparent);
 
   --accent-mysql: #67a6cf;
   --accent-postgresql: #6e9fcb;
   --accent-mongodb: #62b46c;
-  --accent-redis: #f06c63;
+  --accent-redis: #e06b63;
 
   --status-success: #4db883;
-  --status-warning: #e8a84a;
-  --status-danger: #f06c63;
+  --status-warning: #e8b04a;
+  --status-danger: #e2554f;
 
   --shadow-xs: 0 1px 2px color-mix(in srgb, #000000 35%, transparent);
   --shadow-sm: 0 4px 14px color-mix(in srgb, #000000 40%, transparent);
   --shadow-md: 0 14px 36px color-mix(in srgb, #000000 48%, transparent);
   --shadow-lg: 0 28px 70px color-mix(in srgb, #000000 55%, transparent);
   --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 55%, transparent);
+  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
 }
 
 /* Preserve the system preference before the startup script has resolved it. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --surface-canvas: #111316;
-    --surface-panel: #181b1f;
-    --surface-muted: #22262b;
-    --surface-raised: #1e2227;
-    --surface-hover: #2a2f36;
-    --surface-selected: #2a2418;
-    --surface-inset: #0d0f12;
-    --text-primary: #eef1f4;
-    --text-secondary: #a8b0b8;
-    --text-tertiary: #7d8792;
-    --text-inverse: #1a1308;
-    --border-subtle: #2e343b;
-    --border-strong: #454d56;
-    --focus-ring: #e8a84a;
-    --brand: #e8a84a;
-    --brand-strong: #f0c06e;
-    --brand-soft: color-mix(in srgb, var(--brand) 16%, var(--surface-panel));
-    --brand-glow: color-mix(in srgb, var(--brand) 32%, transparent);
+    --surface-canvas: #121417;
+    --surface-panel: #1a1d21;
+    --surface-muted: #22262c;
+    --surface-raised: #1e2228;
+    --surface-toolbar: #181b20;
+    --surface-hover: #2a2f37;
+    --surface-selected: #3a3228;
+    --surface-inset: #0e1013;
+    --text-primary: #e8eaed;
+    --text-secondary: #a8b0ba;
+    --text-tertiary: #7a8490;
+    --text-inverse: #ffffff;
+    --border-grid: #2a2f36;
+    --border-subtle: #323840;
+    --border-strong: #4a5360;
+    --focus-ring: #e0a04a;
+    --brand: #e0a04a;
+    --brand-strong: #f0bd6b;
+    --brand-soft: color-mix(in srgb, var(--brand) 14%, var(--surface-panel));
+    --brand-glow: color-mix(in srgb, var(--brand) 20%, transparent);
     --accent-mysql: #67a6cf;
     --accent-postgresql: #6e9fcb;
     --accent-mongodb: #62b46c;
-    --accent-redis: #f06c63;
+    --accent-redis: #e06b63;
     --status-success: #4db883;
-    --status-warning: #e8a84a;
-    --status-danger: #f06c63;
+    --status-warning: #e8b04a;
+    --status-danger: #e2554f;
     --shadow-xs: 0 1px 2px color-mix(in srgb, #000000 35%, transparent);
     --shadow-sm: 0 4px 14px color-mix(in srgb, #000000 40%, transparent);
     --shadow-md: 0 14px 36px color-mix(in srgb, #000000 48%, transparent);
     --shadow-lg: 0 28px 70px color-mix(in srgb, #000000 55%, transparent);
     --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 55%, transparent);
+    --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
   }
 }

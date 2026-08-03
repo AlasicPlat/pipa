@@ -12,9 +12,9 @@
   gap: 10px;
   padding: 16px;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-md, 9px);
   background: var(--surface-raised);
-  box-shadow: 0 12px 30px color-mix(in srgb, #000000 20%, transparent);
+  box-shadow: var(--shadow-md), var(--shadow-highlight);
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
@@ -51,20 +51,20 @@
 }
 
 .update-menu .update-menu__success {
-  color: var(--status-success, #3f8f65);
+  color: var(--status-success);
 }
 
 .update-menu .update-menu__error {
-  color: var(--status-danger, #c55151);
+  color: var(--status-danger);
 }
 
 .update-menu__download {
   display: grid;
   gap: 9px;
   padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--accent-mysql) 18%, var(--border-subtle));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent-mysql) 4%, var(--surface-muted));
+  border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--border-subtle));
+  border-radius: var(--radius-md, 9px);
+  background: color-mix(in srgb, var(--brand) 4%, var(--surface-muted));
 }
 
 .update-menu__download-heading,
@@ -82,7 +82,7 @@
 }
 
 .update-menu__percentage {
-  color: var(--accent-mysql);
+  color: var(--brand);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 18px;
   font-variant-numeric: tabular-nums;
@@ -103,7 +103,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent-mysql);
+  background: var(--brand);
   transition: width 180ms ease-out;
 }
 
@@ -128,7 +128,7 @@
 
 .update-menu__assurance svg {
   flex: 0 0 auto;
-  color: var(--accent-mysql);
+  color: var(--brand);
 }
 
 .update-menu__processing {
@@ -137,7 +137,7 @@
   gap: 10px;
   padding: 11px 12px;
   border: 1px solid var(--border-subtle);
-  border-radius: 7px;
+  border-radius: var(--radius-md, 9px);
   background: var(--surface-muted);
   color: var(--text-secondary);
 }
@@ -159,7 +159,7 @@
 
 .update-menu__spinner {
   flex: 0 0 auto;
-  color: var(--accent-mysql);
+  color: var(--brand);
   animation: update-menu-spin 900ms linear infinite;
 }
 
@@ -177,8 +177,8 @@
 }
 
 .workspace__topbar-actions .update-menu__actions .update-menu__primary {
-  border-color: color-mix(in srgb, var(--accent-mysql) 42%, var(--border-subtle));
-  background: color-mix(in srgb, var(--accent-mysql) 12%, var(--surface-panel));
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface-panel));
   color: var(--text-primary);
 }
 
