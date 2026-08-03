@@ -7,7 +7,7 @@
   flex-direction: column;
   background: var(--surface-panel);
   border-left: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-lg, -12px 0 32px rgb(0 0 0 / 12%));
+  box-shadow: var(--shadow-lg);
   color: var(--text-primary);
   transition: width var(--duration-base, 180ms) var(--ease-out, ease);
   animation: mcp-panel-in var(--duration-slow, 320ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
@@ -42,8 +42,8 @@
   gap: 12px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border-subtle);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--brand, var(--accent-mysql)) 5%, var(--surface-panel)), transparent);
+  background: var(--surface-toolbar, var(--surface-muted));
+  box-shadow: var(--shadow-highlight);
 }
 
 .mcp-panel__header h2 {
@@ -96,7 +96,8 @@
   padding: 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md, 8px);
-  background: color-mix(in srgb, var(--surface-raised) 72%, var(--surface-panel));
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-highlight);
 }
 
 .mcp-panel__section h3 {
@@ -166,13 +167,50 @@
   margin-top: 8px;
 }
 
+.mcp-panel__port-control {
+  display: grid;
+  width: max-content;
+  grid-template-columns: auto 92px auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.mcp-panel__port-control label {
+  font-weight: 650;
+}
+
+.mcp-panel__port-control input {
+  width: 92px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm, 6px);
+  outline: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp-panel__port-control input:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 16%, transparent);
+}
+
+.mcp-panel__port-control .button {
+  min-height: 32px;
+}
+
 .mcp-panel__field input:not([type="checkbox"]),
 .mcp-panel__field select,
 .mcp-panel__field textarea {
   width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: var(--surface-raised);
+  background: var(--surface-inset);
   color: var(--text-primary);
   padding: 8px 10px;
   font: inherit;
@@ -209,7 +247,6 @@
 }
 
 .mcp-panel__section--targets .mcp-panel__hint,
-.mcp-panel__section--manual .mcp-panel__hint,
 .mcp-panel__section--pending .mcp-panel__hint,
 .mcp-panel__section--activity .mcp-panel__hint {
   margin-top: 2px;
@@ -520,6 +557,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-raised);
+  box-shadow: var(--shadow-highlight);
   transition:
     border-color var(--duration-fast, 140ms) var(--ease-out, ease),
     box-shadow var(--duration-fast, 140ms) var(--ease-out, ease);
@@ -527,7 +565,7 @@
 
 .mcp-panel__activity-item.is-expanded {
   border-color: color-mix(in srgb, var(--brand, var(--accent-mysql)) 28%, var(--border-subtle));
-  box-shadow: var(--shadow-xs, 0 1px 2px rgb(0 0 0 / 6%));
+  box-shadow: var(--shadow-xs);
 }
 
 .mcp-panel__activity-item.is-error {
@@ -639,13 +677,11 @@
   font-weight: 700;
 }
 
-/* Wide console: primary ops left, attention + log right, manual full-width. */
+/* Wide console: primary operations left, approvals and activity right. */
 .mcp-panel--expanded .mcp-panel__body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  grid-template-areas:
-    "primary secondary"
-    "manual manual";
+  grid-template-areas: "primary secondary";
   align-items: start;
   gap: 16px;
 }
@@ -659,17 +695,9 @@
   min-height: 0;
 }
 
-.mcp-panel--expanded .mcp-panel__column--manual {
-  grid-area: manual;
-}
-
 .mcp-panel--expanded .mcp-panel__section--activity {
   flex: 1 1 auto;
   min-height: 200px;
-}
-
-.mcp-panel--expanded .mcp-panel__section--manual textarea {
-  min-height: 160px;
 }
 
 .mcp-panel--expanded .mcp-panel__connection-options {

@@ -158,7 +158,9 @@ async function assertVisualChangePreviews(): Promise<void> {
   fireEvent.keyDown(dataGrid, { key: "a", altKey: true });
   expect(screen.getByRole("checkbox", { name: "选择第 1 行" })).toBeChecked();
   fireEvent.doubleClick(screen.getByText("old"));
+  expect(screen.getByRole("dialog", { name: "编辑单元格" })).toBeVisible();
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "new" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   expect(screen.getByText(/UPDATE `shop`.`orders` SET `name` = 'new' WHERE `id` = 1;/)).toBeVisible();
 
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
@@ -204,6 +206,24 @@ async function assertPaginationOutsideScrollableGrid(): Promise<void> {
   expect(dataEditor.lastElementChild).toBe(pagination);
 }
 
+/** Verifies dragging a header edge updates every data row's shared grid template. */
+async function assertResizableDataColumns(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  const resizeHandle = screen.getByRole("separator", { name: "调整 name 列宽" });
+  fireEvent.mouseDown(resizeHandle, { button: 0, clientX: 100 });
+  fireEvent.pointerMove(document, { clientX: 220 });
+
+  for (const row of screen.getAllByRole("row")) {
+    expect(row).toHaveStyle({
+      gridTemplateColumns: "42px minmax(150px, 1fr) 270px",
+      minWidth: "462px",
+    });
+  }
+  fireEvent.pointerUp(document);
+}
+
 /** Verifies scoped find focuses the visible data search and marks matching cells. */
 async function assertCurrentPageDataSearch(): Promise<void> {
   expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
@@ -230,7 +250,7 @@ async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
   fireEvent.doubleClick(screen.getByText("old"));
   const editor = screen.getByLabelText("name 第 1 行");
   fireEvent.change(editor, { target: { value: "new" } });
-  await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+  await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
 
   fireEvent.keyDown(editor, { key: "Escape" });
   expect(screen.queryByLabelText("name 第 1 行")).not.toBeInTheDocument();
@@ -239,6 +259,7 @@ async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
 
   fireEvent.doubleClick(screen.getByText("old"));
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "saved" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   const dataEditor = screen.getByRole("region", { name: "数据编辑器" });
   expect(screen.getByText("待提交 DML")).toBeVisible();
   expect(dataEditor.lastElementChild).toBe(screen.getByLabelText("数据分页"));
@@ -254,6 +275,7 @@ async function assertProductionSaveConfirmation(): Promise<void> {
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.doubleClick(screen.getByText("old"));
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "reviewed" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
   fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
   expect(sessionMocks.sessions[5].run).not.toHaveBeenCalled();
@@ -295,6 +317,7 @@ describe("TableWorkspace", () => {
   it("previews graphical DML and DDL changes before submission", assertVisualChangePreviews);
   it("selects contiguous rows with Space and Shift+Arrow keys", assertKeyboardRowSelection);
   it("keeps pagination outside the independently scrolling data grid", assertPaginationOutsideScrollableGrid);
+  it("resizes data columns by dragging their header edges", assertResizableDataColumns);
   it("finds values within the current data page", assertCurrentPageDataSearch);
   it("exits the smallest edit layer and saves dirty DML with Cmd/Ctrl+S", assertEditingEscapeAndSaveShortcut);
   it("keeps production saves behind a second confirmation", assertProductionSaveConfirmation);

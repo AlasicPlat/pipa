@@ -106,6 +106,8 @@ describe("McpPanel", () => {
     expect(screen.getByRole("button", { name: "确认执行" })).toBeInTheDocument();
     expect(screen.getAllByText("list_connections")).toHaveLength(2);
     expect(screen.getByText("生产")).toBeInTheDocument();
+    expect(screen.getByLabelText("端口")).toHaveValue(3847);
+    expect(screen.queryByRole("heading", { name: "手动 SQL" })).not.toBeInTheDocument();
   });
 
   it("renders nothing when closed", () => {
@@ -130,9 +132,6 @@ describe("McpPanel", () => {
     expect(
       screen.getByRole("checkbox", { name: "MySQL · Local MySQL · pipa" }),
     ).toBeChecked();
-    expect(
-      screen.getByRole("option", { name: "MySQL · Local MySQL · pipa · 生产" }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "是否指定 MCP 连接" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "展开 MCP 控制台" }));

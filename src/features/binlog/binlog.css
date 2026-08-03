@@ -1,7 +1,4 @@
 .binlog-workspace {
-  --binlog-success: #238657;
-  --binlog-warning: #a96812;
-  --binlog-danger: #c23c34;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -9,9 +6,7 @@
   flex: 1;
   flex-direction: column;
   overflow: auto;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent-mysql) 5%, transparent), transparent 180px),
-    var(--surface-canvas);
+  background: var(--surface-canvas);
   color: var(--text-primary);
 }
 
@@ -34,7 +29,8 @@
   gap: 24px;
   padding: 22px 26px 18px;
   border-bottom: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  background: var(--surface-toolbar, var(--surface-panel));
+  box-shadow: var(--shadow-highlight);
 }
 
 .binlog-workspace__header h1 {
@@ -80,7 +76,7 @@
 .binlog-button--primary {
   border-color: var(--accent-mysql);
   background: var(--accent-mysql);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .binlog-button--primary:hover:not(:disabled) {
@@ -99,9 +95,9 @@
 }
 
 .binlog-button--danger {
-  border-color: color-mix(in srgb, var(--binlog-danger) 45%, var(--border-subtle));
-  background: color-mix(in srgb, var(--binlog-danger) 8%, var(--surface-raised));
-  color: var(--binlog-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--status-danger) 8%, var(--surface-raised));
+  color: var(--status-danger);
 }
 
 .binlog-empty {
@@ -148,8 +144,8 @@
   padding: 22px;
   border: 1px solid var(--border-subtle);
   border-radius: 11px;
-  background: var(--surface-panel);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 4%);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm), var(--shadow-highlight);
 }
 
 .binlog-import__heading {
@@ -224,7 +220,7 @@
 
 .binlog-inline-error {
   margin: 0 0 12px;
-  color: var(--binlog-danger);
+  color: var(--status-danger);
   font-size: 0.76rem;
 }
 
@@ -275,7 +271,7 @@
 }
 
 .binlog-state-card--error > svg {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-state-card h2 {
@@ -357,16 +353,16 @@
 }
 
 .binlog-summary__status--complete {
-  color: var(--binlog-success);
+  color: var(--status-success);
 }
 
 .binlog-summary__status--warning,
 .binlog-summary__status--partial {
-  color: var(--binlog-warning);
+  color: var(--status-warning);
 }
 
 .binlog-summary__status--error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-diagnostics {
@@ -409,11 +405,11 @@
 }
 
 .binlog-diagnostic--error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-diagnostic--warning {
-  color: var(--binlog-warning);
+  color: var(--status-warning);
 }
 
 .binlog-diagnostic--info {
@@ -561,15 +557,15 @@
 }
 
 .binlog-status--committed {
-  background: color-mix(in srgb, var(--binlog-success) 10%, transparent);
-  color: var(--binlog-success);
+  background: color-mix(in srgb, var(--status-success) 10%, transparent);
+  color: var(--status-success);
 }
 
 .binlog-status--rolled_back,
 .binlog-status--incomplete,
 .binlog-status--unknown {
-  background: color-mix(in srgb, var(--binlog-warning) 11%, transparent);
-  color: var(--binlog-warning);
+  background: color-mix(in srgb, var(--status-warning) 11%, transparent);
+  color: var(--status-warning);
 }
 
 .binlog-transaction__meta {
@@ -634,15 +630,15 @@
 }
 
 .binlog-reset-sql__feedback--success {
-  color: var(--binlog-success);
+  color: var(--status-success);
 }
 
 .binlog-reset-sql__feedback--warning {
-  color: var(--binlog-warning);
+  color: var(--status-warning);
 }
 
 .binlog-reset-sql__feedback--error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-table-chip {
@@ -684,8 +680,8 @@
 }
 
 .binlog-operation--insert {
-  background: color-mix(in srgb, var(--binlog-success) 10%, transparent);
-  color: var(--binlog-success);
+  background: color-mix(in srgb, var(--status-success) 10%, transparent);
+  color: var(--status-success);
 }
 
 .binlog-operation--update {
@@ -695,8 +691,8 @@
 
 .binlog-operation--delete,
 .binlog-operation--ddl {
-  background: color-mix(in srgb, var(--binlog-danger) 9%, transparent);
-  color: var(--binlog-danger);
+  background: color-mix(in srgb, var(--status-danger) 9%, transparent);
+  color: var(--status-danger);
 }
 
 .binlog-change__sql {
@@ -718,7 +714,7 @@
 }
 
 .binlog-change__empty--error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-diff {
@@ -780,7 +776,7 @@
 }
 
 .binlog-value--null {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
   font-style: italic;
 }
 
@@ -790,12 +786,12 @@
 }
 
 .binlog-value--error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
   text-decoration: underline dotted;
 }
 
 .binlog-value--partial {
-  color: var(--binlog-warning);
+  color: var(--status-warning);
 }
 
 .binlog-value--binary,
@@ -828,7 +824,7 @@
 }
 
 .binlog-timeline__error {
-  color: var(--binlog-danger);
+  color: var(--status-danger);
 }
 
 .binlog-timeline__error button {
