@@ -65,8 +65,8 @@ pub enum CellValue {
     Decimal(String),
     /// UTF-8 文本。
     Text(String),
-    /// 结构化 JSON 值。
-    Json(serde_json::Value),
+    /// 保留原始词法表示的 JSON 文本，用于避免 JavaScript 解析大整数时丢失精度。
+    Json(String),
     /// 由适配器编码为字符串的二进制数据。
     Binary(String),
     /// 由适配器编码为字符串的日期或时间值。
@@ -162,6 +162,20 @@ mod tests {
         assert!(serde_json::to_string(&cell)
             .unwrap()
             .contains("9007199254740993"));
+    }
+
+    /// 验证 JSON 数字保留数据库返回的原始词法表示，不经过 JavaScript 数值转换。
+    #[test]
+    fn json_cells_keep_raw_numeric_text() {
+        let cell = CellValue::Json("{\"id\":18446744073709551615}".into());
+
+        assert_eq!(
+            serde_json::to_value(cell).unwrap(),
+            serde_json::json!({
+                "kind": "json",
+                "value": "{\"id\":18446744073709551615}"
+            })
+        );
     }
 
     /// 验证每个流式事件都携带查询标识符。

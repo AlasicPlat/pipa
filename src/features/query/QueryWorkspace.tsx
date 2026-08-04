@@ -10,7 +10,7 @@ import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
 import { ResultGrid } from "./ResultGrid";
 import {
   downloadTextFile,
-  inferTableNameFromSql,
+  resolveExportTableName,
   serializeResultAsCsv,
   serializeResultAsTsv,
   serializeRowsAsInsert,
@@ -233,7 +233,7 @@ export function QueryWorkspace({
   const [pendingProductionRedisCommand, setPendingProductionRedisCommand] = useState<string | null>(null);
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
   const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
-  const inferredTableName = inferTableNameFromSql(tab.sqlText);
+  const inferredTableName = resolveExportTableName(tab.sqlText, profile.database);
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.
@@ -370,91 +370,116 @@ export function QueryWorkspace({
   }
 
   /**
-   * Downloads every loaded result row as a CSV file.
-   * Parameters: none.
+   * Runs one export through the native save dialog and reports the outcome.
+   * @param buildContent - Builds the file body for the current result set.
+   * @param fileName - Suggested save file name.
+   * @param mimeType - MIME type used by the browser fallback path.
+   * @param successFeedback - Status text shown after a successful save.
    * @returns Nothing (`void`).
-   * Side effects: triggers a local CSV download in the desktop webview.
+   * Side effects: closes the export menu and may write a local file.
    */
-  function handleExportCsv(): void {
+  function runResultExport(
+    buildContent: () => string,
+    fileName: string,
+    mimeType: string,
+    successFeedback: string,
+  ): void {
     if (!hasResultRows) {
       return;
     }
     setExportMenuOpen(false);
-    downloadTextFile(
-      serializeResultAsCsv(session.state.columns, session.state.rows),
+    const content = buildContent();
+    if (!content) {
+      setResultActionFeedback("导出失败：没有可导出的内容");
+      return;
+    }
+    void downloadTextFile(content, fileName, mimeType).then((result) => {
+      if (result === "saved") {
+        setResultActionFeedback(successFeedback);
+        return;
+      }
+      if (result === "cancelled") {
+        setResultActionFeedback("已取消导出");
+        return;
+      }
+      setResultActionFeedback("导出失败");
+    });
+  }
+
+  /**
+   * Downloads every loaded result row as a CSV file.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: opens a native save dialog and writes a CSV document.
+   */
+  function handleExportCsv(): void {
+    runResultExport(
+      () => serializeResultAsCsv(session.state.columns, session.state.rows),
       `${exportBaseName}-results.csv`,
       "text/csv;charset=utf-8",
+      `已导出 CSV · ${session.state.rows.length} 行`,
     );
-    setResultActionFeedback(`已导出 CSV · ${session.state.rows.length} 行`);
   }
 
   /**
    * Downloads every loaded result row as pretty-printed JSON.
    * Parameters: none.
    * @returns Nothing (`void`).
-   * Side effects: triggers a local JSON download in the desktop webview.
+   * Side effects: opens a native save dialog and writes a JSON document.
    */
   function handleExportJson(): void {
-    if (!hasResultRows) {
-      return;
-    }
-    setExportMenuOpen(false);
     const selection = {
       startRow: 0,
       startCol: 0,
       endRow: session.state.rows.length - 1,
       endCol: session.state.columns.length - 1,
     };
-    downloadTextFile(
-      serializeSelectionAsJson(session.state.columns, session.state.rows, selection),
+    runResultExport(
+      () => serializeSelectionAsJson(session.state.columns, session.state.rows, selection),
       `${exportBaseName}-results.json`,
       "application/json;charset=utf-8",
+      `已导出 JSON · ${session.state.rows.length} 行`,
     );
-    setResultActionFeedback(`已导出 JSON · ${session.state.rows.length} 行`);
   }
 
   /**
    * Downloads every loaded result row as a Markdown table.
    * Parameters: none.
    * @returns Nothing (`void`).
-   * Side effects: triggers a local Markdown download in the desktop webview.
+   * Side effects: opens a native save dialog and writes a Markdown document.
    */
   function handleExportMarkdown(): void {
-    if (!hasResultRows) {
-      return;
-    }
-    setExportMenuOpen(false);
     const selection = {
       startRow: 0,
       startCol: 0,
       endRow: session.state.rows.length - 1,
       endCol: session.state.columns.length - 1,
     };
-    downloadTextFile(
-      serializeSelectionAsMarkdown(session.state.columns, session.state.rows, selection),
+    runResultExport(
+      () => serializeSelectionAsMarkdown(session.state.columns, session.state.rows, selection),
       `${exportBaseName}-results.md`,
       "text/markdown;charset=utf-8",
+      `已导出 Markdown · ${session.state.rows.length} 行`,
     );
-    setResultActionFeedback(`已导出 Markdown · ${session.state.rows.length} 行`);
   }
 
   /**
-   * Downloads every loaded result row as INSERT statements.
+   * Downloads every loaded result row as a standard SQL INSERT statement.
    * Parameters: none.
    * @returns Nothing (`void`).
-   * Side effects: triggers a local SQL download in the desktop webview.
+   * Side effects: opens a native save dialog and writes a `.sql` document.
    */
   function handleExportSql(): void {
-    if (!hasResultRows) {
-      return;
-    }
-    setExportMenuOpen(false);
-    const sql = serializeRowsAsInsert(session.state.columns, session.state.rows, {
-      tableName: inferredTableName,
-      includePrimaryKey: true,
-    });
-    downloadTextFile(sql, `${exportBaseName}-results.sql`, "application/sql;charset=utf-8");
-    setResultActionFeedback(`已导出 SQL · ${session.state.rows.length} 行`);
+    runResultExport(
+      () =>
+        serializeRowsAsInsert(session.state.columns, session.state.rows, {
+          tableName: inferredTableName,
+          includePrimaryKey: true,
+        }),
+      `${exportBaseName}-results.sql`,
+      "application/sql;charset=utf-8",
+      `已导出 SQL INSERT · ${session.state.rows.length} 行`,
+    );
   }
 
   useEffect(() => {

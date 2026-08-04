@@ -5,6 +5,15 @@ import { resetAllShortcutBindings, updateShortcutBinding } from "../commands/sho
 import type { QuerySessionState } from "../query/useQuerySession";
 import { TableWorkspace } from "./TableWorkspace";
 
+const applyTableMutationsMock = vi.hoisted(() => vi.fn(async () => ({
+  appliedMutations: 1,
+  affectedRows: 1,
+})));
+
+vi.mock("../../lib/tauriClient", () => ({
+  applyTableMutations: applyTableMutationsMock,
+}));
+
 const sessionMocks = vi.hoisted(() => {
   /** Creates a complete query state for one mocked table-workspace session. */
   function state(overrides: Partial<QuerySessionState>): QuerySessionState {
@@ -38,6 +47,9 @@ const sessionMocks = vi.hoisted(() => {
               { kind: "text", value: "PRI" },
               { kind: "text", value: "auto_increment" },
               { kind: "text", value: "" },
+              { kind: "null" },
+              { kind: "null" },
+              { kind: "text", value: "" },
             ],
             [
               { kind: "text", value: "name" },
@@ -45,6 +57,9 @@ const sessionMocks = vi.hoisted(() => {
               { kind: "text", value: "YES" },
               { kind: "null" },
               { kind: "text", value: "" },
+              { kind: "text", value: "" },
+              { kind: "text", value: "utf8mb4" },
+              { kind: "text", value: "utf8mb4_0900_ai_ci" },
               { kind: "text", value: "" },
               { kind: "text", value: "" },
             ],
@@ -161,12 +176,12 @@ async function assertVisualChangePreviews(): Promise<void> {
   expect(screen.getByRole("dialog", { name: "编辑单元格" })).toBeVisible();
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "new" } });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-  expect(screen.getByText(/UPDATE `shop`.`orders` SET `name` = 'new' WHERE `id` = 1;/)).toBeVisible();
+  expect(screen.getByText(/UPDATE `shop`.`orders` SET `name` = CONVERT\(X'6E6577' USING utf8mb4\) WHERE `id` = 1;/)).toBeVisible();
 
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
   expect(screen.getByText("PRIMARY")).toBeVisible();
   fireEvent.change(screen.getByLabelText("id 类型"), { target: { value: "bigint" } });
-  expect(screen.getByText(/CHANGE COLUMN `id` `id` bigint NOT NULL auto_increment/)).toBeVisible();
+  expect(screen.getByText(/CHANGE COLUMN `id` `id` bigint NOT NULL AUTO_INCREMENT/)).toBeVisible();
 }
 
 /** Verifies row selection follows the documented keyboard interaction model. */
@@ -261,11 +276,14 @@ async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "saved" } });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   const dataEditor = screen.getByRole("region", { name: "数据编辑器" });
-  expect(screen.getByText("待提交 DML")).toBeVisible();
+  expect(screen.getByText(/待提交 DML/)).toBeVisible();
   expect(dataEditor.lastElementChild).toBe(screen.getByLabelText("数据分页"));
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
   fireEvent.keyDown(workspace, { key: "s", metaKey: true });
-  expect(sessionMocks.sessions[5].run).toHaveBeenCalledWith(expect.stringContaining("UPDATE `shop`.`orders` SET `name` = 'saved'"));
+  expect(applyTableMutationsMock).toHaveBeenCalledWith(expect.objectContaining({
+    connectionId: "connection-1",
+    mutations: [expect.objectContaining({ type: "update" })],
+  }));
 }
 
 /** Verifies production saves require the existing second confirmation gesture. */
@@ -278,10 +296,29 @@ async function assertProductionSaveConfirmation(): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
   fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
-  expect(sessionMocks.sessions[5].run).not.toHaveBeenCalled();
+  expect(applyTableMutationsMock).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: /确认在生产环境提交/ })).toBeVisible();
   fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
-  expect(sessionMocks.sessions[5].run).toHaveBeenCalledTimes(1);
+  expect(applyTableMutationsMock).toHaveBeenCalledTimes(1);
+}
+
+/** Verifies changing a staged insert invalidates an already armed production confirmation. */
+async function assertProductionConfirmationTracksLatestInsert(): Promise<void> {
+  render(<TableWorkspace profile={{ ...PROFILE, environment: "production" }} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /新增行/ }));
+  const nameInput = screen.getByLabelText("新增行 1 name");
+  fireEvent.change(nameInput, { target: { value: "first" } });
+  const workspace = screen.getByRole("region", { name: "orders 表工作区" });
+  fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
+  expect(screen.getByRole("button", { name: /确认在生产环境提交/ })).toBeVisible();
+
+  fireEvent.change(nameInput, { target: { value: "latest" } });
+  expect(screen.getByRole("button", { name: /提交 1 项/ })).toBeVisible();
+  fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
+  expect(applyTableMutationsMock).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /确认在生产环境提交/ })).toBeVisible();
 }
 
 /** Verifies schema drafts participate in dirty reporting and the save shortcut. */
@@ -302,6 +339,61 @@ async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
   await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
 }
 
+/** Verifies page reads are primary-key ordered and refresh cannot replace a dirty row snapshot. */
+async function assertStableOrderingAndDirtyRefreshLock(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  await waitFor(() => expect(sessionMocks.sessions[1].run).toHaveBeenCalledWith(
+    "SELECT `id`, `name` FROM `shop`.`orders` ORDER BY `id` LIMIT 50 OFFSET 0;",
+  ));
+  fireEvent.doubleClick(screen.getByText("old"));
+  fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "dirty" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+  expect(screen.getByRole("button", { name: "刷新" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "刷新" })).toHaveAttribute("title", "请先提交或撤销当前变更");
+}
+
+/** Verifies inserted cells distinguish omitted DEFAULT from an explicit SQL NULL. */
+async function assertInsertDefaultAndNullStates(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "新增行" }));
+  expect(screen.getByLabelText("新增行 1 id")).toHaveAttribute("placeholder", "DEFAULT");
+  fireEvent.click(screen.getByRole("button", { name: "name 设为 NULL" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交 1 项" }));
+
+  await waitFor(() => expect(applyTableMutationsMock).toHaveBeenCalledWith(expect.objectContaining({
+    mutations: [{
+      type: "insert",
+      values: [{ name: "name", value: { kind: "null" } }],
+    }],
+  })));
+}
+
+/** Verifies a failed typed transaction retains the exact local change set for correction/retry. */
+async function assertFailedTypedCommitKeepsChanges(): Promise<void> {
+  applyTableMutationsMock.mockRejectedValueOnce({
+    code: "query",
+    message: "The staged row no longer exists or its key is not unique",
+    technicalDetails: null,
+    retryable: true,
+  });
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  fireEvent.doubleClick(screen.getByText("old"));
+  fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "retry-me" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交 1 项" }));
+
+  expect(await screen.findByText(/The staged row no longer exists/u)).toBeVisible();
+  expect(screen.getByText(/待提交 DML/u)).toBeVisible();
+  expect(screen.getByText("retry-me")).toBeVisible();
+}
+
 describe("TableWorkspace", () => {
   beforeEach(() => {
     sessionMocks.callIndex = 0;
@@ -309,6 +401,8 @@ describe("TableWorkspace", () => {
       session.run.mockClear();
       session.cancel.mockClear();
     }
+    applyTableMutationsMock.mockReset();
+    applyTableMutationsMock.mockResolvedValue({ appliedMutations: 1, affectedRows: 1 });
   });
   afterEach(() => {
     cleanup();
@@ -321,5 +415,9 @@ describe("TableWorkspace", () => {
   it("finds values within the current data page", assertCurrentPageDataSearch);
   it("exits the smallest edit layer and saves dirty DML with Cmd/Ctrl+S", assertEditingEscapeAndSaveShortcut);
   it("keeps production saves behind a second confirmation", assertProductionSaveConfirmation);
+  it("invalidates production confirmation when an insert changes", assertProductionConfirmationTracksLatestInsert);
   it("reports and saves dirty DDL", assertDdlDirtyStateAndSaveShortcut);
+  it("orders pages by primary key and locks refresh while dirty", assertStableOrderingAndDirtyRefreshLock);
+  it("keeps DEFAULT distinct from explicit NULL on inserts", assertInsertDefaultAndNullStates);
+  it("retains staged values when a typed transaction fails", assertFailedTypedCommitKeepsChanges);
 });

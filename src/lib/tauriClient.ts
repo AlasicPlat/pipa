@@ -1,5 +1,7 @@
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
+import type { ApplyTableMutationsInput } from "../bindings/ApplyTableMutationsInput";
+import type { ApplyTableMutationsResult } from "../bindings/ApplyTableMutationsResult";
 import type { RecordQueryHistoryInput } from "../bindings/RecordQueryHistoryInput";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
 import type {
@@ -37,6 +39,18 @@ export interface WorkspaceTabPayload {
  */
 export function setExecuteQueryAccelerator(accelerator: string): Promise<void> {
   return invoke<void>("set_execute_query_accelerator", { accelerator });
+}
+
+/**
+ * Commits one typed MySQL table change set as a parameterized backend transaction.
+ * @param input - Connection, target, and ordered typed row mutations.
+ * @returns The committed mutation and affected-row counts.
+ * Side effects: mutates the selected MySQL table atomically.
+ */
+export function applyTableMutations(
+  input: ApplyTableMutationsInput,
+): Promise<ApplyTableMutationsResult> {
+  return invoke<ApplyTableMutationsResult>("apply_table_mutations", { input });
 }
 
 /**

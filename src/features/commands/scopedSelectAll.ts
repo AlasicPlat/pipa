@@ -24,7 +24,7 @@ export function isAppSelectAllRegion(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
   }
-  return Boolean(target.closest(".editable-grid, .result-grid"));
+  return Boolean(target.closest(".editable-grid, .result-grid, .query-results"));
 }
 
 /**

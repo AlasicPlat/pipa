@@ -122,7 +122,7 @@ function cellText(cell: CellValue | undefined): string {
     return cell.value ? "true" : "false";
   }
   if (cell.kind === "json") {
-    return JSON.stringify(cell.value);
+    return cell.value;
   }
   if (cell.kind === "binary") {
     return `base64:${cell.value}`;

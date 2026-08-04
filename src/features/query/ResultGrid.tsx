@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
+import { isNativeTextSelectTarget } from "../commands/scopedSelectAll";
 import { matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import {
   cellValueToViewerText,
@@ -83,7 +84,7 @@ function renderCellValue(cell: CellValue | undefined): ReactNode {
     case "float":
       return String(cell.value);
     case "json":
-      return JSON.stringify(cell.value);
+      return cell.value;
     case "binary":
       return <span className="result-cell--binary">Binary</span>;
   }
@@ -162,6 +163,7 @@ export function ResultGrid({
   onSelectionChange,
 }: ResultGridProps) {
   const shortcuts = useShortcutSettings();
+  const gridRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const menuItemRef = useRef<HTMLButtonElement>(null);
   const resizeSessionRef = useRef<{ columnIndex: number; startX: number; startWidth: number } | null>(
@@ -247,6 +249,65 @@ export function ResultGrid({
     setContextMenu(null);
     setCellViewer(null);
   }, [rows.length]);
+
+  /**
+   * Selects every currently visible result cell (search/sort aware).
+   * @returns Nothing (`void`).
+   * Side effects: updates selection state and focuses the result grid.
+   */
+  function selectAllVisibleRows(): void {
+    if (viewRows.length === 0) {
+      return;
+    }
+    setAllSelected(true);
+    setSelection({
+      startRow: 0,
+      startCol: 0,
+      endRow: lastRowIndex,
+      endCol: lastColumnIndex,
+    });
+    setAnchor({ row: 0, col: 0 });
+    setFocusCell({ row: 0, col: 0 });
+    gridRef.current?.focus();
+  }
+
+  useEffect(() => {
+    /** Selects all result rows when Mod+A lands anywhere inside the results pane. */
+    function handleDocumentSelectAll(event: globalThis.KeyboardEvent): void {
+      if (viewRows.length === 0 || cellViewer) {
+        return;
+      }
+      if (!matchesShortcut(event, shortcuts.bindings.selectRows)) {
+        return;
+      }
+      const focusTarget = event.target instanceof Element ? event.target : document.activeElement;
+      if (isNativeTextSelectTarget(focusTarget)) {
+        return;
+      }
+      const grid = gridRef.current;
+      if (!grid) {
+        return;
+      }
+      const resultsRegion = grid.closest(".query-results");
+      const inResultsRegion =
+        focusTarget instanceof Element &&
+        (grid.contains(focusTarget) || Boolean(resultsRegion?.contains(focusTarget)));
+      if (!inResultsRegion) {
+        return;
+      }
+      event.preventDefault();
+      selectAllVisibleRows();
+    }
+
+    document.addEventListener("keydown", handleDocumentSelectAll, true);
+    return () => document.removeEventListener("keydown", handleDocumentSelectAll, true);
+  }, [
+    cellViewer,
+    lastColumnIndex,
+    lastRowIndex,
+    shortcuts.bindings.selectRows,
+    viewRows.length,
+  ]);
 
   useEffect(() => {
     onSelectionChange?.(describeSelection(normalizedSelection, allSelected, columns.length));
@@ -479,6 +540,7 @@ export function ResultGrid({
       return;
     }
     event.preventDefault();
+    gridRef.current?.focus();
     setContextMenu(null);
 
     if (event.metaKey || event.ctrlKey) {
@@ -557,6 +619,7 @@ export function ResultGrid({
       return;
     }
     event.preventDefault();
+    gridRef.current?.focus();
     setContextMenu(null);
     if (event.metaKey || event.ctrlKey) {
       applySelection(
@@ -610,6 +673,7 @@ export function ResultGrid({
     columnIndex: number,
   ): void {
     event.preventDefault();
+    gridRef.current?.focus();
     const alreadySelected =
       allSelected || isCellInSelection(normalizedSelection, rowIndex, columnIndex);
     if (!alreadySelected) {
@@ -641,15 +705,7 @@ export function ResultGrid({
     }
     if (matchesShortcut(event, shortcuts.bindings.selectRows)) {
       event.preventDefault();
-      setAllSelected(true);
-      setSelection({
-        startRow: 0,
-        startCol: 0,
-        endRow: lastRowIndex,
-        endCol: lastColumnIndex,
-      });
-      setAnchor({ row: 0, col: 0 });
-      setFocusCell({ row: 0, col: 0 });
+      selectAllVisibleRows();
       return;
     }
     if (event.key === "Escape") {
@@ -740,6 +796,7 @@ export function ResultGrid({
 
   return (
     <div
+      ref={gridRef}
       className={`result-grid${allSelected ? " result-grid--selected" : ""}`}
       role="grid"
       aria-label="查询结果"
@@ -754,7 +811,9 @@ export function ResultGrid({
           style={{ gridTemplateColumns, minWidth: gridMinWidth }}
         >
           {columns.map((column, index) => {
+            // Cmd+A selects data rows only — do not paint the header as selected.
             const columnSelected =
+              !allSelected &&
               normalizedSelection !== null &&
               index >= normalizedSelection.startCol &&
               index <= normalizedSelection.endCol &&

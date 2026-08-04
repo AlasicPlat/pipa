@@ -1,6 +1,6 @@
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
-import { quoteIdentifier } from "../tables/tableSql";
+import { mysqlUtf8Expression, quoteIdentifier } from "../tables/tableSql";
 
 /** Inclusive rectangular selection within a result grid. */
 export interface ResultSelectionRect {
@@ -32,7 +32,7 @@ export function cellValueToPlainText(cell: CellValue | undefined): string {
     case "float":
       return String(cell.value);
     case "json":
-      return JSON.stringify(cell.value);
+      return cell.value;
     case "binary":
       return "[Binary]";
   }
@@ -73,12 +73,51 @@ export function cellValueToViewerText(cell: CellValue | undefined): string {
     return "NULL";
   }
   if (cell.kind === "json") {
-    return JSON.stringify(cell.value, null, 2);
+    return formatJsonText(cell.value);
   }
   if (cell.kind === "binary") {
     return cell.value;
   }
   return cellValueToPlainText(cell);
+}
+
+/** Pretty-prints JSON punctuation without parsing or rounding numeric tokens. */
+function formatJsonText(value: string): string {
+  let result = "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] ?? "";
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === "\"") {
+      inString = true;
+      result += character;
+    } else if (character === "{" || character === "[") {
+      depth += 1;
+      result += `${character}\n${"  ".repeat(depth)}`;
+    } else if (character === "}" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      result = `${result.trimEnd()}\n${"  ".repeat(depth)}${character}`;
+    } else if (character === ",") {
+      result += `,\n${"  ".repeat(depth)}`;
+    } else if (character === ":") {
+      result += ": ";
+    } else if (!/\s/u.test(character)) {
+      result += character;
+    }
+  }
+  return result;
 }
 
 /**
@@ -105,16 +144,6 @@ function escapeMarkdownCell(value: string): string {
 }
 
 /**
- * Quotes a MySQL string literal using SQL-standard doubled apostrophes.
- * @param value - Untrusted literal text.
- * @returns A safely quoted SQL string literal.
- * Side effects: none.
- */
-function quotedString(value: string): string {
-  return `'${value.split("'").join("''")}'`;
-}
-
-/**
  * Formats a transport cell as a MySQL literal for INSERT / IN lists.
  * @param cell - Optional result cell.
  * @param databaseType - Native column type from the result schema.
@@ -137,12 +166,13 @@ export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType:
       if (/^(float|double|real|decimal|numeric)/u.test(normalizedType)) {
         return String(cell.value);
       }
-      return quotedString(String(cell.value));
+      return mysqlUtf8Expression(String(cell.value));
     }
     case "json":
-      return quotedString(JSON.stringify(cell.value));
+      return mysqlUtf8Expression(cell.value);
     case "binary":
-      return quotedString(cell.value);
+      // Result transport stores binary as base64; emit a MySQL-native constructor.
+      return `FROM_BASE64(${mysqlUtf8Expression(cell.value)})`;
     case "text":
     case "date_time": {
       const normalizedType = databaseType.toLowerCase();
@@ -154,7 +184,7 @@ export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType:
       ) {
         return cell.value.trim();
       }
-      return quotedString(cell.value);
+      return mysqlUtf8Expression(cell.value);
     }
   }
 }
@@ -258,6 +288,22 @@ export function inferTableNameFromSql(sql: string): string {
   return right ? `${left}.${right}` : left;
 }
 
+/**
+ * Resolves an INSERT target, qualifying a bare table with the connection database when possible.
+ * @param sql - Editor SQL that produced the result set.
+ * @param database - Active connection database, if any.
+ * @returns `db.table` / `table`, or `your_table` when parsing fails.
+ * Side effects: none.
+ */
+export function resolveExportTableName(sql: string, database?: string | null): string {
+  const inferred = inferTableNameFromSql(sql);
+  if (inferred === "your_table" || inferred.includes(".")) {
+    return inferred;
+  }
+  const schema = database?.trim();
+  return schema ? `${schema}.${inferred}` : inferred;
+}
+
 export interface SerializeSelectionAsTsvOptions {
   /** When true, prepend selected column names (SQL aliases when present). */
   includeHeaders?: boolean;
@@ -352,19 +398,29 @@ export function serializeSelectionAsJson(
 
   if (bounds.startRow === bounds.endRow && columnIndexes.length === 1) {
     const columnIndex = columnIndexes[0] ?? 0;
-    return JSON.stringify(cellValueToJsonValue(rows[bounds.startRow]?.[columnIndex]), null, 2);
+    return cellValueToJsonLiteral(rows[bounds.startRow]?.[columnIndex]);
   }
 
-  const objects: Record<string, unknown>[] = [];
+  const objects: string[] = [];
   for (let rowIndex = bounds.startRow; rowIndex <= bounds.endRow; rowIndex += 1) {
-    const record: Record<string, unknown> = {};
-    for (const columnIndex of columnIndexes) {
+    const fields = columnIndexes.map((columnIndex) => {
       const name = columns[columnIndex]?.name ?? `column_${columnIndex}`;
-      record[name] = cellValueToJsonValue(rows[rowIndex]?.[columnIndex]);
-    }
-    objects.push(record);
+      return `  ${JSON.stringify(name)}: ${cellValueToJsonLiteral(rows[rowIndex]?.[columnIndex])}`;
+    });
+    objects.push(`{\n${fields.join(",\n")}\n}`);
   }
-  return JSON.stringify(objects.length === 1 ? objects[0] : objects, null, 2);
+  if (objects.length === 1) {
+    return objects[0] ?? "{}";
+  }
+  return `[\n${objects.map((object) => object.split("\n").map((line) => `  ${line}`).join("\n")).join(",\n")}\n]`;
+}
+
+/** Converts one cell to a JSON literal while inserting validated raw JSON without reparsing it. */
+function cellValueToJsonLiteral(cell: CellValue | undefined): string {
+  if (cell?.kind === "json") {
+    return cell.value;
+  }
+  return JSON.stringify(cellValueToJsonValue(cell)) ?? "null";
 }
 
 /**
@@ -485,11 +541,11 @@ export interface SerializeRowsAsInsertOptions {
 }
 
 /**
- * Builds one INSERT statement per selected result row.
+ * Builds a standard multi-row INSERT statement for the selected result rows.
  * @param columns - Result schema.
  * @param rows - Loaded result rows.
  * @param options - Target table, whether to keep `id` columns, and optional row indexes.
- * @returns Newline-joined INSERT statements, or an empty string when no columns remain.
+ * @returns One `INSERT INTO … VALUES (…), (…);` statement, or empty when no columns remain.
  * Side effects: none.
  */
 export function serializeRowsAsInsert(
@@ -508,39 +564,76 @@ export function serializeRowsAsInsert(
   const target = formatInsertTableTarget(options.tableName);
   const columnList = columnIndexes.map((index) => quoteIdentifier(columns[index]?.name ?? "")).join(", ");
   const indexes = options.rowIndexes ?? rows.map((_, index) => index);
+  if (indexes.length === 0) {
+    return "";
+  }
 
-  return indexes
-    .map((rowIndex) => {
-      const values = columnIndexes
-        .map((columnIndex) =>
-          cellValueToSqlLiteral(rows[rowIndex]?.[columnIndex], columns[columnIndex]?.databaseType ?? ""),
-        )
-        .join(", ");
-      return `INSERT INTO ${target} (${columnList}) VALUES (${values});`;
-    })
-    .join("\n");
+  const valueTuples = indexes.map((rowIndex) => {
+    const values = columnIndexes
+      .map((columnIndex) =>
+        cellValueToSqlLiteral(rows[rowIndex]?.[columnIndex], columns[columnIndex]?.databaseType ?? ""),
+      )
+      .join(", ");
+    return `(${values})`;
+  });
+
+  if (valueTuples.length === 1) {
+    return `INSERT INTO ${target} (${columnList}) VALUES ${valueTuples[0]};`;
+  }
+  return `INSERT INTO ${target} (${columnList}) VALUES\n${valueTuples.join(",\n")};`;
 }
+
+export type DownloadTextFileResult = "saved" | "cancelled" | "failed";
 
 /**
  * Triggers a browser/Tauri download for the provided CSV text.
  * @param csv - Serialized CSV document.
  * @param fileName - Suggested download file name.
- * @returns Nothing (`void`).
- * Side effects: creates a temporary object URL and clicks a download anchor.
+ * @returns Whether the file was saved, cancelled, or failed.
+ * Side effects: opens a native save dialog in Tauri, or clicks a download anchor in browsers.
  */
-export function downloadCsv(csv: string, fileName: string): void {
-  downloadTextFile(csv, fileName, "text/csv;charset=utf-8");
+export async function downloadCsv(csv: string, fileName: string): Promise<DownloadTextFileResult> {
+  return downloadTextFile(csv, fileName, "text/csv;charset=utf-8");
 }
 
 /**
- * Triggers a browser/Tauri download for arbitrary text content.
+ * Saves text content through the native save dialog (Tauri) or an anchor download (browser).
  * @param content - File body.
  * @param fileName - Suggested download file name.
- * @param mimeType - MIME type for the Blob.
- * @returns Nothing (`void`).
- * Side effects: creates a temporary object URL and clicks a download anchor.
+ * @param mimeType - MIME type for the Blob fallback path.
+ * @returns Whether the file was saved, cancelled, or failed.
+ * Side effects: may open a save dialog and write through the desktop backend.
  */
-export function downloadTextFile(content: string, fileName: string, mimeType: string): void {
+export async function downloadTextFile(
+  content: string,
+  fileName: string,
+  mimeType: string,
+): Promise<DownloadTextFileResult> {
+  let usedNativeSave = false;
+  try {
+    const { invoke, isTauri } = await import("@tauri-apps/api/core");
+    if (isTauri()) {
+      usedNativeSave = true;
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const extension = fileName.includes(".") ? fileName.split(".").pop() ?? "" : "";
+      const path = await save({
+        defaultPath: fileName,
+        filters: extension
+          ? [{ name: extension.toUpperCase(), extensions: [extension] }]
+          : undefined,
+      });
+      if (!path) {
+        return "cancelled";
+      }
+      await invoke<void>("write_text_file", { path, contents: content });
+      return "saved";
+    }
+  } catch {
+    if (usedNativeSave) {
+      return "failed";
+    }
+  }
+
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -551,4 +644,5 @@ export function downloadTextFile(content: string, fileName: string, mimeType: st
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+  return "saved";
 }

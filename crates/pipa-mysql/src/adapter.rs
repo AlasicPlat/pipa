@@ -1,8 +1,8 @@
 use crate::value::{convert_cell, normalize_database_type};
 use futures_util::TryStreamExt;
 use pipa_core::{
-    AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, Engine, QueryColumn, QueryEvent,
-    QueryRequest, TlsMode,
+    AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult, ConnectionProfile,
+    DatabaseAdapter, Engine, QueryColumn, QueryEvent, QueryRequest, TlsMode,
 };
 use secrecy::{ExposeSecret, SecretString};
 use sqlx_core::{
@@ -38,6 +38,16 @@ impl MySqlAdapter {
         cancellation: CancellationToken,
     ) -> Result<(), AppError> {
         execute_query(profile, password, request, events, cancellation, true).await
+    }
+
+    /// Applies one group of typed table mutations using bound parameters and one transaction.
+    pub async fn apply_table_mutations(
+        &self,
+        profile: &ConnectionProfile,
+        password: SecretString,
+        input: ApplyTableMutationsInput,
+    ) -> Result<ApplyTableMutationsResult, AppError> {
+        crate::mutation::apply_table_mutations(profile, password, input).await
     }
 }
 
@@ -248,7 +258,7 @@ async fn execute_query(
 }
 
 /// Builds profile-derived SQLx options and a lazy one-connection pool.
-fn create_pool(profile: &ConnectionProfile, password: &SecretString) -> MySqlPool {
+pub(crate) fn create_pool(profile: &ConnectionProfile, password: &SecretString) -> MySqlPool {
     let ssl_mode = match profile.tls_mode {
         TlsMode::Disabled => MySqlSslMode::Disabled,
         TlsMode::Preferred => MySqlSslMode::Preferred,
@@ -319,7 +329,7 @@ async fn send_query_failure(
 }
 
 /// Maps connection-phase SQLx failures into stable application categories.
-fn map_connection_error(error: &SqlxError, password: &str) -> AppError {
+pub(crate) fn map_connection_error(error: &SqlxError, password: &str) -> AppError {
     let (code, message, retryable) = match error {
         SqlxError::PoolTimedOut => (AppErrorCode::Timeout, "Connection timed out", true),
         SqlxError::Database(database_error)
@@ -344,7 +354,7 @@ fn map_connection_error(error: &SqlxError, password: &str) -> AppError {
 }
 
 /// Maps query-phase SQLx failures into stable application categories.
-fn map_query_error(error: &SqlxError, password: &str) -> AppError {
+pub(crate) fn map_query_error(error: &SqlxError, password: &str) -> AppError {
     let (code, message, retryable) = match error {
         SqlxError::PoolTimedOut => (AppErrorCode::Timeout, "Query timed out", true),
         SqlxError::Database(database_error)

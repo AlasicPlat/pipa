@@ -1135,7 +1135,7 @@ fn decode_binlog_value(value: BinlogValue<'_>, column: &Column) -> BinlogCell {
         BinlogValue::Value(value) => decode_mysql_value(value, column),
         BinlogValue::Jsonb(value) => match serde_json::Value::try_from(value) {
             Ok(value) => BinlogCell::Value {
-                value: CellValue::Json(value),
+                value: CellValue::Json(value.to_string()),
             },
             Err(_error) => BinlogCell::DecodeError {
                 message: "The binary JSON value could not be decoded".into(),

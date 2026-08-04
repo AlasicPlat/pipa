@@ -1,15 +1,20 @@
 use crate::state::AppState;
 use chrono::Utc;
 use pipa_core::{
-    AppError, AppErrorCode, ConnectionProfile, DatabaseAdapter, Engine, QueryEvent, QueryRequest,
-    RecordQueryHistoryInput, SaveConnectionInput,
+    AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult, ConnectionProfile,
+    DatabaseAdapter, Engine, QueryEvent, QueryRequest, RecordQueryHistoryInput,
+    SaveConnectionInput,
 };
 use pipa_store::{
     CommonSql as StoredCommonSql, QueryHistoryEntry, SqlFolder as StoredSqlFolder,
     SqlLibrary as StoredSqlLibrary, WorkspaceTab as StoredWorkspaceTab,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
 use tauri::{ipc::Channel, State};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -173,6 +178,12 @@ impl From<StoredSqlLibrary> for SqlLibraryPayload {
     }
 }
 
+/// Writes UTF-8 text to an absolute path chosen by the native save dialog.
+#[tauri::command]
+pub(crate) fn write_text_file(path: String, contents: String) -> Result<(), AppError> {
+    write_text_file_inner(path, contents)
+}
+
 /// Returns all saved non-secret connection profiles.
 #[tauri::command]
 pub(crate) fn list_connections(
@@ -253,6 +264,15 @@ pub(crate) async fn run_query(
     on_event: Channel<QueryEvent>,
 ) -> Result<Uuid, AppError> {
     run_query_inner(&state, request, on_event).await
+}
+
+/// Applies one reviewed MySQL table change set through a parameterized backend transaction.
+#[tauri::command]
+pub(crate) async fn apply_table_mutations(
+    state: State<'_, AppState>,
+    input: ApplyTableMutationsInput,
+) -> Result<ApplyTableMutationsResult, AppError> {
+    apply_table_mutations_inner(&state, input).await
 }
 
 /// Signals cancellation for one running query.
@@ -469,6 +489,24 @@ fn engine_validation_error(expected_engine: &'static str) -> AppError {
         technical_details: None,
         retryable: false,
     }
+}
+
+/// Loads the saved MySQL credential locally and applies an atomic typed mutation request.
+async fn apply_table_mutations_inner(
+    state: &AppState,
+    input: ApplyTableMutationsInput,
+) -> Result<ApplyTableMutationsResult, AppError> {
+    let profile = state.local_store.get_connection(input.connection_id)?;
+    if !matches!(profile.engine, Engine::MySql) {
+        return Err(engine_validation_error("MySQL"));
+    }
+    let password = state
+        .local_store
+        .get_connection_credential(input.connection_id)?;
+    state
+        .mysql
+        .apply_table_mutations(&profile, password, input)
+        .await
 }
 
 /// Registers and starts one engine-native query with an eight-event backpressure bridge.
@@ -689,6 +727,36 @@ fn library_validation_error(message: &str) -> AppError {
         technical_details: None,
         retryable: false,
     }
+}
+
+/// Writes UTF-8 text only to absolute, non-traversal filesystem paths.
+fn write_text_file_inner(path: String, contents: String) -> Result<(), AppError> {
+    let target = PathBuf::from(path.trim());
+    if !target.is_absolute() || path_has_traversal(&target) {
+        return Err(library_validation_error("导出路径无效"));
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(AppError {
+                code: AppErrorCode::NotFound,
+                message: "导出目录不存在".into(),
+                technical_details: None,
+                retryable: false,
+            });
+        }
+    }
+    std::fs::write(&target, contents.as_bytes()).map_err(|error| AppError {
+        code: AppErrorCode::Storage,
+        message: "写入导出文件失败".into(),
+        technical_details: Some(error.to_string()),
+        retryable: true,
+    })
+}
+
+/// Returns whether any path component attempts directory traversal.
+fn path_has_traversal(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
 }
 
 /// Forwards ordered query events and removes cancellation state on every exit path.
