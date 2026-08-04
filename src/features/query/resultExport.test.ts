@@ -9,6 +9,7 @@ import {
   primaryKeyColumnIndexes,
   serializeResultAsCsv,
   serializeResultAsTsv,
+  resolveExportTableName,
   serializeRowsAsInsert,
   serializeSelectionAsInList,
   serializeSelectionAsJson,
@@ -26,7 +27,7 @@ const ROWS: CellValue[][] = [
   [
     { kind: "integer", value: "1" },
     { kind: "text", value: "hello\tworld" },
-    { kind: "json", value: { ok: true } },
+    { kind: "json", value: "{\"ok\":true}" },
   ],
   [
     { kind: "integer", value: "2" },
@@ -91,14 +92,23 @@ describe("resultExport", () => {
     expect(cellValueToSqlLiteral({ kind: "null" }, "TEXT")).toBe("NULL");
     expect(cellValueToSqlLiteral({ kind: "boolean", value: true }, "TINYINT")).toBe("1");
     expect(cellValueToSqlLiteral({ kind: "integer", value: "9" }, "BIGINT")).toBe("9");
-    expect(cellValueToSqlLiteral({ kind: "text", value: "O'Reilly" }, "VARCHAR")).toBe("'O''Reilly'");
-    expect(cellValueToSqlLiteral({ kind: "json", value: { a: 1 } }, "JSON")).toBe("'{\"a\":1}'");
+    expect(cellValueToSqlLiteral({ kind: "text", value: "O'Reilly" }, "VARCHAR")).toBe(
+      "CONVERT(X'4F275265696C6C79' USING utf8mb4)",
+    );
+    expect(cellValueToSqlLiteral({ kind: "json", value: "{\"a\":1}" }, "JSON")).toBe(
+      "CONVERT(X'7B2261223A317D' USING utf8mb4)",
+    );
+    expect(cellValueToSqlLiteral({ kind: "binary", value: "AAEC" }, "BLOB")).toBe(
+      "FROM_BASE64(CONVERT(X'41414543' USING utf8mb4))",
+    );
   });
 
   it("infers table names from FROM clauses", () => {
     expect(inferTableNameFromSql("SELECT * FROM orders WHERE id = 1")).toBe("orders");
     expect(inferTableNameFromSql("select a from `shop`.`order_items` o")).toBe("shop.order_items");
     expect(inferTableNameFromSql("SELECT 1")).toBe("your_table");
+    expect(resolveExportTableName("SELECT * FROM orders", "shop")).toBe("shop.orders");
+    expect(resolveExportTableName("SELECT * FROM `shop`.`orders`", "other")).toBe("shop.orders");
   });
 
   it("identifies id columns as primary-key candidates", () => {
@@ -114,7 +124,7 @@ describe("resultExport", () => {
         rowIndexes: [0],
       }),
     ).toBe(
-      "INSERT INTO `demo`.`orders` (`id`, `note`, `payload`) VALUES (1, 'hello\tworld', '{\"ok\":true}');",
+      "INSERT INTO `demo`.`orders` (`id`, `note`, `payload`) VALUES (1, CONVERT(X'68656C6C6F09776F726C64' USING utf8mb4), CONVERT(X'7B226F6B223A747275657D' USING utf8mb4));",
     );
 
     expect(
@@ -125,8 +135,9 @@ describe("resultExport", () => {
       }),
     ).toBe(
       [
-        "INSERT INTO `orders` (`note`, `payload`) VALUES ('hello\tworld', '{\"ok\":true}');",
-        "INSERT INTO `orders` (`note`, `payload`) VALUES (NULL, 'AAEC');",
+        "INSERT INTO `orders` (`note`, `payload`) VALUES",
+        "(CONVERT(X'68656C6C6F09776F726C64' USING utf8mb4), CONVERT(X'7B226F6B223A747275657D' USING utf8mb4)),",
+        "(NULL, FROM_BASE64(CONVERT(X'41414543' USING utf8mb4)));",
       ].join("\n"),
     );
   });
@@ -158,6 +169,21 @@ describe("resultExport", () => {
         endCol: 0,
       }),
     ).toBe("IN (1, 2)");
+  });
+
+  it("exports raw JSON numbers without a JavaScript precision round trip", () => {
+    expect(
+      serializeSelectionAsJson(COLUMNS, [[
+        { kind: "integer", value: "1" },
+        { kind: "text", value: "exact" },
+        { kind: "json", value: "{\"id\":18446744073709551615}" },
+      ]], {
+        startRow: 0,
+        startCol: 2,
+        endRow: 0,
+        endCol: 2,
+      }),
+    ).toBe("{\"id\":18446744073709551615}");
   });
 
   it("describes selection status for the results header", () => {

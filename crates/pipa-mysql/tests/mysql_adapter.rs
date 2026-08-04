@@ -1,6 +1,7 @@
 use pipa_core::{
-    AppErrorCode, CellValue, ConnectionProfile, DatabaseAdapter, Engine, Environment, QueryEvent,
-    QueryRequest, TlsMode,
+    AppErrorCode, ApplyTableMutationsInput, CellValue, ConnectionProfile, DatabaseAdapter, Engine,
+    Environment, QueryEvent, QueryRequest, TableMutation, TableMutationField, TableMutationValue,
+    TlsMode,
 };
 use pipa_mysql::MySqlAdapter;
 use secrecy::SecretString;
@@ -111,7 +112,7 @@ async fn streams_every_lossless_value_category() {
                 && decimal_value == "12.3400"
                 && *float_value == 1.25
                 && *double_value == 2.5
-                && json_value == &serde_json::json!({"pipa": true})
+                && json_value == "{\"pipa\": true}"
                 && binary_value == "AP8="
                 && date_value == "2026-07-17"
                 && time_value == "12:34:56.123456"
@@ -358,6 +359,293 @@ async fn readonly_query_uses_a_database_enforced_session() {
         cleanup_events.last(),
         Some(QueryEvent::Completed { .. })
     ));
+}
+
+/// Verifies typed binary/JSON/default writes commit atomically and a later key conflict rolls back.
+#[tokio::test]
+async fn applies_typed_table_mutations_atomically() {
+    let profile = test_profile();
+    let table_name = format!("pipa_mutation_{}", Uuid::new_v4().simple());
+    let setup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!(
+            "CREATE TABLE `{table_name}` (\
+                id BIGINT UNSIGNED PRIMARY KEY, \
+                token VARBINARY(4) NOT NULL, \
+                payload JSON NOT NULL, \
+                note VARCHAR(50) NOT NULL DEFAULT 'default-note'\
+             ); \
+             INSERT INTO `{table_name}` VALUES (18446744073709551615, X'00FF', JSON_OBJECT('id', 1), 'old')"
+        ),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let result = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test".into(),
+                table: table_name.clone(),
+                mutations: vec![
+                    TableMutation::Update {
+                        key: vec![field(
+                            "id",
+                            TableMutationValue::Integer("18446744073709551615".into()),
+                        )],
+                        values: vec![
+                            field("token", TableMutationValue::Binary("AQID".into())),
+                            field(
+                                "payload",
+                                TableMutationValue::Json("{\"id\":18446744073709551615}".into()),
+                            ),
+                        ],
+                    },
+                    TableMutation::Insert {
+                        values: vec![
+                            field("id", TableMutationValue::Integer("2".into())),
+                            field("token", TableMutationValue::Binary("BAUG".into())),
+                            field("payload", TableMutationValue::Json("{\"ok\":true}".into())),
+                        ],
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("typed mutation transaction should commit");
+    assert_eq!(result.applied_mutations, 2);
+
+    let rows = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT id, token, payload, note FROM `{table_name}` ORDER BY id"),
+    )
+    .await;
+    let QueryEvent::Batch { rows, .. } = &rows[2] else {
+        panic!("typed mutation verification should return rows: {rows:?}");
+    };
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(
+        rows[0].as_slice(),
+        [
+            CellValue::Integer(id),
+            CellValue::Binary(token),
+            CellValue::Json(payload),
+            CellValue::Text(note),
+        ] if id == "2"
+            && token == "BAUG"
+            && payload == "{\"ok\": true}"
+            && note == "default-note"
+    ));
+    assert!(matches!(
+        rows[1].as_slice(),
+        [
+            CellValue::Integer(id),
+            CellValue::Binary(token),
+            CellValue::Json(payload),
+            CellValue::Text(note),
+        ] if id == "18446744073709551615"
+            && token == "AQID"
+            && payload.contains("18446744073709551615")
+            && note == "old"
+    ));
+
+    let conflict = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test".into(),
+                table: table_name.clone(),
+                mutations: vec![
+                    TableMutation::Insert {
+                        values: vec![
+                            field("id", TableMutationValue::Integer("3".into())),
+                            field("token", TableMutationValue::Binary("BwgJ".into())),
+                            field("payload", TableMutationValue::Json("{}".into())),
+                        ],
+                    },
+                    TableMutation::Update {
+                        key: vec![field("id", TableMutationValue::Integer("999".into()))],
+                        values: vec![field("note", TableMutationValue::Text("never".into()))],
+                    },
+                ],
+            },
+        )
+        .await
+        .expect_err("missing original key should roll the transaction back");
+    assert!(conflict.retryable);
+
+    let rolled_back = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT COUNT(*) FROM `{table_name}` WHERE id = 3"),
+    )
+    .await;
+    assert!(matches!(
+        &rolled_back[2],
+        QueryEvent::Batch { rows, .. }
+            if rows.len() == 1
+                && matches!(rows[0].as_slice(), [CellValue::Integer(count)] if count == "0")
+    ));
+
+    let cleanup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+}
+
+/// Verifies every scalar mutation bind family reaches MySQL with the intended value.
+#[tokio::test]
+async fn applies_all_scalar_mutation_value_types() {
+    let profile = test_profile();
+    let table_name = format!("pipa_scalar_mutation_{}", Uuid::new_v4().simple());
+    let setup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!(
+            "CREATE TABLE `{table_name}` (\
+                id INT PRIMARY KEY, \
+                enabled BOOLEAN NOT NULL, \
+                amount DECIMAL(20,4) NOT NULL, \
+                ratio DOUBLE NOT NULL, \
+                happened_at DATETIME(6) NOT NULL, \
+                optional_note VARCHAR(20) NULL\
+             ) ENGINE=InnoDB"
+        ),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let result = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test".into(),
+                table: table_name.clone(),
+                mutations: vec![TableMutation::Insert {
+                    values: vec![
+                        field("id", TableMutationValue::Integer("1".into())),
+                        field("enabled", TableMutationValue::Boolean(true)),
+                        field(
+                            "amount",
+                            TableMutationValue::Decimal("1234567890123456.7890".into()),
+                        ),
+                        field("ratio", TableMutationValue::Float("1.25".into())),
+                        field(
+                            "happened_at",
+                            TableMutationValue::DateTime("2026-08-04T12:34:56.123456".into()),
+                        ),
+                        field("optional_note", TableMutationValue::Null),
+                    ],
+                }],
+            },
+        )
+        .await
+        .expect("all scalar bind families should commit");
+    assert_eq!(result.applied_mutations, 1);
+
+    let rows = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT enabled, amount, ratio, happened_at, optional_note FROM `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(
+        &rows[2],
+        QueryEvent::Batch { rows, .. }
+            if rows.len() == 1
+                && matches!(
+                    rows[0].as_slice(),
+                    [
+                        CellValue::Integer(enabled),
+                        CellValue::Decimal(amount),
+                        CellValue::Float(ratio),
+                        CellValue::DateTime(happened_at),
+                        CellValue::Null,
+                    ] if enabled == "1"
+                        && amount == "1234567890123456.7890"
+                        && *ratio == 1.25
+                        && happened_at == "2026-08-04T12:34:56.123456"
+                )
+    ));
+
+    let cleanup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+}
+
+/// Verifies non-transactional engines are rejected before any staged row can be written.
+#[tokio::test]
+async fn rejects_non_transactional_table_mutations() {
+    let profile = test_profile();
+    let table_name = format!("pipa_myisam_mutation_{}", Uuid::new_v4().simple());
+    let setup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("CREATE TABLE `{table_name}` (id INT PRIMARY KEY) ENGINE=MyISAM"),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let error = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test".into(),
+                table: table_name.clone(),
+                mutations: vec![TableMutation::Insert {
+                    values: vec![field("id", TableMutationValue::Integer("1".into()))],
+                }],
+            },
+        )
+        .await
+        .expect_err("MyISAM cannot provide request-wide rollback semantics");
+    assert!(matches!(error.code, AppErrorCode::Validation));
+
+    let rows = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT COUNT(*) FROM `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(
+        &rows[2],
+        QueryEvent::Batch { rows, .. }
+            if rows.len() == 1
+                && matches!(rows[0].as_slice(), [CellValue::Integer(count)] if count == "0")
+    ));
+
+    let cleanup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+}
+
+/// Creates one named typed field for integration mutation requests.
+fn field(name: &str, value: TableMutationValue) -> TableMutationField {
+    TableMutationField {
+        name: name.into(),
+        value,
+    }
 }
 
 /// Verifies authentication failures use a stable category and redact the supplied password.

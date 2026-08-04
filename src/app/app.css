@@ -913,6 +913,9 @@ body {
 }
 
 .workspace__topbar {
+  /* backdrop-filter creates a stacking context; lift its popovers above the later workspace content. */
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2363,6 +2366,43 @@ body {
   font-style: italic;
 }
 
+.insert-cell-editor {
+  display: grid;
+  grid-template-rows: minmax(26px, 1fr) 20px;
+  align-content: stretch;
+}
+
+.insert-cell-editor > span {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  padding: 0 5px 3px;
+  overflow: visible;
+}
+
+.insert-cell-editor > span button {
+  min-width: 0;
+  flex: 1 1 50%;
+  padding: 1px 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 7px;
+}
+
+.insert-cell-editor > span button.is-active {
+  border-color: color-mix(in srgb, var(--accent-mysql) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-mysql) 10%, transparent);
+  color: var(--accent-mysql);
+}
+
+.insert-cell-editor > span button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .table-cell-editor-backdrop {
   position: fixed;
   inset: 0;
@@ -2492,6 +2532,11 @@ body {
 
 .table-cell-editor > footer button:hover {
   background: var(--surface-hover);
+}
+
+.table-cell-editor > footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .table-cell-editor > footer .table-cell-editor__save {
@@ -2699,6 +2744,16 @@ body {
 .structure-grid__row input:focus {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+}
+
+.structure-grid__row.is-locked {
+  background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
+}
+
+.structure-grid__row input:disabled,
+.default-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .structure-grid__row > label {

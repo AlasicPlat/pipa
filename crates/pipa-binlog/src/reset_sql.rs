@@ -363,9 +363,7 @@ fn value_literal(value: &CellValue) -> Result<String, &'static str> {
         CellValue::Float(value) if value.is_finite() => Ok(value.to_string()),
         CellValue::Float(_) => Err("a floating-point value is not finite"),
         CellValue::Text(value) | CellValue::DateTime(value) => Ok(utf8_literal(value)),
-        CellValue::Json(value) => serde_json::to_string(value)
-            .map(|value| utf8_literal(&value))
-            .map_err(|_| "a JSON value could not be serialized"),
+        CellValue::Json(value) => Ok(utf8_literal(value)),
         CellValue::Binary(value) => STANDARD
             .decode(value)
             .map(|bytes| format!("X'{}'", hex(&bytes)))

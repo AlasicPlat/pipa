@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+bigdecimal.workspace = true
 futures-util.workspace = true
 pipa-core = { path = "../pipa-core" }
 secrecy.workspace = true

@@ -10,6 +10,7 @@
     "core:webview:allow-create-webview-window",
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",
+    "dialog:allow-save",
     "process:allow-restart",
     "updater:allow-check",
     "updater:allow-download-and-install"

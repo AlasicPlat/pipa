@@ -207,7 +207,7 @@ function renderStoredCellValue(cell: CellValue): ReactNode {
     case "float":
       return String(cell.value);
     case "json":
-      return JSON.stringify(cell.value);
+      return cell.value;
     case "binary":
       return <span className="binlog-value binlog-value--binary">二进制数据</span>;
     default:

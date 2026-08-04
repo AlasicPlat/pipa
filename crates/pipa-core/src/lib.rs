@@ -7,6 +7,7 @@ mod connection;
 mod error;
 mod query;
 mod sql_policy;
+mod table;
 
 mod adapter;
 
@@ -22,3 +23,7 @@ pub use connection::{ConnectionProfile, Engine, Environment, SaveConnectionInput
 pub use error::{AppError, AppErrorCode};
 pub use query::{CellValue, QueryColumn, QueryEvent, QueryRequest, RecordQueryHistoryInput};
 pub use sql_policy::{classify_sql, mcp_may_execute, ExecutionSource, SqlRisk};
+pub use table::{
+    ApplyTableMutationsInput, ApplyTableMutationsResult, TableMutation, TableMutationField,
+    TableMutationValue,
+};

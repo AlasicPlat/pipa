@@ -104,7 +104,7 @@ pub(crate) fn convert_cell(
         ValueKind::Decimal => CellValue::Decimal(row.try_get_unchecked::<String, _>(index)?),
         ValueKind::Float32 => float_cell(row.try_get_unchecked::<f32, _>(index)?),
         ValueKind::Float64 => float_cell(row.try_get_unchecked::<f64, _>(index)?),
-        ValueKind::Json => CellValue::Json(row.try_get::<serde_json::Value, _>(index)?),
+        ValueKind::Json => CellValue::Json(row.try_get_unchecked::<String, _>(index)?),
         ValueKind::Binary => binary_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?),
         ValueKind::Date | ValueKind::Time => {
             temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?, false)
@@ -159,10 +159,12 @@ mod tests {
         assert!(matches!(float_cell(1.5), CellValue::Float(value) if value == 1.5));
     }
 
-    /// Verifies JSON uses structured JSON transport values.
+    /// Verifies JSON uses raw text so JavaScript cannot round large numbers.
     #[test]
     fn classifies_json_values() {
         assert_eq!(classify_type("JSON"), ValueKind::Json);
+        let raw = "{\"id\":18446744073709551615}".to_owned();
+        assert!(matches!(CellValue::Json(raw.clone()), CellValue::Json(value) if value == raw));
     }
 
     /// Verifies every binary family is base64 encoded.

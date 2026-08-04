@@ -20,12 +20,14 @@ describe("scopedSelectAll", () => {
       <div class="monaco-editor"><textarea id="monaco"></textarea></div>
       <div class="editable-grid" tabindex="0" id="grid"></div>
       <div class="result-grid" tabindex="0" id="results"></div>
+      <section class="query-results" id="results-pane"><button id="export">导出</button></section>
     `;
     expect(isNativeTextSelectTarget(document.getElementById("sql"))).toBe(true);
     expect(isNativeTextSelectTarget(document.getElementById("monaco"))).toBe(true);
     expect(isNativeTextSelectTarget(document.getElementById("check"))).toBe(false);
     expect(isAppSelectAllRegion(document.getElementById("grid"))).toBe(true);
     expect(isAppSelectAllRegion(document.getElementById("results"))).toBe(true);
+    expect(isAppSelectAllRegion(document.getElementById("export"))).toBe(true);
   });
 
   it("selects only the marked DDL surface for Mod+A", () => {

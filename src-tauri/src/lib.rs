@@ -154,6 +154,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_execute_query_accelerator,
+            commands::write_text_file,
             commands::list_connections,
             commands::delete_connection,
             commands::rename_connection,
@@ -162,6 +163,7 @@ pub fn run() {
             commands::test_mysql_connection,
             commands::save_redis_connection,
             commands::test_redis_connection,
+            commands::apply_table_mutations,
             commands::run_query,
             commands::cancel_query,
             commands::load_workspace,

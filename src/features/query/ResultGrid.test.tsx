@@ -35,7 +35,7 @@ const ROW: CellValue[] = [
   { kind: "integer", value: "1" },
   { kind: "integer", value: "9007199254740993" },
   { kind: "decimal", value: "12.3400" },
-  { kind: "json", value: { compact: true } },
+  { kind: "json", value: "{\"compact\":true}" },
   { kind: "binary", value: "AAEC" },
   { kind: "null" },
 ];
@@ -101,6 +101,50 @@ function assertSelectAllThenCopyShortcut(): void {
   expect(grid).toHaveClass("result-grid--selected");
   fireEvent.keyDown(grid, { key: "c", metaKey: true });
   expect(onCopyAll).toHaveBeenCalledTimes(1);
+}
+
+/**
+ * Verifies clicking a result cell focuses the grid so Mod+A selects all rows.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: mouse-downs a cell then dispatches the select-all shortcut on document.
+ */
+function assertSelectAllAfterCellClick(): void {
+  render(
+    <section className="query-results">
+      <ResultGrid columns={COLUMNS} rows={[ROW, ROW_TWO]} running={false} incomplete={false} />
+    </section>,
+  );
+  const cell = screen.getByText("9007199254740993");
+  fireEvent.mouseDown(cell);
+  const grid = screen.getByRole("grid", { name: "查询结果" });
+  expect(grid).toHaveFocus();
+  fireEvent.keyDown(grid, { key: "a", metaKey: true });
+  expect(grid).toHaveClass("result-grid--selected");
+  expect(grid).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("columnheader", { name: /id/i })).not.toHaveClass("is-selected");
+  expect(screen.getByText("9007199254740993")).toHaveClass("is-selected");
+}
+
+/**
+ * Verifies Mod+A from results chrome (not the grid itself) still selects all rows.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: focuses a sibling control in `.query-results` and dispatches Mod+A.
+ */
+function assertSelectAllFromResultsPaneChrome(): void {
+  render(
+    <section className="query-results">
+      <button type="button">导出</button>
+      <ResultGrid columns={COLUMNS} rows={[ROW, ROW_TWO]} running={false} incomplete={false} />
+    </section>,
+  );
+  const exportButton = screen.getByRole("button", { name: "导出" });
+  exportButton.focus();
+  fireEvent.keyDown(exportButton, { key: "a", metaKey: true, bubbles: true });
+  const grid = screen.getByRole("grid", { name: "查询结果" });
+  expect(grid).toHaveClass("result-grid--selected");
+  expect(grid).toHaveFocus();
 }
 
 /**
@@ -290,6 +334,8 @@ describe("ResultGrid", () => {
   it("virtualizes rows and renders lossless cell values", assertLosslessVirtualRows);
   it("shows only minimal bottom streaming feedback", assertMinimalStreamingFeedback);
   it("copies all rows after select-all", assertSelectAllThenCopyShortcut);
+  it("selects all rows with Mod+A after clicking a cell", assertSelectAllAfterCellClick);
+  it("selects all rows with Mod+A from the results pane chrome", assertSelectAllFromResultsPaneChrome);
   it("copies only the selected cell contents", assertCopySelectedCellOnly);
   it("copies selected content with field name aliases", assertCopySelectionWithFieldNames);
   it("copies a selected row as INSERT without primary key id", assertCopyRowAsInsertWithoutId);

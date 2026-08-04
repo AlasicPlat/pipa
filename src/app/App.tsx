@@ -1583,10 +1583,14 @@ export function App() {
               <FileClock size={14} aria-hidden="true" />
               Binlog
             </button>
-            <button onClick={openCommandPalette} title={`打开命令面板（${shortcutLabel("commandPalette")}）`} type="button">
+            <button
+              aria-label={`打开命令面板（${shortcutLabel("commandPalette")}）`}
+              onClick={openCommandPalette}
+              title={`打开命令面板（${shortcutLabel("commandPalette")}）`}
+              type="button"
+            >
               <CommandIcon size={13} aria-hidden="true" />
               命令
-              <kbd>{shortcutLabel("commandPalette")}</kbd>
             </button>
             <button aria-label="打开快捷键设置" onClick={() => openShortcutDialog("settings")} title="快捷键设置" type="button">
               <Keyboard size={14} aria-hidden="true" />

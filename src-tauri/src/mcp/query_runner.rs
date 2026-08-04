@@ -259,7 +259,7 @@ fn cell_to_json(cell: &CellValue) -> Value {
         | CellValue::Binary(value)
         | CellValue::DateTime(value) => json!(value),
         CellValue::Float(value) => json!(value),
-        CellValue::Json(value) => value.clone(),
+        CellValue::Json(value) => json!(value),
     }
 }
 

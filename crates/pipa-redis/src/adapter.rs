@@ -670,7 +670,7 @@ fn response_cell(value: RespValue) -> CellValue {
         RespValue::Bulk(None) | RespValue::Array(None) | RespValue::Null => CellValue::Null,
         RespValue::Bulk(Some(value)) | RespValue::Verbatim(value) => bytes_cell(value),
         RespValue::Array(Some(values)) | RespValue::Set(values) => CellValue::Json(
-            JsonValue::Array(values.into_iter().map(response_json).collect()),
+            JsonValue::Array(values.into_iter().map(response_json).collect()).to_string(),
         ),
         RespValue::Boolean(value) => CellValue::Boolean(value),
         RespValue::Double(value) => value
@@ -679,7 +679,7 @@ fn response_cell(value: RespValue) -> CellValue {
             .filter(|number| number.is_finite())
             .map(CellValue::Float)
             .unwrap_or(CellValue::Text(value)),
-        RespValue::Map(entries) => CellValue::Json(map_json(entries)),
+        RespValue::Map(entries) => CellValue::Json(map_json(entries).to_string()),
     }
 }
 
