@@ -47,6 +47,14 @@ const ROW_TWO: CellValue[] = [
   { kind: "null" },
   { kind: "text", value: "note" },
 ];
+const ROW_THREE: CellValue[] = [
+  { kind: "integer", value: "3" },
+  { kind: "integer", value: "7" },
+  { kind: "decimal", value: "1.25" },
+  { kind: "null" },
+  { kind: "null" },
+  { kind: "text", value: "third" },
+];
 
 /**
  * Verifies virtualization and transport-safe presentation of database values.
@@ -329,6 +337,47 @@ function assertDoubleClickCopiesCell(): void {
   expect(screen.queryByRole("dialog", { name: "单元格内容" })).not.toBeInTheDocument();
 }
 
+/**
+ * Verifies Mod/Ctrl+click can accumulate non-contiguous full-row selections.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: toggles rows in the result grid and copies the sparse selection.
+ */
+function assertDiscreteRowMultiSelect(): void {
+  const onCopyText = vi.fn();
+  const onSelectionChange = vi.fn();
+  render(
+    <ResultGrid
+      columns={COLUMNS}
+      rows={[ROW, ROW_TWO, ROW_THREE]}
+      running={false}
+      incomplete={false}
+      onCopyText={onCopyText}
+      onSelectionChange={onSelectionChange}
+    />,
+  );
+
+  fireEvent.mouseDown(screen.getByText("9007199254740993"), { metaKey: true });
+  fireEvent.mouseDown(screen.getByText("third"), { metaKey: true });
+
+  expect(screen.getByText("9007199254740993")).toHaveClass("is-selected");
+  expect(screen.getByText("third")).toHaveClass("is-selected");
+  expect(screen.getByText("note")).not.toHaveClass("is-selected");
+  expect(onSelectionChange).toHaveBeenLastCalledWith("已选 2 行");
+
+  const grid = screen.getByRole("grid", { name: "查询结果" });
+  grid.focus();
+  fireEvent.keyDown(grid, { key: "c", metaKey: true });
+  expect(onCopyText).toHaveBeenCalledWith(
+    expect.stringMatching(/^1\t9007199254740993[\s\S]*\n3\t7\t1\.25/u),
+    "已复制 12 个单元格",
+  );
+
+  fireEvent.mouseDown(screen.getByText("third"), { metaKey: true });
+  expect(screen.getByText("third")).not.toHaveClass("is-selected");
+  expect(onSelectionChange).toHaveBeenLastCalledWith("已选 1 行");
+}
+
 describe("ResultGrid", () => {
   afterEach(cleanup);
   it("virtualizes rows and renders lossless cell values", assertLosslessVirtualRows);
@@ -343,4 +392,5 @@ describe("ResultGrid", () => {
   it("cycles column sort from the header", assertHeaderSortCycle);
   it("copies IN lists and opens the cell viewer", assertInListCopyAndCellViewer);
   it("copies a cell on double-click without opening a dialog", assertDoubleClickCopiesCell);
+  it("toggles non-contiguous rows with Mod+click", assertDiscreteRowMultiSelect);
 });

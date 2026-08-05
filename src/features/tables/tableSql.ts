@@ -128,6 +128,42 @@ export function isStructureColumnEditable(column: TableColumnDefinition): boolea
   return knownExtra.length === 0 && columnTypeValidationError(column.type) === null;
 }
 
+/** Base types offered by the visual structure editor typeahead. */
+export const MYSQL_VISUAL_BASE_TYPES = [
+  "tinyint",
+  "smallint",
+  "mediumint",
+  "int",
+  "integer",
+  "bigint",
+  "decimal",
+  "numeric",
+  "float",
+  "double",
+  "real",
+  "bit",
+  "boolean",
+  "bool",
+  "date",
+  "time",
+  "datetime",
+  "timestamp",
+  "year",
+  "char",
+  "varchar",
+  "binary",
+  "varbinary",
+  "tinyblob",
+  "blob",
+  "mediumblob",
+  "longblob",
+  "tinytext",
+  "text",
+  "mediumtext",
+  "longtext",
+  "json",
+] as const;
+
 /**
  * Validates the deliberately constrained type grammar accepted by the visual DDL editor.
  * @param databaseType - User-visible MySQL type declaration.
@@ -139,6 +175,145 @@ export function columnTypeValidationError(databaseType: string): string | null {
   return safeType.test(databaseType.trim())
     ? null
     : "字段类型包含可视化编辑器不支持的复杂语法，请使用显式 ALTER TABLE";
+}
+
+/**
+ * Suggests visual MySQL base types for typeahead matching.
+ * @param query - Partial type text such as `in` or `bi`.
+ * @param limit - Maximum number of suggestions to return.
+ * @returns Prefix matches first, then substring matches.
+ * Side effects: none.
+ */
+export function suggestMysqlBaseTypes(query: string, limit = 8): string[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return MYSQL_VISUAL_BASE_TYPES.slice(0, limit);
+  }
+  const prefixMatches = MYSQL_VISUAL_BASE_TYPES.filter((type) => type.startsWith(normalized));
+  const substringMatches = MYSQL_VISUAL_BASE_TYPES.filter(
+    (type) => !type.startsWith(normalized) && type.includes(normalized),
+  );
+  return [...prefixMatches, ...substringMatches].slice(0, limit);
+}
+
+/** Parsed parts of a visual MySQL column type declaration. */
+export interface ParsedMysqlColumnType {
+  baseType: string;
+  lengthArgs: string | null;
+  unsigned: boolean;
+  zerofill: boolean;
+}
+
+const UNSIGNED_BASE_TYPES = new Set([
+  "tinyint",
+  "smallint",
+  "mediumint",
+  "int",
+  "integer",
+  "bigint",
+  "decimal",
+  "numeric",
+  "float",
+  "double",
+  "real",
+]);
+
+const LENGTH_BASE_TYPES = new Set([
+  "tinyint",
+  "smallint",
+  "mediumint",
+  "int",
+  "integer",
+  "bigint",
+  "decimal",
+  "numeric",
+  "float",
+  "double",
+  "real",
+  "bit",
+  "year",
+  "char",
+  "varchar",
+  "binary",
+  "varbinary",
+  "time",
+  "datetime",
+  "timestamp",
+]);
+
+/**
+ * Returns whether a MySQL base type can carry the UNSIGNED attribute.
+ * @param baseType - Bare type name without length or attributes.
+ * @returns True for numeric types that accept UNSIGNED.
+ * Side effects: none.
+ */
+export function typeSupportsUnsigned(baseType: string): boolean {
+  return UNSIGNED_BASE_TYPES.has(baseType.trim().toLowerCase());
+}
+
+/**
+ * Returns whether a MySQL base type commonly accepts a length/precision clause.
+ * @param baseType - Bare type name without length or attributes.
+ * @returns True when a length column should be editable.
+ * Side effects: none.
+ */
+export function typeSupportsLength(baseType: string): boolean {
+  return LENGTH_BASE_TYPES.has(baseType.trim().toLowerCase());
+}
+
+/**
+ * Returns whether a MySQL type declaration can carry CHARACTER SET / COLLATE.
+ * @param databaseType - Full type string such as `varchar(50)`.
+ * @returns True for character/text/enum/set types used by DDL generation.
+ * Side effects: none.
+ */
+export function typeSupportsCharset(databaseType: string): boolean {
+  return /^(?:char|varchar|tinytext|text|mediumtext|longtext|enum|set)\b/iu.test(databaseType.trim());
+}
+
+/**
+ * Splits a MySQL COLUMN_TYPE-style declaration into editable parts.
+ * @param databaseType - Full type string such as `bigint(20) unsigned`.
+ * @returns Parsed parts, or null when the declaration is not a simple visual type.
+ * Side effects: none.
+ */
+export function parseMysqlColumnType(databaseType: string): ParsedMysqlColumnType | null {
+  const trimmed = databaseType.trim();
+  const match = trimmed.match(
+    /^([a-zA-Z]+)(?:\s*\(\s*(\d+(?:\s*,\s*\d+)?)\s*\))?((?:\s+unsigned)?)((?:\s+zerofill)?)$/iu,
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    baseType: match[1].toLowerCase(),
+    lengthArgs: match[2] ? match[2].replace(/\s+/gu, "") : null,
+    unsigned: Boolean(match[3]),
+    zerofill: Boolean(match[4]),
+  };
+}
+
+/**
+ * Rebuilds a MySQL type declaration from visual editor parts.
+ * @param parts - Base type, optional length args, and attribute flags.
+ * @returns A lowercase declaration suitable for DDL generation.
+ * Side effects: none.
+ */
+export function formatMysqlColumnType(parts: ParsedMysqlColumnType): string {
+  const baseType = parts.baseType.trim().toLowerCase() || "varchar";
+  const lengthArgs = parts.lengthArgs?.replace(/\s+/gu, "") ?? "";
+  const supportsUnsigned = typeSupportsUnsigned(baseType);
+  const pieces = [baseType];
+  if (lengthArgs && typeSupportsLength(baseType)) {
+    pieces[0] = `${baseType}(${lengthArgs})`;
+  }
+  if (supportsUnsigned && parts.unsigned) {
+    pieces.push("unsigned");
+  }
+  if (supportsUnsigned && parts.zerofill) {
+    pieces.push("zerofill");
+  }
+  return pieces.join(" ");
 }
 
 /**
@@ -221,6 +396,78 @@ export function buildDdlStatements(
     }
   }
   return statements;
+}
+
+/**
+ * Builds DDL that updates only the table-level COMMENT option.
+ * @param database - Schema name.
+ * @param table - Table name.
+ * @param comment - New table comment text (empty clears the comment).
+ * @returns A single ALTER TABLE statement.
+ * Side effects: none.
+ */
+export function buildAlterTableCommentStatement(database: string, table: string, comment: string): string {
+  return `ALTER TABLE ${quoteIdentifier(database)}.${quoteIdentifier(table)} COMMENT = ${hexStringLiteral(comment)};`;
+}
+
+/**
+ * Extracts the table-level COMMENT from SHOW CREATE TABLE output.
+ * @param createSql - Native CREATE TABLE text returned by MySQL.
+ * @returns Decoded table comment, or an empty string when absent.
+ * Side effects: none.
+ */
+export function parseCreateTableComment(createSql: string): string {
+  const options = extractCreateTableOptions(createSql);
+  if (!options) {
+    return "";
+  }
+  const match = options.match(/\bCOMMENT\s*=\s*'((?:''|[^'])*)'/iu);
+  return match ? decodeMysqlQuotedString(match[1]) : "";
+}
+
+/** Returns the table-options suffix after the top-level CREATE TABLE `(...)` list. */
+function extractCreateTableOptions(createSql: string): string {
+  const start = createSql.indexOf("(");
+  if (start < 0) {
+    return "";
+  }
+  let depth = 0;
+  let inString: "'" | '"' | "`" | null = null;
+  for (let index = start; index < createSql.length; index += 1) {
+    const char = createSql[index];
+    if (inString) {
+      if (char === inString) {
+        if (inString === "'" && createSql[index + 1] === "'") {
+          index += 1;
+          continue;
+        }
+        inString = null;
+      } else if (inString !== "`" && char === "\\" && index + 1 < createSql.length) {
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      inString = char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return createSql.slice(index + 1);
+      }
+    }
+  }
+  return "";
+}
+
+/** Decodes a MySQL single-quoted string body that uses `''` escapes. */
+function decodeMysqlQuotedString(value: string): string {
+  return value.replace(/''/gu, "'");
 }
 
 /**

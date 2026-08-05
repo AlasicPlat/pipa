@@ -123,6 +123,30 @@ const sessionMocks = vi.hoisted(() => {
         cancel: vi.fn(),
       },
       {
+        state: state({
+          queryId: "charset-query",
+          rows: [
+            [
+              { kind: "text", value: "utf8mb4" },
+              { kind: "text", value: "utf8mb4_0900_ai_ci" },
+              { kind: "text", value: "Yes" },
+            ],
+            [
+              { kind: "text", value: "utf8mb4" },
+              { kind: "text", value: "utf8mb4_general_ci" },
+              { kind: "text", value: "No" },
+            ],
+            [
+              { kind: "text", value: "latin1" },
+              { kind: "text", value: "latin1_swedish_ci" },
+              { kind: "text", value: "Yes" },
+            ],
+          ],
+        }),
+        run: vi.fn(),
+        cancel: vi.fn(),
+      },
+      {
         state: state({ affectedRows: null }),
         run: vi.fn(),
         cancel: vi.fn(),
@@ -180,7 +204,9 @@ async function assertVisualChangePreviews(): Promise<void> {
 
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
   expect(screen.getByText("PRIMARY")).toBeVisible();
-  fireEvent.change(screen.getByLabelText("id 类型"), { target: { value: "bigint" } });
+  const typeInput = screen.getByLabelText("id 类型");
+  fireEvent.change(typeInput, { target: { value: "bigint" } });
+  fireEvent.keyDown(typeInput, { key: "Enter" });
   expect(screen.getByText(/CHANGE COLUMN `id` `id` bigint NOT NULL AUTO_INCREMENT/)).toBeVisible();
 }
 
@@ -328,12 +354,14 @@ async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
-  fireEvent.change(screen.getByLabelText("id 类型"), { target: { value: "bigint" } });
+  const typeInput = screen.getByLabelText("id 类型");
+  fireEvent.change(typeInput, { target: { value: "bigint" } });
+  fireEvent.keyDown(typeInput, { key: "Enter" });
   await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
 
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
   fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
-  expect(sessionMocks.sessions[5].run).toHaveBeenCalledWith(expect.stringContaining("ALTER TABLE `shop`.`orders`"));
+  expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(expect.stringContaining("ALTER TABLE `shop`.`orders`"));
 
   fireEvent.click(screen.getByRole("button", { name: "撤销全部" }));
   await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));

@@ -1,10 +1,12 @@
 import {
   Braces,
+  Check,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
   ChevronRight,
   Columns3,
+  Copy,
   KeyRound,
   Plus,
   RefreshCw,
@@ -22,17 +24,26 @@ import { applyTableMutations } from "../../lib/tauriClient";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import { useQuerySession } from "../query/useQuerySession";
 import { SelectableSqlBlock } from "./SelectableSqlBlock";
+import { StructureMetaSelect, StructureTypeSuggest } from "./structureEditors";
 import {
+  buildAlterTableCommentStatement,
   buildDdlStatements,
   buildTableMutationPlan,
   cellValueToEditable,
   columnDefaultValidationError,
   columnTypeValidationError,
+  formatMysqlColumnType,
   isStructureColumnEditable,
   mysqlUtf8Expression,
+  parseCreateTableComment,
+  parseMysqlColumnType,
   quoteIdentifier,
   tableRowIdentity,
+  typeSupportsCharset,
+  typeSupportsLength,
+  typeSupportsUnsigned,
   type EditableCellValue,
+  type ParsedMysqlColumnType,
   type StagedExistingRow,
   type TableColumnDefinition,
 } from "./tableSql";
@@ -64,6 +75,29 @@ const PAGE_SIZES = [20, 50, 100] as const;
 const DATA_SELECTOR_WIDTH = 42;
 const DATA_COLUMN_DEFAULT_WIDTH = 150;
 const DATA_COLUMN_MIN_WIDTH = 80;
+
+interface StructureColumnDef {
+  key: string;
+  label: string;
+  title?: string;
+  defaultWidth: number;
+  minWidth: number;
+  resizable: boolean;
+}
+
+const STRUCTURE_COLUMNS: readonly StructureColumnDef[] = [
+  { key: "name", label: "字段名", defaultWidth: 148, minWidth: 96, resizable: true },
+  { key: "type", label: "类型", defaultWidth: 100, minWidth: 72, resizable: true },
+  { key: "length", label: "长度", defaultWidth: 68, minWidth: 52, resizable: true },
+  { key: "unsigned", label: "Unsigned", title: "UNSIGNED", defaultWidth: 72, minWidth: 56, resizable: true },
+  { key: "null", label: "NULL", title: "允许 NULL", defaultWidth: 52, minWidth: 44, resizable: true },
+  { key: "default", label: "默认值", defaultWidth: 180, minWidth: 120, resizable: true },
+  { key: "charset", label: "编码", title: "CHARACTER SET", defaultWidth: 110, minWidth: 80, resizable: true },
+  { key: "collation", label: "排序规则", title: "COLLATE", defaultWidth: 160, minWidth: 110, resizable: true },
+  { key: "comment", label: "注释", defaultWidth: 180, minWidth: 120, resizable: true },
+  { key: "flags", label: "属性", defaultWidth: 120, minWidth: 80, resizable: true },
+  { key: "action", label: "", defaultWidth: 40, minWidth: 40, resizable: false },
+];
 
 /** Converts a transport-safe cell into exact text while retaining SQL NULL. */
 function schemaCell(cell: CellValue | undefined): string | null {
@@ -143,6 +177,30 @@ function parseIndexRows(rows: CellValue[][]): TableIndexDefinition[] {
   return [...indexes.values()];
 }
 
+interface MysqlCollationInfo {
+  characterSet: string;
+  collation: string;
+  isDefault: boolean;
+}
+
+/** Parses INFORMATION_SCHEMA.COLLATIONS rows into charset/collation pairs. */
+function parseCollationRows(rows: CellValue[][]): MysqlCollationInfo[] {
+  const items: MysqlCollationInfo[] = [];
+  for (const row of rows) {
+    const characterSet = schemaCell(row[0]) ?? "";
+    const collation = schemaCell(row[1]) ?? "";
+    if (!characterSet || !collation) {
+      continue;
+    }
+    items.push({
+      characterSet,
+      collation,
+      isDefault: (schemaCell(row[2]) ?? "").toUpperCase() === "YES",
+    });
+  }
+  return items;
+}
+
 /** Renders a connection-bound table with guarded DML, schema, indexes, and raw DDL. */
 export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorkspaceProps) {
   const shortcuts = useShortcutSettings();
@@ -152,6 +210,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const ddlSession = useQuerySession(profile.id, { recordHistory: false });
   const indexSession = useQuerySession(profile.id, { recordHistory: false });
   const countSession = useQuerySession(profile.id, { recordHistory: false });
+  const charsetSession = useQuerySession(profile.id, { recordHistory: false });
   const mutationSession = useQuerySession(profile.id);
   const [activeView, setActiveView] = useState<TableView>("data");
   const [schema, setSchema] = useState<TableColumnDefinition[]>([]);
@@ -163,7 +222,12 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const [focusedRowIndex, setFocusedRowIndex] = useState(0);
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
+  const [editingComment, setEditingComment] = useState<{ index: number; value: string } | null>(null);
   const [dataColumnWidths, setDataColumnWidths] = useState<(number | null)[]>([]);
+  const [structureColumnWidths, setStructureColumnWidths] = useState<(number | null)[]>(
+    () => STRUCTURE_COLUMNS.map(() => null),
+  );
+  const [draftTableComment, setDraftTableComment] = useState<string | null>(null);
   const [dataSearch, setDataSearch] = useState("");
   const [page, setPage] = useState(1n);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(50);
@@ -175,7 +239,12 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const mutationKindRef = useRef<MutationKind | null>(null);
   const dataSearchInputRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const resizeSessionRef = useRef<{ columnIndex: number; startX: number; startWidth: number } | null>(null);
+  const resizeSessionRef = useRef<{
+    target: "data" | "structure";
+    columnIndex: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   const target = `${quoteIdentifier(database)}.${quoteIdentifier(tableName)}`;
   const schemaSql = useMemo(
@@ -193,6 +262,13 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       `WHERE TABLE_SCHEMA = ${mysqlUtf8Expression(database)} AND TABLE_NAME = ${mysqlUtf8Expression(tableName)}\n` +
       "ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME, SEQ_IN_INDEX;",
     [database, tableName],
+  );
+  const charsetSql = useMemo(
+    () =>
+      "SELECT CHARACTER_SET_NAME, COLLATION_NAME, IS_DEFAULT\n" +
+      "FROM INFORMATION_SCHEMA.COLLATIONS\n" +
+      "ORDER BY CHARACTER_SET_NAME, IS_DEFAULT DESC, COLLATION_NAME;",
+    [],
   );
 
   /** Loads one page and clears selection/edit focus tied to the previous result snapshot. */
@@ -243,6 +319,9 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     if (!countSession.state.running) {
       void countSession.run(`SELECT COUNT(*) AS total_rows FROM ${target};`);
     }
+    if (!charsetSession.state.running && charsetSession.state.rows.length === 0) {
+      void charsetSession.run(charsetSql);
+    }
   }
 
   useEffect(() => {
@@ -272,15 +351,49 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       void ddlSession.run(`SHOW CREATE TABLE ${target};`);
       void indexSession.run(indexSql);
       void countSession.run(`SELECT COUNT(*) AS total_rows FROM ${target};`);
+      if (charsetSession.state.rows.length === 0) {
+        void charsetSession.run(charsetSql);
+      }
     }
     mutationKindRef.current = null;
   }, [mutationSession.state, page, pageSize, schemaSql, indexSql, target]);
 
   const indexes = useMemo(() => parseIndexRows(indexSession.state.rows), [indexSession.state.rows]);
+  const collationCatalog = useMemo(() => parseCollationRows(charsetSession.state.rows), [charsetSession.state.rows]);
+  const characterSets = useMemo(() => {
+    const sets: string[] = [];
+    for (const item of collationCatalog) {
+      if (!sets.includes(item.characterSet)) {
+        sets.push(item.characterSet);
+      }
+    }
+    return sets;
+  }, [collationCatalog]);
+  const defaultCollationByCharset = useMemo(() => {
+    const defaults = new Map<string, string>();
+    for (const item of collationCatalog) {
+      if (item.isDefault && !defaults.has(item.characterSet)) {
+        defaults.set(item.characterSet, item.collation);
+      }
+    }
+    return defaults;
+  }, [collationCatalog]);
+  const collationsByCharset = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    for (const item of collationCatalog) {
+      const list = grouped.get(item.characterSet) ?? [];
+      list.push(item.collation);
+      grouped.set(item.characterSet, list);
+    }
+    return grouped;
+  }, [collationCatalog]);
   const totalRows = parseRowCount(countSession.state.rows[0]?.[0], dataSession.state.rows.length);
   const totalPages = totalRows === 0n ? 1n : (totalRows + BigInt(pageSize) - 1n) / BigInt(pageSize);
   const primaryColumns = schema.filter((column) => column.primary).map((column) => column.name);
   const rawDdl = schemaCell(ddlSession.state.rows[0]?.[1]) ?? "";
+  const serverTableComment = useMemo(() => parseCreateTableComment(rawDdl), [rawDdl]);
+  const tableComment = draftTableComment ?? serverTableComment;
+  const tableCommentDirty = tableComment !== serverTableComment;
   const dmlChangeCount = updatedRows.size + deletedRows.size + insertedRows.length;
   const hasDmlChanges = dmlChangeCount > 0;
   const allRowsSelected = dataSession.state.rows.length > 0 && selectedRows.size === dataSession.state.rows.length;
@@ -299,16 +412,34 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     (total, _, index) => total + (dataColumnWidths[index] ?? DATA_COLUMN_DEFAULT_WIDTH),
     0,
   )}px`;
+  const hasResizedStructureColumn = structureColumnWidths.some((width) => width !== null && width !== undefined);
+  const structureGridTemplate = STRUCTURE_COLUMNS.map((column, index) => {
+    if (!column.resizable) {
+      return `${column.defaultWidth}px`;
+    }
+    const width = structureColumnWidths[index];
+    if (hasResizedStructureColumn) {
+      return `${width ?? column.defaultWidth}px`;
+    }
+    return `minmax(${column.defaultWidth}px, ${column.key === "comment" || column.key === "default" || column.key === "name" ? "1.2fr" : "1fr"})`;
+  }).join(" ");
+  const structureGridMinimumWidth = `${STRUCTURE_COLUMNS.reduce(
+    (total, column, index) => total + (structureColumnWidths[index] ?? column.defaultWidth),
+    0,
+  )}px`;
   const editingColumn = editingCell
     ? dataSession.state.columns.find((column) => column.name === editingCell.columnName) ?? null
     : null;
   const editingSchemaColumn = editingCell
     ? schema.find((column) => column.name === editingCell.columnName) ?? null
     : null;
-  const ddlStatements = useMemo(
-    () => buildDdlStatements(database, tableName, schema, draftColumns),
-    [database, draftColumns, schema, tableName],
-  );
+  const ddlStatements = useMemo(() => {
+    const statements = buildDdlStatements(database, tableName, schema, draftColumns);
+    if (tableCommentDirty) {
+      statements.push(buildAlterTableCommentStatement(database, tableName, tableComment));
+    }
+    return statements;
+  }, [database, draftColumns, schema, tableComment, tableCommentDirty, tableName]);
   const ddlValidationErrors = useMemo(() => draftColumns.flatMap((column) => {
     const original = column.sourceName === null
       ? null
@@ -352,21 +483,38 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   }, [dataColumnKey]);
 
   useEffect(() => {
-    /** Updates the active data-column width while its header edge is dragged. */
+    setDraftTableComment(null);
+  }, [rawDdl]);
+
+  useEffect(() => {
+    /** Updates the active column width while its header edge is dragged. */
     function handlePointerMove(event: PointerEvent): void {
       const session = resizeSessionRef.current;
       if (!session) {
         return;
       }
-      const nextWidth = Math.max(DATA_COLUMN_MIN_WIDTH, session.startWidth + event.clientX - session.startX);
-      setDataColumnWidths((current) => {
-        const next = dataSession.state.columns.map((_, index) => current[index] ?? null);
+      if (session.target === "data") {
+        const nextWidth = Math.max(DATA_COLUMN_MIN_WIDTH, session.startWidth + event.clientX - session.startX);
+        setDataColumnWidths((current) => {
+          const next = dataSession.state.columns.map((_, index) => current[index] ?? null);
+          next[session.columnIndex] = nextWidth;
+          return next;
+        });
+        return;
+      }
+      const column = STRUCTURE_COLUMNS[session.columnIndex];
+      if (!column?.resizable) {
+        return;
+      }
+      const nextWidth = Math.max(column.minWidth, session.startWidth + event.clientX - session.startX);
+      setStructureColumnWidths((current) => {
+        const next = STRUCTURE_COLUMNS.map((_, index) => current[index] ?? null);
         next[session.columnIndex] = nextWidth;
         return next;
       });
     }
 
-    /** Ends an active data-column resize gesture. */
+    /** Ends an active column resize gesture. */
     function handlePointerUp(): void {
       resizeSessionRef.current = null;
     }
@@ -383,6 +531,96 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   function updateDraftColumn(index: number, field: keyof TableColumnDefinition, value: string | boolean | null): void {
     setPendingProductionAction(null);
     setDraftColumns((current) => current.map((column, columnIndex) => columnIndex === index ? { ...column, [field]: value } : column));
+  }
+
+  /**
+   * Updates one visual type part and rebuilds `column.type` for DDL.
+   * @param index - Draft column index.
+   * @param patch - Base type, length, unsigned, or raw fallback type.
+   */
+  function updateDraftColumnType(
+    index: number,
+    patch: Partial<ParsedMysqlColumnType> | { rawType: string },
+  ): void {
+    setPendingProductionAction(null);
+    setDraftColumns((current) => current.map((column, columnIndex) => {
+      if (columnIndex !== index) {
+        return column;
+      }
+      if ("rawType" in patch) {
+        return { ...column, type: patch.rawType };
+      }
+      const parsed = parseMysqlColumnType(column.type) ?? {
+        baseType: "varchar",
+        lengthArgs: "255",
+        unsigned: false,
+        zerofill: false,
+      };
+      const next: ParsedMysqlColumnType = { ...parsed, ...patch };
+      if (!typeSupportsUnsigned(next.baseType)) {
+        next.unsigned = false;
+        next.zerofill = false;
+      }
+      if (!typeSupportsLength(next.baseType)) {
+        next.lengthArgs = null;
+      }
+      const nextType = formatMysqlColumnType(next);
+      const keepsCharset = typeSupportsCharset(nextType);
+      return {
+        ...column,
+        type: nextType,
+        characterSet: keepsCharset ? column.characterSet : null,
+        collation: keepsCharset ? column.collation : null,
+      };
+    }));
+  }
+
+  /**
+   * Updates character set and keeps collation aligned with server defaults.
+   * @param index - Draft column index.
+   * @param characterSet - Selected CHARACTER SET, or null for table default.
+   */
+  function updateDraftColumnCharset(index: number, characterSet: string | null): void {
+    setPendingProductionAction(null);
+    setDraftColumns((current) => current.map((column, columnIndex) => {
+      if (columnIndex !== index) {
+        return column;
+      }
+      if (!characterSet) {
+        return { ...column, characterSet: null, collation: null };
+      }
+      const collations = collationsByCharset.get(characterSet) ?? [];
+      const collationStillValid = Boolean(column.collation && collations.includes(column.collation));
+      return {
+        ...column,
+        characterSet,
+        collation: collationStillValid
+          ? column.collation
+          : defaultCollationByCharset.get(characterSet) ?? collations[0] ?? null,
+      };
+    }));
+  }
+
+  /** Persists the comment dialog draft into the structure change set. */
+  function saveCommentEdit(): void {
+    if (!editingComment) {
+      return;
+    }
+    updateDraftColumn(editingComment.index, "comment", editingComment.value);
+    setEditingComment(null);
+  }
+
+  /** Handles Esc cancel and Mod+Enter save for the comment dialog. */
+  function handleCommentEditorKeyDown(event: KeyboardEvent<HTMLFormElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setEditingComment(null);
+    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      saveCommentEdit();
+    }
   }
 
   /** Adds a nullable VARCHAR column to the local schema draft. */
@@ -500,9 +738,30 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     event.stopPropagation();
     const renderedWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
     resizeSessionRef.current = {
+      target: "data",
       columnIndex,
       startX: event.clientX,
       startWidth: renderedWidth || dataColumnWidths[columnIndex] || DATA_COLUMN_DEFAULT_WIDTH,
+    };
+  }
+
+  /** Starts dragging one structure-column edge from its rendered width. */
+  function handleStructureColumnResizeMouseDown(event: MouseEvent<HTMLSpanElement>, columnIndex: number): void {
+    if (event.button !== 0) {
+      return;
+    }
+    const column = STRUCTURE_COLUMNS[columnIndex];
+    if (!column?.resizable) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const renderedWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+    resizeSessionRef.current = {
+      target: "structure",
+      columnIndex,
+      startX: event.clientX,
+      startWidth: renderedWidth || structureColumnWidths[columnIndex] || column.defaultWidth,
     };
   }
 
@@ -726,6 +985,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   /** Discards local schema edits. */
   function discardDdlChanges(): void {
     setDraftColumns(schema.map((column) => ({ ...column })));
+    setDraftTableComment(null);
     setPendingProductionAction(null);
   }
 
@@ -954,9 +1214,37 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
             <div className="structure-editor__scroll">
               {schemaSession.state.running && schema.length === 0 ? <p className="table-state">正在读取表结构…</p> : schemaSession.state.error ? <p className="table-state table-state--error">无法读取表结构：{schemaSession.state.error.message}</p> : (
                 <section className="schema-section" aria-labelledby={`${tableName}-fields-title`}>
-                  <header><span><Columns3 size={14} aria-hidden="true" /><strong id={`${tableName}-fields-title`}>字段</strong></span><small>双击数据编辑不会影响此处结构草稿</small></header>
+                  <header>
+                    <span>
+                      <Columns3 size={14} aria-hidden="true" />
+                      <strong id={`${tableName}-fields-title`}>字段</strong>
+                      <b>{draftColumns.length}</b>
+                    </span>
+                    <small>结构草稿独立于数据编辑</small>
+                  </header>
                   <div className="structure-grid">
-                    <div className="structure-grid__header"><span>字段名</span><span>类型</span><span>NULL</span><span>默认值</span><span>注释</span><span>属性</span><span /></div>
+                    <div
+                      className="structure-grid__header"
+                      style={{ gridTemplateColumns: structureGridTemplate, minWidth: structureGridMinimumWidth }}
+                    >
+                      {STRUCTURE_COLUMNS.map((column, columnIndex) => (
+                        <span
+                          key={column.key}
+                          title={column.resizable ? `${column.title ?? column.label} · 拖拽右缘调整列宽` : column.title}
+                        >
+                          {column.label}
+                          {column.resizable ? (
+                            <span
+                              aria-label={`调整 ${column.label || column.key} 列宽`}
+                              aria-orientation="vertical"
+                              className="structure-grid__resize-handle"
+                              onMouseDown={(event) => handleStructureColumnResizeMouseDown(event, columnIndex)}
+                              role="separator"
+                            />
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
                     {draftColumns.map((column, index) => {
                       const originalColumn = column.sourceName === null
                         ? null
@@ -964,15 +1252,138 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                       const structureEditable = originalColumn === null || isStructureColumnEditable(originalColumn);
                       const immutableDefault = !structureEditable || Boolean(column.generationExpression) || column.defaultExpression;
                       const unsupportedVisualDefault = Boolean(columnDefaultValidationError({ ...column, defaultValue: column.defaultValue ?? "" }));
+                      const isNewColumn = column.sourceName === null;
+                      const parsedType = parseMysqlColumnType(column.type);
+                      const canEditParts = structureEditable && parsedType !== null;
+                      const unsignedEnabled = canEditParts && typeSupportsUnsigned(parsedType.baseType);
+                      const lengthEnabled = canEditParts && typeSupportsLength(parsedType.baseType);
+                      const charsetEnabled = structureEditable && typeSupportsCharset(column.type);
                       return (
-                        <div className={`structure-grid__row${structureEditable ? "" : " is-locked"}`} key={`${column.sourceName ?? "new"}-${index}`}>
-                          <input aria-label={`字段 ${index + 1} 名称`} disabled={!structureEditable} onChange={(event) => updateDraftColumn(index, "name", event.target.value)} value={column.name} />
-                          <input aria-label={`${column.name} 类型`} disabled={!structureEditable} onChange={(event) => updateDraftColumn(index, "type", event.target.value)} value={column.type} />
-                          <label><input checked={column.nullable} disabled={!structureEditable} onChange={(event) => updateDraftColumn(index, "nullable", event.target.checked)} type="checkbox" /><span>允许</span></label>
-                          <span className="default-editor"><input aria-label={`${column.name} 默认值`} disabled={immutableDefault || unsupportedVisualDefault || column.defaultValue === null} onChange={(event) => updateDraftColumn(index, "defaultValue", event.target.value)} placeholder={column.defaultExpression ? "表达式默认值（只读）" : unsupportedVisualDefault ? "请使用显式类型表达式" : "无默认值"} value={column.defaultValue ?? ""} /><button disabled={immutableDefault || (unsupportedVisualDefault && column.defaultValue === null)} onClick={() => updateDraftColumn(index, "defaultValue", column.defaultValue === null ? "" : null)} type="button">{column.defaultValue === null ? "启用" : "移除"}</button></span>
-                          <input aria-label={`${column.name} 注释`} disabled={!structureEditable} onChange={(event) => updateDraftColumn(index, "comment", event.target.value)} value={column.comment} />
-                          <span className="structure-grid__flags">{column.primary ? <b><KeyRound size={9} aria-hidden="true" />PK</b> : null}{column.extra ? <small>{column.extra}</small> : null}{!structureEditable ? <small title="该字段包含无法无损重建的默认值、生成表达式或高级属性，请使用显式 ALTER TABLE">只读高级字段</small> : null}</span>
-                          <button aria-label={`删除字段 ${column.name}`} className="structure-grid__delete" onClick={() => removeDraftColumn(index)} type="button"><Trash2 size={13} aria-hidden="true" /></button>
+                        <div
+                          className={[
+                            "structure-grid__row",
+                            structureEditable ? "" : "is-locked",
+                            isNewColumn ? "is-new" : "",
+                          ].filter(Boolean).join(" ")}
+                          key={`${column.sourceName ?? "new"}-${index}`}
+                          style={{ gridTemplateColumns: structureGridTemplate, minWidth: structureGridMinimumWidth }}
+                        >
+                          <span className="structure-grid__cell structure-grid__cell--name">
+                            <input aria-label={`字段 ${index + 1} 名称`} disabled={!structureEditable} onChange={(event) => updateDraftColumn(index, "name", event.target.value)} value={column.name} />
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--type">
+                            {parsedType ? (
+                              <StructureTypeSuggest
+                                ariaLabel={`${column.name} 类型`}
+                                disabled={!structureEditable}
+                                onChange={(baseType) => updateDraftColumnType(index, { baseType })}
+                                value={parsedType.baseType}
+                              />
+                            ) : (
+                              <input
+                                aria-label={`${column.name} 类型`}
+                                disabled={!structureEditable}
+                                onChange={(event) => updateDraftColumnType(index, { rawType: event.target.value })}
+                                value={column.type}
+                              />
+                            )}
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--length">
+                            <input
+                              aria-label={`${column.name} 长度`}
+                              disabled={!lengthEnabled}
+                              inputMode="numeric"
+                              onChange={(event) => updateDraftColumnType(index, {
+                                lengthArgs: event.target.value.trim() ? event.target.value.trim() : null,
+                              })}
+                              placeholder={lengthEnabled ? "" : "—"}
+                              value={parsedType?.lengthArgs ?? ""}
+                            />
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--check">
+                            <label className="structure-check" title="UNSIGNED">
+                              <input
+                                aria-label={`${column.name} unsigned`}
+                                checked={Boolean(parsedType?.unsigned)}
+                                disabled={!unsignedEnabled}
+                                onChange={(event) => updateDraftColumnType(index, { unsigned: event.target.checked })}
+                                type="checkbox"
+                              />
+                            </label>
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--check">
+                            <label className="structure-check" title="允许 NULL">
+                              <input
+                                aria-label={`${column.name} 允许 NULL`}
+                                checked={column.nullable}
+                                disabled={!structureEditable}
+                                onChange={(event) => updateDraftColumn(index, "nullable", event.target.checked)}
+                                type="checkbox"
+                              />
+                            </label>
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--default">
+                            <span className={`default-editor${column.defaultValue === null ? " is-absent" : ""}`}>
+                              <input
+                                aria-label={`${column.name} 默认值`}
+                                disabled={immutableDefault || unsupportedVisualDefault || column.defaultValue === null}
+                                onChange={(event) => updateDraftColumn(index, "defaultValue", event.target.value)}
+                                placeholder={column.defaultExpression ? "表达式默认值（只读）" : unsupportedVisualDefault ? "请使用显式类型表达式" : "无默认值"}
+                                value={column.defaultValue ?? ""}
+                              />
+                              <button
+                                disabled={immutableDefault || (unsupportedVisualDefault && column.defaultValue === null)}
+                                onClick={() => updateDraftColumn(index, "defaultValue", column.defaultValue === null ? "" : null)}
+                                type="button"
+                              >
+                                {column.defaultValue === null ? "启用" : "移除"}
+                              </button>
+                            </span>
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--charset">
+                            <StructureMetaSelect
+                              ariaLabel={`${column.name} 编码`}
+                              disabled={!charsetEnabled}
+                              emptyLabel={charsetEnabled ? "默认" : "—"}
+                              onChange={(characterSet) => updateDraftColumnCharset(index, characterSet)}
+                              options={characterSets}
+                              placeholder="CHARACTER SET"
+                              value={charsetEnabled ? column.characterSet : null}
+                            />
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--collation">
+                            <StructureMetaSelect
+                              ariaLabel={`${column.name} 排序规则`}
+                              disabled={!charsetEnabled || !column.characterSet}
+                              emptyLabel={charsetEnabled ? "默认" : "—"}
+                              onChange={(collation) => updateDraftColumn(index, "collation", collation)}
+                              options={column.characterSet ? (collationsByCharset.get(column.characterSet) ?? []) : []}
+                              placeholder="COLLATE"
+                              value={charsetEnabled ? column.collation : null}
+                            />
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--comment">
+                            <button
+                              aria-label={`编辑 ${column.name} 注释`}
+                              className={`structure-comment-trigger${column.comment ? "" : " is-empty"}`}
+                              disabled={!structureEditable}
+                              onClick={() => setEditingComment({ index, value: column.comment })}
+                              title={column.comment || "编辑注释"}
+                              type="button"
+                            >
+                              {column.comment || "添加注释"}
+                            </button>
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--flags">
+                            <span className="structure-grid__flags">
+                              {column.primary ? <b><KeyRound size={9} aria-hidden="true" />PK</b> : null}
+                              {column.extra ? <small>{column.extra}</small> : null}
+                              {!structureEditable ? <small className="structure-grid__locked-tag" title="该字段包含无法无损重建的默认值、生成表达式或高级属性，请使用显式 ALTER TABLE">只读</small> : null}
+                            </span>
+                          </span>
+                          <span className="structure-grid__cell structure-grid__cell--action">
+                            <button aria-label={`删除字段 ${column.name}`} className="structure-grid__delete" onClick={() => removeDraftColumn(index)} type="button"><Trash2 size={13} aria-hidden="true" /></button>
+                          </span>
                         </div>
                       );
                     })}
@@ -981,34 +1392,123 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
               )}
 
               <section className="schema-section index-section" aria-labelledby={`${tableName}-indexes-title`}>
-                <header><span><KeyRound size={14} aria-hidden="true" /><strong id={`${tableName}-indexes-title`}>索引</strong><b>{indexes.length}</b></span><small>来自 INFORMATION_SCHEMA.STATISTICS</small></header>
+                <header>
+                  <span>
+                    <KeyRound size={14} aria-hidden="true" />
+                    <strong id={`${tableName}-indexes-title`}>索引</strong>
+                    <b>{indexes.length}</b>
+                  </span>
+                  <small>INFORMATION_SCHEMA.STATISTICS</small>
+                </header>
                 {indexSession.state.running && indexes.length === 0 ? <p className="table-state">正在读取索引…</p> : indexSession.state.error ? <p className="table-state table-state--error">无法读取索引：{indexSession.state.error.message}</p> : indexes.length === 0 ? <p className="table-state">当前表没有索引。</p> : (
                   <div className="index-list" role="table" aria-label={`${tableName} 索引`}>
                     <div className="index-list__header" role="row"><span>名称</span><span>字段</span><span>类型</span><span>基数</span></div>
-                    {indexes.map((index) => <div className="index-list__row" key={index.name} role="row"><span><KeyRound size={12} aria-hidden="true" /><strong>{index.name}</strong>{index.name === "PRIMARY" ? <b>主键</b> : index.unique ? <b>唯一</b> : null}</span><code>{index.columns.join(", ")}</code><span>{index.type}</span><span>{index.cardinality ?? "—"}</span></div>)}
+                    {indexes.map((index) => (
+                      <div className="index-list__row" key={index.name} role="row">
+                        <span>
+                          <KeyRound size={12} aria-hidden="true" />
+                          <strong>{index.name}</strong>
+                          {index.name === "PRIMARY" ? <b>主键</b> : index.unique ? <b>唯一</b> : null}
+                        </span>
+                        <code>{index.columns.join(", ")}</code>
+                        <span className="index-list__type">{index.type}</span>
+                        <span className="index-list__cardinality">{index.cardinality ?? "—"}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </section>
             </div>
             {ddlValidationErrors.length > 0 ? <p className="table-state table-state--error" role="alert">{`结构变更中有 ${ddlValidationErrors.length} 个错误：${ddlValidationErrors.join("；")}`}</p> : null}
             {ddlStatements.length > 0 ? <SqlPreview title="待执行 DDL" sql={ddlStatements.join("\n")} /> : null}
+            {editingComment ? (
+              <div
+                className="table-cell-editor-backdrop"
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setEditingComment(null);
+                  }
+                }}
+                role="presentation"
+              >
+                <form
+                  aria-labelledby="structure-comment-editor-title"
+                  aria-modal="true"
+                  className="table-cell-editor structure-comment-editor"
+                  onKeyDown={handleCommentEditorKeyDown}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    saveCommentEdit();
+                  }}
+                  role="dialog"
+                >
+                  <header>
+                    <div>
+                      <strong id="structure-comment-editor-title">编辑字段注释</strong>
+                      <span>{draftColumns[editingComment.index]?.name ?? "字段"} · COMMENT</span>
+                    </div>
+                    <button aria-label="关闭注释编辑器" onClick={() => setEditingComment(null)} type="button">
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  </header>
+                  <label className="table-cell-editor__field">
+                    <span>注释内容</span>
+                    <textarea
+                      aria-label={`${draftColumns[editingComment.index]?.name ?? "字段"} 注释`}
+                      autoFocus
+                      onChange={(event) => setEditingComment((current) => current ? { ...current, value: event.target.value } : current)}
+                      placeholder="为字段添加说明，支持多行"
+                      value={editingComment.value}
+                    />
+                  </label>
+                  <footer>
+                    <small>Esc 取消 · ⌘/Ctrl + Enter 保存</small>
+                    <span>
+                      <button onClick={() => setEditingComment((current) => current ? { ...current, value: "" } : current)} type="button">清空</button>
+                      <button onClick={() => setEditingComment(null)} type="button">取消</button>
+                      <button className="table-cell-editor__save" type="submit">保存注释</button>
+                    </span>
+                  </footer>
+                </form>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
         {database && activeView === "ddl" ? (
-          <section className="raw-ddl" aria-label="原始 DDL">
-            {ddlSession.state.running && !rawDdl ? (
-              <p className="table-state">正在读取 DDL…</p>
-            ) : ddlSession.state.error ? (
-              <p className="table-state table-state--error">无法读取 DDL：{ddlSession.state.error.message}</p>
-            ) : (
-              <SelectableSqlBlock
-                ariaLabel={`${tableName} 原始 DDL`}
-                className="raw-ddl__text"
-                value={rawDdl || "数据库未返回 CREATE TABLE 语句。"}
-              />
-            )}
-          </section>
+          <RawDdlView
+            comment={tableComment}
+            commentDirty={tableCommentDirty}
+            commentPreviewSql={tableCommentDirty ? buildAlterTableCommentStatement(database, tableName, tableComment) : ""}
+            commitDisabled={
+              !tableCommentDirty
+              || ddlValidationErrors.length > 0
+              || hasDmlChanges
+              || mutationSession.state.running
+              || dmlMutationRunning
+            }
+            commitLabel={
+              pendingProductionAction === "ddl"
+                ? "确认在生产环境执行"
+                : ddlStatements.length > 1
+                  ? `执行 ${ddlStatements.length} 条 DDL`
+                  : "保存表注释"
+            }
+            error={ddlSession.state.error?.message ?? null}
+            loading={ddlSession.state.running && !rawDdl}
+            onCommentChange={(value) => {
+              setPendingProductionAction(null);
+              setDraftTableComment(value);
+            }}
+            onCommitComment={() => commit("ddl")}
+            onDiscardComment={() => {
+              setDraftTableComment(null);
+              setPendingProductionAction(null);
+            }}
+            sql={rawDdl || "数据库未返回 CREATE TABLE 语句。"}
+            tableName={tableName}
+          />
         ) : null}
       </div>
     </section>
@@ -1024,8 +1524,128 @@ interface SqlPreviewProps {
 function SqlPreview({ title, sql }: SqlPreviewProps) {
   return (
     <details className="sql-preview" open>
-      <summary>{title}</summary>
+      <summary>
+        <span className="sql-preview__title">{title}</span>
+        <span className="sql-preview__meta">{sql.split("\n").filter(Boolean).length} 条语句</span>
+      </summary>
       <SelectableSqlBlock ariaLabel={title} className="sql-preview__text" value={sql} />
     </details>
+  );
+}
+
+interface RawDdlViewProps {
+  tableName: string;
+  sql: string;
+  loading: boolean;
+  error: string | null;
+  comment: string;
+  commentDirty: boolean;
+  commentPreviewSql: string;
+  commitDisabled: boolean;
+  commitLabel: string;
+  onCommentChange: (value: string) => void;
+  onCommitComment: () => void;
+  onDiscardComment: () => void;
+}
+
+/** SHOW CREATE TABLE surface with an editable table-comment draft. */
+function RawDdlView({
+  tableName,
+  sql,
+  loading,
+  error,
+  comment,
+  commentDirty,
+  commentPreviewSql,
+  commitDisabled,
+  commitLabel,
+  onCommentChange,
+  onCommitComment,
+  onDiscardComment,
+}: RawDdlViewProps) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) {
+      return;
+    }
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  async function copyDdl(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(sql);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <section className="raw-ddl" aria-label="原始 DDL">
+      <header className="raw-ddl__toolbar">
+        <span className="raw-ddl__heading">
+          <Braces size={14} aria-hidden="true" />
+          <strong>SHOW CREATE TABLE</strong>
+          <code>{tableName}</code>
+        </span>
+        <span className="raw-ddl__actions">
+          <small>DDL 只读 · 表注释可编辑</small>
+          <button disabled={loading || Boolean(error)} onClick={() => void copyDdl()} type="button">
+            {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+            {copied ? "已复制" : "复制 DDL"}
+          </button>
+        </span>
+      </header>
+      {loading ? (
+        <p className="table-state">正在读取 DDL…</p>
+      ) : error ? (
+        <p className="table-state table-state--error">无法读取 DDL：{error}</p>
+      ) : (
+        <>
+          <section className="raw-ddl__comment" aria-label="表注释编辑">
+            <header>
+              <span>
+                <strong>表注释</strong>
+                <small>TABLE COMMENT</small>
+              </span>
+              <span className="raw-ddl__comment-actions">
+                <button disabled={!commentDirty} onClick={onDiscardComment} type="button">撤销</button>
+                <button
+                  className="table-commit"
+                  disabled={commitDisabled}
+                  onClick={onCommitComment}
+                  type="button"
+                >
+                  <Save size={13} aria-hidden="true" />
+                  {commitLabel}
+                </button>
+              </span>
+            </header>
+            <label className="raw-ddl__comment-field">
+              <span>当前表的说明信息，保存后执行 ALTER TABLE … COMMENT</span>
+              <textarea
+                aria-label={`${tableName} 表注释`}
+                onChange={(event) => onCommentChange(event.target.value)}
+                placeholder="为当前表添加注释"
+                spellCheck={false}
+                value={comment}
+              />
+            </label>
+            {commentDirty && commentPreviewSql ? (
+              <pre className="raw-ddl__comment-preview" aria-label="表注释待执行 SQL">{commentPreviewSql}</pre>
+            ) : null}
+          </section>
+          <div className="raw-ddl__panel">
+            <SelectableSqlBlock
+              ariaLabel={`${tableName} 原始 DDL`}
+              className="raw-ddl__text"
+              value={sql}
+            />
+          </div>
+        </>
+      )}
+    </section>
   );
 }
