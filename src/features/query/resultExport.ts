@@ -144,6 +144,23 @@ function escapeMarkdownCell(value: string): string {
 }
 
 /**
+ * Formats a MySQL temporal transport value as a readable, SQL-mode-independent literal.
+ * @param value - DATE, TIME, DATETIME, or TIMESTAMP text returned by the MySQL adapter.
+ * @returns A quoted temporal value; unexpected text keeps the hex-encoded safe fallback.
+ * Side effects: none.
+ */
+function mysqlTemporalLiteral(value: string): string {
+  const normalizedValue = value.replace(
+    /^(\d{4}-\d{2}-\d{2})T(?=\d{2}:\d{2}:\d{2})/u,
+    "$1 ",
+  );
+  const validTemporalValue = /^(?:\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)?|-?\d{1,3}:\d{2}:\d{2}(?:\.\d{1,6})?)$/u;
+  return validTemporalValue.test(normalizedValue)
+    ? `'${normalizedValue}'`
+    : mysqlUtf8Expression(value);
+}
+
+/**
  * Formats a transport cell as a MySQL literal for INSERT / IN lists.
  * @param cell - Optional result cell.
  * @param databaseType - Native column type from the result schema.
@@ -173,8 +190,9 @@ export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType:
     case "binary":
       // Result transport stores binary as base64; emit a MySQL-native constructor.
       return `FROM_BASE64(${mysqlUtf8Expression(cell.value)})`;
-    case "text":
-    case "date_time": {
+    case "date_time":
+      return mysqlTemporalLiteral(cell.value);
+    case "text": {
       const normalizedType = databaseType.toLowerCase();
       if (
         /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit)/u.test(
@@ -209,6 +227,7 @@ export function normalizeSelection(selection: ResultSelectionRect): ResultSelect
  * @param selection - Normalized selection, or null when empty.
  * @param allSelected - Whether the entire loaded result set is selected.
  * @param columnCount - Total columns in the grid.
+ * @param discreteRowCount - Count of non-contiguous full rows selected via Mod+click.
  * @returns Status text such as `已选 3 个单元格`, or null when nothing is selected.
  * Side effects: none.
  */
@@ -216,7 +235,11 @@ export function describeSelection(
   selection: ResultSelectionRect | null,
   allSelected: boolean,
   columnCount: number,
+  discreteRowCount = 0,
 ): string | null {
+  if (discreteRowCount > 0) {
+    return discreteRowCount === 1 ? "已选 1 行" : `已选 ${discreteRowCount} 行`;
+  }
   if (!selection) {
     return null;
   }

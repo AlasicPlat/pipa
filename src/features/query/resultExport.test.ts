@@ -103,6 +103,33 @@ describe("resultExport", () => {
     );
   });
 
+  it("formats temporal cells as readable MySQL literals", () => {
+    expect(
+      cellValueToSqlLiteral(
+        { kind: "date_time", value: "2026-07-07T11:21:04" },
+        "TIMESTAMP",
+      ),
+    ).toBe("'2026-07-07 11:21:04'");
+    expect(
+      cellValueToSqlLiteral(
+        { kind: "date_time", value: "2026-07-21T16:00:00.123456" },
+        "DATETIME",
+      ),
+    ).toBe("'2026-07-21 16:00:00.123456'");
+    expect(cellValueToSqlLiteral({ kind: "date_time", value: "2026-07-07" }, "DATE")).toBe(
+      "'2026-07-07'",
+    );
+    expect(cellValueToSqlLiteral({ kind: "date_time", value: "-12:34:56" }, "TIME")).toBe(
+      "'-12:34:56'",
+    );
+    expect(
+      cellValueToSqlLiteral(
+        { kind: "date_time", value: "2026-07-07T11:21:04' OR 1=1" },
+        "TIMESTAMP",
+      ),
+    ).toMatch(/^CONVERT\(X'[0-9A-F]+' USING utf8mb4\)$/u);
+  });
+
   it("infers table names from FROM clauses", () => {
     expect(inferTableNameFromSql("SELECT * FROM orders WHERE id = 1")).toBe("orders");
     expect(inferTableNameFromSql("select a from `shop`.`order_items` o")).toBe("shop.order_items");
@@ -197,5 +224,6 @@ describe("resultExport", () => {
     expect(
       describeSelection({ startRow: 0, startCol: 0, endRow: 1, endCol: 2 }, true, 3),
     ).toBe("已选全部 2 行");
+    expect(describeSelection(null, false, 3, 3)).toBe("已选 3 行");
   });
 });

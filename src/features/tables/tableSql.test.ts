@@ -6,7 +6,12 @@ import {
   buildTableMutationPlan,
   columnDefaultValidationError,
   columnTypeValidationError,
+  buildAlterTableCommentStatement,
+  formatMysqlColumnType,
   isStructureColumnEditable,
+  parseCreateTableComment,
+  parseMysqlColumnType,
+  suggestMysqlBaseTypes,
   tableRowIdentity,
   type StagedExistingRow,
   type TableColumnDefinition,
@@ -406,5 +411,63 @@ describe("table SQL generation", () => {
     expect(columnTypeValidationError(injected.type)).toMatch(/不支持的复杂语法/u);
     expect(buildDdlStatements("shop", "orders", [NAME_COLUMN], [injected])).toEqual([]);
     expect(isStructureColumnEditable({ ...NAME_COLUMN, type: "enum('a','b')" })).toBe(false);
+  });
+
+  it("round-trips visual type parts without changing untouched COLUMN_TYPE strings", () => {
+    for (const sample of [
+      "bigint unsigned",
+      "bigint(20) unsigned",
+      "varchar(140)",
+      "decimal(10,2) unsigned",
+      "timestamp(3)",
+      "int",
+      "double(10,2) unsigned zerofill",
+    ]) {
+      const parsed = parseMysqlColumnType(sample);
+      expect(parsed).not.toBeNull();
+      expect(formatMysqlColumnType(parsed!)).toBe(sample);
+    }
+    expect(parseMysqlColumnType("enum('a','b')")).toBeNull();
+    expect(formatMysqlColumnType({
+      baseType: "bigint",
+      lengthArgs: "20",
+      unsigned: true,
+      zerofill: false,
+    })).toBe("bigint(20) unsigned");
+    expect(formatMysqlColumnType({
+      baseType: "varchar",
+      lengthArgs: "50",
+      unsigned: true,
+      zerofill: true,
+    })).toBe("varchar(50)");
+  });
+
+  it("does not emit CHANGE when only parse/format is applied", () => {
+    const draft = {
+      ...ID_COLUMN,
+      type: formatMysqlColumnType(parseMysqlColumnType(ID_COLUMN.type)!),
+    };
+    expect(buildDdlStatements("shop", "orders", [ID_COLUMN], [draft])).toEqual([]);
+  });
+
+  it("suggests MySQL base types by prefix and substring", () => {
+    expect(suggestMysqlBaseTypes("in")).toEqual(expect.arrayContaining(["int", "integer"]));
+    expect(suggestMysqlBaseTypes("in")[0]).toBe("int");
+    expect(suggestMysqlBaseTypes("bi")[0]).toBe("bigint");
+    expect(suggestMysqlBaseTypes("var")).toEqual(expect.arrayContaining(["varchar", "varbinary"]));
+  });
+
+  it("parses table-level COMMENT from SHOW CREATE TABLE without taking column comments", () => {
+    const createSql = [
+      "CREATE TABLE `orders` (",
+      "  `id` int NOT NULL COMMENT '主键',",
+      "  `name` varchar(50) COMMENT '名字''测试'",
+      ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单表''主表';",
+    ].join("\n");
+    expect(parseCreateTableComment(createSql)).toBe("订单表'主表");
+    expect(parseCreateTableComment("CREATE TABLE `t` (`id` int)")).toBe("");
+    expect(buildAlterTableCommentStatement("shop", "orders", "订单表")).toBe(
+      "ALTER TABLE `shop`.`orders` COMMENT = X'E8AEA2E58D95E8A1A8';",
+    );
   });
 });

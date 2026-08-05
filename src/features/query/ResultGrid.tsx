@@ -115,6 +115,24 @@ function isCellInSelection(
 }
 
 /**
+ * Returns whether a cell is covered by a rectangular or discrete full-row selection.
+ * @param selection - Contiguous selection rectangle, or null.
+ * @param selectedRowIndexes - Non-contiguous full rows toggled with Mod/Ctrl+click.
+ * @param rowIndex - View-row under test.
+ * @param columnIndex - Column under test.
+ * @returns True when the cell should render as selected.
+ * Side effects: none.
+ */
+function isCellSelected(
+  selection: ResultSelectionRect | null,
+  selectedRowIndexes: ReadonlySet<number>,
+  rowIndex: number,
+  columnIndex: number,
+): boolean {
+  return selectedRowIndexes.has(rowIndex) || isCellInSelection(selection, rowIndex, columnIndex);
+}
+
+/**
  * Returns distinct view-row indexes covered by a selection rectangle.
  * @param selection - Inclusive selection bounds.
  * @returns Sorted unique view-row indexes.
@@ -171,6 +189,7 @@ export function ResultGrid({
   );
   const [allSelected, setAllSelected] = useState(false);
   const [selection, setSelection] = useState<ResultSelectionRect | null>(null);
+  const [selectedRowIndexes, setSelectedRowIndexes] = useState<Set<number>>(() => new Set());
   const [anchor, setAnchor] = useState<{ row: number; col: number } | null>(null);
   const [focusCell, setFocusCell] = useState<{ row: number; col: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -205,6 +224,11 @@ export function ResultGrid({
     560,
   );
   const normalizedSelection = selection ? normalizeSelection(selection) : null;
+  const discreteRowIndexes = useMemo(
+    () => [...selectedRowIndexes].sort((left, right) => left - right),
+    [selectedRowIndexes],
+  );
+  const hasDiscreteRowSelection = discreteRowIndexes.length > 0;
   const hasIdColumn = primaryKeyColumnIndexes(columns).length > 0;
   const lastColumnIndex = Math.max(columns.length - 1, 0);
   const lastRowIndex = Math.max(viewRows.length - 1, 0);
@@ -218,12 +242,30 @@ export function ResultGrid({
           endCol: lastColumnIndex,
         }
       : null);
+  const discreteCopyRows = useMemo(
+    () => (hasDiscreteRowSelection ? discreteRowIndexes.map((rowIndex) => displayRows[rowIndex] ?? []) : null),
+    [discreteRowIndexes, displayRows, hasDiscreteRowSelection],
+  );
+  const discreteCopySelection = useMemo(
+    (): ResultSelectionRect | null => (
+      hasDiscreteRowSelection
+        ? {
+            startRow: 0,
+            startCol: 0,
+            endRow: Math.max(discreteRowIndexes.length - 1, 0),
+            endCol: lastColumnIndex,
+          }
+        : null
+    ),
+    [discreteRowIndexes.length, hasDiscreteRowSelection, lastColumnIndex],
+  );
 
   useEffect(() => {
     setColumnWidths(columns.map(() => DEFAULT_COLUMN_WIDTH));
     setSort(null);
     setAllSelected(false);
     setSelection(null);
+    setSelectedRowIndexes(new Set());
     setAnchor(null);
     setFocusCell(null);
     setContextMenu(null);
@@ -233,6 +275,7 @@ export function ResultGrid({
   useEffect(() => {
     setAllSelected(false);
     setSelection(null);
+    setSelectedRowIndexes(new Set());
     setAnchor(null);
     setFocusCell(null);
     setContextMenu(null);
@@ -244,6 +287,7 @@ export function ResultGrid({
     }
     setAllSelected(false);
     setSelection(null);
+    setSelectedRowIndexes(new Set());
     setAnchor(null);
     setFocusCell(null);
     setContextMenu(null);
@@ -260,6 +304,7 @@ export function ResultGrid({
       return;
     }
     setAllSelected(true);
+    setSelectedRowIndexes(new Set());
     setSelection({
       startRow: 0,
       startCol: 0,
@@ -310,8 +355,10 @@ export function ResultGrid({
   ]);
 
   useEffect(() => {
-    onSelectionChange?.(describeSelection(normalizedSelection, allSelected, columns.length));
-  }, [allSelected, columns.length, normalizedSelection, onSelectionChange]);
+    onSelectionChange?.(
+      describeSelection(normalizedSelection, allSelected, columns.length, discreteRowIndexes.length),
+    );
+  }, [allSelected, columns.length, discreteRowIndexes.length, normalizedSelection, onSelectionChange]);
 
   useEffect(() => () => onSelectionChange?.(null), [onSelectionChange]);
 
@@ -396,9 +443,41 @@ export function ResultGrid({
     nextFocus?: { row: number; col: number },
   ): void {
     setAllSelected(false);
+    setSelectedRowIndexes(new Set());
     setSelection(next);
     setAnchor(nextAnchor ?? { row: next.startRow, col: next.startCol });
     setFocusCell(nextFocus ?? { row: next.endRow, col: next.endCol });
+  }
+
+  /**
+   * Toggles one full row in the non-contiguous Mod/Ctrl+click selection set.
+   * @param rowIndex - View-row to add or remove.
+   * @param columnIndex - Clicked column used for keyboard focus.
+   * @returns Nothing (`void`).
+   * Side effects: updates discrete row selection and focus.
+   */
+  function toggleDiscreteRowSelection(rowIndex: number, columnIndex: number): void {
+    setAllSelected(false);
+    setSelectedRowIndexes((current) => {
+      const next = new Set(current);
+      if (next.size === 0 && normalizedSelection) {
+        const bounds = normalizedSelection;
+        if (bounds.startCol === 0 && bounds.endCol === lastColumnIndex) {
+          for (let index = bounds.startRow; index <= bounds.endRow; index += 1) {
+            next.add(index);
+          }
+        }
+      }
+      if (next.has(rowIndex)) {
+        next.delete(rowIndex);
+      } else {
+        next.add(rowIndex);
+      }
+      return next;
+    });
+    setSelection(null);
+    setAnchor({ row: rowIndex, col: 0 });
+    setFocusCell({ row: rowIndex, col: columnIndex });
   }
 
   /**
@@ -413,7 +492,17 @@ export function ResultGrid({
       onCopyAll?.();
       return;
     }
-    if (!activeSelection || !onCopyText) {
+    if (!onCopyText) {
+      return;
+    }
+    if (discreteCopyRows && discreteCopySelection) {
+      const text = serializeSelectionAsTsv(columns, discreteCopyRows, discreteCopySelection, { includeHeaders });
+      const cellCount = discreteCopyRows.length * columns.length;
+      const suffix = includeHeaders ? "（含字段名）" : "";
+      onCopyText(text, `已复制 ${cellCount} 个单元格${suffix}`);
+      return;
+    }
+    if (!activeSelection) {
       return;
     }
     const text = serializeSelectionAsTsv(columns, displayRows, activeSelection, { includeHeaders });
@@ -435,30 +524,35 @@ export function ResultGrid({
    */
   function copySelectionAs(format: "csv" | "json" | "markdown" | "in" | "names"): void {
     setContextMenu(null);
-    if (!activeSelection || !onCopyText) {
+    if (!onCopyText) {
+      return;
+    }
+    const sourceRows = discreteCopyRows ?? displayRows;
+    const sourceSelection = discreteCopySelection ?? activeSelection;
+    if (!sourceSelection) {
       return;
     }
     switch (format) {
       case "csv":
         onCopyText(
-          serializeSelectionAsCsv(columns, displayRows, activeSelection, { includeHeaders: true }),
+          serializeSelectionAsCsv(columns, sourceRows, sourceSelection, { includeHeaders: true }),
           "已复制为 CSV",
         );
         return;
       case "json":
-        onCopyText(serializeSelectionAsJson(columns, displayRows, activeSelection), "已复制为 JSON");
+        onCopyText(serializeSelectionAsJson(columns, sourceRows, sourceSelection), "已复制为 JSON");
         return;
       case "markdown":
         onCopyText(
-          serializeSelectionAsMarkdown(columns, displayRows, activeSelection),
+          serializeSelectionAsMarkdown(columns, sourceRows, sourceSelection),
           "已复制为 Markdown",
         );
         return;
       case "in":
-        onCopyText(serializeSelectionAsInList(columns, displayRows, activeSelection), "已复制为 IN (...)");
+        onCopyText(serializeSelectionAsInList(columns, sourceRows, sourceSelection), "已复制为 IN (...)");
         return;
       case "names":
-        onCopyText(serializeSelectionColumnNames(columns, activeSelection), "已复制字段名");
+        onCopyText(serializeSelectionColumnNames(columns, sourceSelection), "已复制字段名");
     }
   }
 
@@ -470,10 +564,17 @@ export function ResultGrid({
    */
   function copySelectionAsInsert(includePrimaryKey: boolean): void {
     setContextMenu(null);
-    if (!onCopyText || columns.length === 0 || displayRows.length === 0 || !activeSelection) {
+    if (!onCopyText || columns.length === 0 || displayRows.length === 0) {
       return;
     }
-    const rowIndexes = rowIndexesFromSelection(activeSelection);
+    const rowIndexes = hasDiscreteRowSelection
+      ? discreteRowIndexes
+      : activeSelection
+        ? rowIndexesFromSelection(activeSelection)
+        : [];
+    if (rowIndexes.length === 0) {
+      return;
+    }
     const sql = serializeRowsAsInsert(columns, displayRows, {
       tableName,
       includePrimaryKey,
@@ -524,7 +625,7 @@ export function ResultGrid({
   }
 
   /**
-   * Selects one cell, a rectangular range (Shift), or a whole row (Mod/Ctrl).
+   * Selects one cell, a rectangular range (Shift), or toggles a whole row (Mod/Ctrl).
    * @param event - Mouse event from a result cell.
    * @param rowIndex - Clicked view-row.
    * @param columnIndex - Clicked column.
@@ -544,11 +645,7 @@ export function ResultGrid({
     setContextMenu(null);
 
     if (event.metaKey || event.ctrlKey) {
-      applySelection(
-        { startRow: rowIndex, startCol: 0, endRow: rowIndex, endCol: lastColumnIndex },
-        { row: rowIndex, col: 0 },
-        { row: rowIndex, col: columnIndex },
-      );
+      toggleDiscreteRowSelection(rowIndex, columnIndex);
       return;
     }
 
@@ -675,7 +772,7 @@ export function ResultGrid({
     event.preventDefault();
     gridRef.current?.focus();
     const alreadySelected =
-      allSelected || isCellInSelection(normalizedSelection, rowIndex, columnIndex);
+      allSelected || isCellSelected(normalizedSelection, selectedRowIndexes, rowIndex, columnIndex);
     if (!alreadySelected) {
       applySelection(
         {
@@ -714,17 +811,18 @@ export function ResultGrid({
         setContextMenu(null);
         return;
       }
-      if (allSelected || selection) {
+      if (allSelected || selection || hasDiscreteRowSelection) {
         event.preventDefault();
         setAllSelected(false);
         setSelection(null);
+        setSelectedRowIndexes(new Set());
         setAnchor(null);
         setFocusCell(null);
       }
       return;
     }
     if (matchesShortcut(event, shortcuts.bindings.viewResultCell)) {
-      if (focusCell || activeSelection) {
+      if (focusCell || activeSelection || hasDiscreteRowSelection) {
         event.preventDefault();
         openCellViewer();
       }
@@ -732,14 +830,17 @@ export function ResultGrid({
     }
     if (event.shiftKey && event.key === "F10") {
       event.preventDefault();
-      const rowIndex = focusCell?.row ?? activeSelection?.startRow ?? 0;
+      const rowIndex = focusCell?.row ?? discreteRowIndexes[0] ?? activeSelection?.startRow ?? 0;
       const columnIndex = focusCell?.col ?? activeSelection?.startCol ?? 0;
       setFocusCell({ row: rowIndex, col: columnIndex });
       const rect = viewportRef.current?.getBoundingClientRect();
       setContextMenu(clampMenuPosition((rect?.left ?? 0) + 24, (rect?.top ?? 0) + 48));
       return;
     }
-    if (matchesShortcut(event, shortcuts.bindings.copyResultSelection) && (allSelected || selection)) {
+    if (
+      matchesShortcut(event, shortcuts.bindings.copyResultSelection)
+      && (allSelected || selection || hasDiscreteRowSelection)
+    ) {
       event.preventDefault();
       if (allSelected && !normalizedSearch && !sort) {
         onCopyAll?.();
@@ -755,9 +856,11 @@ export function ResultGrid({
     }
     event.preventDefault();
     const current = focusCell ??
-      (activeSelection
-        ? { row: activeSelection.endRow, col: activeSelection.endCol }
-        : { row: 0, col: 0 });
+      (hasDiscreteRowSelection
+        ? { row: discreteRowIndexes[discreteRowIndexes.length - 1] ?? 0, col: 0 }
+        : activeSelection
+          ? { row: activeSelection.endRow, col: activeSelection.endCol }
+          : { row: 0, col: 0 });
     const deltaRow = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
     const deltaCol = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
     const nextRow = Math.max(0, Math.min(lastRowIndex, current.row + deltaRow));
@@ -855,6 +958,7 @@ export function ResultGrid({
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const rowFullySelected =
               allSelected ||
+              selectedRowIndexes.has(virtualRow.index) ||
               (normalizedSelection !== null &&
                 virtualRow.index >= normalizedSelection.startRow &&
                 virtualRow.index <= normalizedSelection.endRow &&
@@ -875,7 +979,7 @@ export function ResultGrid({
                 {columns.map((column, columnIndex) => {
                   const selected =
                     allSelected ||
-                    isCellInSelection(normalizedSelection, virtualRow.index, columnIndex);
+                    isCellSelected(normalizedSelection, selectedRowIndexes, virtualRow.index, columnIndex);
                   const focused =
                     focusCell?.row === virtualRow.index && focusCell.col === columnIndex;
                   const searchMatch = cellMatchesSearch(
@@ -888,7 +992,7 @@ export function ResultGrid({
                       key={`${column.name}-${columnIndex}`}
                       role="gridcell"
                       aria-selected={selected || undefined}
-                      title={`${column.name} · 单击选中，⌘/Ctrl+C 复制，双击直接复制`}
+                      title={`${column.name} · 单击选中 · ⌘/Ctrl+单击多选行 · ⌘/Ctrl+C 复制 · 双击直接复制`}
                       onMouseDown={(event) => handleCellMouseDown(event, virtualRow.index, columnIndex)}
                       onDoubleClick={() => handleCellDoubleClick(virtualRow.index, columnIndex)}
                       onContextMenu={(event) =>
