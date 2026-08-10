@@ -606,7 +606,7 @@
 | npm | @tauri-apps/plugin-process | 2.3.1 | MIT OR Apache-2.0 |
 | npm | @tauri-apps/plugin-updater | 2.10.1 | MIT OR Apache-2.0 |
 | npm | @types/trusted-types | 2.0.7 | MIT |
-| npm | dompurify | 3.4.12 | (MPL-2.0 OR Apache-2.0) |
+| npm | dompurify | 3.4.13 | (MPL-2.0 OR Apache-2.0) |
 | npm | lucide-react | 1.24.0 | ISC |
 | npm | marked | 14.0.0 | MIT |
 | npm | monaco-editor | 0.56.0 | MIT |

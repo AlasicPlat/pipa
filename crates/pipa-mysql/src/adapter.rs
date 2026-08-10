@@ -1,4 +1,5 @@
 use crate::value::{convert_cell, normalize_database_type};
+use chrono::Local;
 use futures_util::TryStreamExt;
 use pipa_core::{
     AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult, ConnectionProfile,
@@ -18,6 +19,23 @@ use tokio_util::sync::CancellationToken;
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BATCH_ROWS: usize = 256;
+
+/// Formats a UTC offset as the fixed `±HH:MM` syntax accepted by MySQL sessions.
+fn format_time_zone_offset(offset_seconds: i32) -> String {
+    let total_minutes = offset_seconds / 60;
+    let sign = if total_minutes < 0 { '-' } else { '+' };
+    let absolute_minutes = total_minutes.unsigned_abs();
+    format!(
+        "{sign}{:02}:{:02}",
+        absolute_minutes / 60,
+        absolute_minutes % 60
+    )
+}
+
+/// Returns the computer's current local UTC offset for a newly opened MySQL session.
+fn local_time_zone_offset() -> String {
+    format_time_zone_offset(Local::now().offset().local_minus_utc())
+}
 
 /// SQLx-backed adapter for MySQL-compatible databases.
 pub struct MySqlAdapter;
@@ -269,7 +287,10 @@ pub(crate) fn create_pool(profile: &ConnectionProfile, password: &SecretString) 
         .port(profile.port)
         .username(&profile.username)
         .password(password.expose_secret())
-        .ssl_mode(ssl_mode);
+        .ssl_mode(ssl_mode)
+        // SQLx defaults MySQL sessions to UTC; local sessions keep TIMESTAMP display and
+        // timestamp literals/ranges aligned with the desktop user's wall-clock time.
+        .timezone(Some(local_time_zone_offset()));
     if let Some(database) = &profile.database {
         options = options.database(database);
     }
@@ -403,10 +424,19 @@ fn stable_error(
 
 #[cfg(test)]
 mod tests {
-    use super::{map_connection_error, map_query_error};
+    use super::{format_time_zone_offset, map_connection_error, map_query_error};
     use pipa_core::AppErrorCode;
     use sqlx_core::Error as SqlxError;
     use std::io;
+
+    /// Verifies whole-hour and fractional-hour local offsets use MySQL's fixed-offset syntax.
+    #[test]
+    fn formats_mysql_session_time_zone_offsets() {
+        assert_eq!(format_time_zone_offset(8 * 60 * 60), "+08:00");
+        assert_eq!(format_time_zone_offset(5 * 60 * 60 + 45 * 60), "+05:45");
+        assert_eq!(format_time_zone_offset(-(3 * 60 * 60 + 30 * 60)), "-03:30");
+        assert_eq!(format_time_zone_offset(0), "+00:00");
+    }
 
     /// Verifies pool acquisition timeouts use the stable retryable timeout category.
     #[test]

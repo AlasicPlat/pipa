@@ -70,7 +70,7 @@ const REDIS_CONNECTION: ConnectionProfile = {
  */
 async function assertGroupedConnectionSelection(): Promise<void> {
   const selectConnection = vi.fn();
-  const { rerender } = render(
+  const { container, rerender } = render(
     <ConnectionSidebar
       profiles={MYSQL_CONNECTIONS}
       selectedConnectionId={null}
@@ -98,7 +98,12 @@ async function assertGroupedConnectionSelection(): Promise<void> {
   expect(within(mongodbGroup).getByRole("button", { name: "收起 MongoDB 连接分组" })).toHaveAttribute("aria-expanded", "true");
   expect(within(mongodbGroup).getByText("暂无连接")).toBeVisible();
 
-  fireEvent.click(within(mysqlGroup).getByRole("button", { name: /订单主库/ }));
+  const orderConnection = container.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${MYSQL_CONNECTIONS[0].id}"]`,
+  );
+  expect(orderConnection).not.toBeNull();
+  if (!orderConnection) return;
+  fireEvent.click(orderConnection);
   expect(selectConnection).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id);
 
   rerender(
@@ -110,18 +115,18 @@ async function assertGroupedConnectionSelection(): Promise<void> {
     />,
   );
 
-  expect(screen.getByRole("button", { name: /订单主库/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  const selectedOrderConnection = container.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${MYSQL_CONNECTIONS[0].id}"]`,
   );
-  expect(screen.getByRole("button", { name: /订单主库/ })).toHaveClass("is-selected");
+  expect(selectedOrderConnection).toHaveAttribute("aria-selected", "true");
+  expect(selectedOrderConnection).toHaveClass("is-selected");
 }
 
 /**
- * Verifies multiple connections retain independent table drawers after double click.
+ * Verifies multiple connections retain independent table drawers after single click.
  * Parameters: none.
  * @returns Nothing (`void`).
- * Side effects: renders the navigator and dispatches two double-click events.
+ * Side effects: renders the navigator and dispatches two click events.
  */
 function assertIndependentConnectionDrawers(): void {
   render(
@@ -133,12 +138,58 @@ function assertIndependentConnectionDrawers(): void {
     />,
   );
 
-  fireEvent.doubleClick(screen.getByRole("button", { name: /订单主库/ }));
-  fireEvent.doubleClick(screen.getByRole("button", { name: /本地开发/ }));
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
+  fireEvent.click(screen.getByRole("button", { name: /本地开发/ }));
 
   expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
   expect(screen.getByLabelText("本地开发 数据表")).toBeVisible();
   expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
+}
+
+/** Verifies a connection click toggles once while table rows still own double-click opening. */
+function assertSingleClickConnectionToggle(): void {
+  render(
+    <ConnectionSidebar
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  const connection = screen.getByRole("button", { name: /订单主库/u });
+  expect(connection).toHaveAttribute("title", "单击或按 Enter 展开数据表");
+  fireEvent.click(connection, { detail: 1 });
+  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+  expect(connection).toHaveAttribute("title", "单击或按 Enter 收起数据表");
+
+  fireEvent.click(connection, { detail: 2 });
+  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+  fireEvent.click(connection, { detail: 1 });
+  expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
+}
+
+/** Verifies table discovery is available globally and beside an expanded SQL connection. */
+function assertTableFinderEntryPoints(): void {
+  const onFindTables = vi.fn();
+  render(
+    <ConnectionSidebar
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onFindTables={onFindTables}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "查找表" }));
+  expect(onFindTables).toHaveBeenLastCalledWith();
+
+  const connection = screen.getByRole("button", { name: /订单主库/u });
+  expect(connection).toHaveTextContent("orders · mysql.internal:3306");
+  fireEvent.click(connection);
+  fireEvent.click(screen.getByRole("button", { name: "在 订单主库 中查找数据表" }));
+  expect(onFindTables).toHaveBeenLastCalledWith(MYSQL_CONNECTIONS[0].id);
 }
 
 /** Verifies Redis connections reveal databases before a database-scoped key scan. */
@@ -156,7 +207,7 @@ async function assertRedisKeyBrowser(): Promise<void> {
     />,
   );
 
-  fireEvent.doubleClick(screen.getByRole("button", { name: /本地缓存/ }));
+  fireEvent.click(screen.getByRole("button", { name: /本地缓存/ }));
   await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
     REDIS_CONNECTION.id,
     "INFO keyspace",
@@ -198,7 +249,7 @@ function assertTableSearchAndDoubleClickOpen(): void {
     />,
   );
 
-  fireEvent.doubleClick(screen.getByRole("button", { name: /订单主库/ }));
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
   fireEvent.change(screen.getByRole("searchbox", { name: "搜索连接或已加载的数据表" }), {
     target: { value: "order" },
   });
@@ -209,6 +260,72 @@ function assertTableSearchAndDoubleClickOpen(): void {
   expect(openTable).not.toHaveBeenCalled();
   fireEvent.doubleClick(screen.getByRole("treeitem", { name: "orders" }));
   expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "orders");
+}
+
+/** Verifies table rows expose reviewed TRUNCATE and DROP shortcuts by pointer or keyboard. */
+function assertTableDestructiveContextMenu(): void {
+  tableSession.state.rows = [
+    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
+    [{ kind: "text", value: "order_summary" }, { kind: "text", value: "VIEW" }],
+  ];
+  const onRequestTableAction = vi.fn();
+  render(
+    <ConnectionSidebar
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onRequestTableAction={onRequestTableAction}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/u }));
+  const table = screen.getByRole("treeitem", { name: "orders" });
+  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
+  expect(screen.getByRole("menu", { name: "orders 表操作" })).toBeVisible();
+  fireEvent.click(screen.getByRole("menuitem", { name: "清空表…" }));
+  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+    MYSQL_CONNECTIONS[0].id,
+    "orders",
+    "truncate",
+  );
+
+  table.focus();
+  fireEvent.keyDown(table, { key: "F10", shiftKey: true });
+  fireEvent.click(screen.getByRole("menuitem", { name: "删除表…" }));
+  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+    MYSQL_CONNECTIONS[0].id,
+    "orders",
+    "drop",
+  );
+
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name: /order_summary/u }));
+  expect(screen.queryByRole("menu", { name: "order_summary 表操作" })).not.toBeInTheDocument();
+}
+
+/** Verifies persisted pin identities reorder only their owning connection's table list. */
+function assertPinnedTableOrdering(): void {
+  tableSession.state.rows = [
+    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
+    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
+  ];
+  render(
+    <ConnectionSidebar
+      pinnedTableKeys={new Set([`${MYSQL_CONNECTIONS[0].id}\u0000orders`])}
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onRequestTableAction={vi.fn()}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/u }));
+  const tables = screen.getAllByRole("treeitem");
+  expect(tables.map((table) => table.getAttribute("data-table-name"))).toEqual(["orders", "customers"]);
+  expect(tables[0]).toHaveTextContent("置顶");
+  fireEvent.contextMenu(tables[0]!);
+  expect(screen.getByRole("menuitem", { name: "取消置顶" })).toBeVisible();
 }
 
 /** Verifies right click exposes an explicit delete action for the exact connection. */
@@ -288,6 +405,26 @@ function assertGlobalDiscoveryLoadsTables(): void {
 
   expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
   expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
+}
+
+/** Verifies a connection-scoped finder does not load metadata from unrelated connections. */
+function assertScopedDiscoveryLoadsOneConnection(): void {
+  render(
+    <ConnectionSidebar
+      discoverTables
+      discoverTablesForConnectionId={MYSQL_CONNECTIONS[0].id}
+      profiles={[
+        MYSQL_CONNECTIONS[0],
+        { ...MYSQL_CONNECTIONS[1], database: "local_development" },
+      ]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onSelectConnection={vi.fn()}
+    />,
+  );
+
+  expect(tableSession.run).toHaveBeenCalledTimes(1);
+  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
 }
 
 /** Verifies arrow navigation and Enter/Escape expansion keep connection focus predictable. */
@@ -439,7 +576,7 @@ function assertDirtyObjectIndicators(): void {
   );
 
   expect(screen.getByLabelText("订单主库 下有未提交修改")).toBeVisible();
-  fireEvent.doubleClick(screen.getByRole("button", { name: /订单主库/ }));
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
   expect(screen.getByLabelText("orders 有未提交修改")).toBeVisible();
 }
 
@@ -486,8 +623,12 @@ function registerConnectionSidebarTests(): void {
   it("keeps engines separate and exposes a strong selected state", assertGroupedConnectionSelection);
   it("collapses engine sections and persists the choice", assertEngineSectionCollapseToggle);
   it("keeps multiple connection drawers open independently", assertIndependentConnectionDrawers);
+  it("toggles connection drawers on a single click", assertSingleClickConnectionToggle);
+  it("opens global or connection-scoped table discovery", assertTableFinderEntryPoints);
   it("browses Redis keys and opens native key commands", assertRedisKeyBrowser);
   it("filters tables and opens them only on double click", assertTableSearchAndDoubleClickOpen);
+  it("requests reviewed destructive table actions from its context menu", assertTableDestructiveContextMenu);
+  it("keeps pinned tables at the top of their connection", assertPinnedTableOrdering);
   it("matches loaded catalog tables from the unified navigator search", assertUnifiedSearchMatchesCatalogTables);
   it("requests connection deletion from its context menu", assertContextMenuRequestsDeletion);
   it("navigates and expands connections from the keyboard", assertConnectionKeyboardNavigation);
@@ -496,6 +637,7 @@ function registerConnectionSidebarTests(): void {
   it("marks dirty tables and their owning connections", assertDirtyObjectIndicators);
   it("reports loaded tables for global discovery", assertLoadedTablesAreReported);
   it("loads table names for global discovery without expanding drawers", assertGlobalDiscoveryLoadsTables);
+  it("limits scoped discovery to the requested connection", assertScopedDiscoveryLoadsOneConnection);
 }
 
 describe("ConnectionSidebar", registerConnectionSidebarTests);

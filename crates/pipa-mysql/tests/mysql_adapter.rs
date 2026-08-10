@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone, Utc};
 use pipa_core::{
     AppErrorCode, ApplyTableMutationsInput, CellValue, ConnectionProfile, DatabaseAdapter, Engine,
     Environment, QueryEvent, QueryRequest, TableMutation, TableMutationField, TableMutationValue,
@@ -116,7 +117,7 @@ async fn streams_every_lossless_value_category() {
                 && binary_value == "AP8="
                 && date_value == "2026-07-17"
                 && time_value == "12:34:56.123456"
-                && datetime_value == "2026-07-17T12:34:56.123456"
+                && datetime_value == "2026-07-17 12:34:56.123456"
                 && text_value == "Pipa"
         ),
         "unexpected live value mapping: {:?}",
@@ -158,8 +159,87 @@ async fn preserves_zero_temporal_values() {
             CellValue::DateTime(datetime_value),
             CellValue::DateTime(timestamp_value),
         ] if date_value == "0000-00-00"
-            && datetime_value == "0000-00-00T00:00:00.000000"
-            && timestamp_value == "0000-00-00T00:00:00.000000"
+            && datetime_value == "0000-00-00 00:00:00.000000"
+            && timestamp_value == "0000-00-00 00:00:00.000000"
+    ));
+}
+
+/// Verifies TIMESTAMP display and range literals share the computer's local session offset.
+#[tokio::test]
+async fn uses_local_time_zone_for_timestamp_results_and_ranges() {
+    let profile = test_profile();
+    let table_name = format!("pipa_timestamp_zone_{}", Uuid::new_v4().simple());
+    let epoch_seconds = Utc::now().timestamp();
+    let local_offset = *Local::now().offset();
+    let expected_time_zone = format_time_zone_offset(local_offset.local_minus_utc());
+    let expected_timestamp = Utc
+        .timestamp_opt(epoch_seconds, 0)
+        .single()
+        .expect("current Unix time should be representable")
+        .with_timezone(&local_offset)
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let datetime_value = "2026-08-07 12:34:56";
+
+    let setup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!(
+            "CREATE TABLE `{table_name}` (\
+                 timestamp_value TIMESTAMP NOT NULL, \
+                 datetime_value DATETIME NOT NULL\
+             ); \
+             INSERT INTO `{table_name}` VALUES (FROM_UNIXTIME({epoch_seconds}), '{datetime_value}')"
+        ),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let selected = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT @@SESSION.time_zone, timestamp_value, datetime_value FROM `{table_name}`"),
+    )
+    .await;
+    let ranged = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!(
+            "SELECT COUNT(*) FROM `{table_name}` \
+             WHERE timestamp_value BETWEEN '{expected_timestamp}' AND '{expected_timestamp}'"
+        ),
+    )
+    .await;
+    let cleanup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+
+    assert!(matches!(
+        &selected[2],
+        QueryEvent::Batch { rows, .. }
+            if matches!(
+                rows.as_slice(),
+                [row] if matches!(
+                    row.as_slice(),
+                    [
+                        CellValue::Text(time_zone),
+                        CellValue::DateTime(timestamp),
+                        CellValue::DateTime(datetime),
+                    ] if time_zone == &expected_time_zone
+                        && timestamp == &expected_timestamp
+                        && datetime == datetime_value
+                )
+            )
+    ));
+    assert!(matches!(
+        &ranged[2],
+        QueryEvent::Batch { rows, .. }
+            if matches!(rows.as_slice(), [row]
+                if matches!(row.as_slice(), [CellValue::Integer(count)] if count == "1"))
     ));
 }
 
@@ -575,7 +655,7 @@ async fn applies_all_scalar_mutation_value_types() {
                     ] if enabled == "1"
                         && amount == "1234567890123456.7890"
                         && *ratio == 1.25
-                        && happened_at == "2026-08-04T12:34:56.123456"
+                        && happened_at == "2026-08-04 12:34:56.123456"
                 )
     ));
 
@@ -646,6 +726,18 @@ fn field(name: &str, value: TableMutationValue) -> TableMutationField {
         name: name.into(),
         value,
     }
+}
+
+/// Formats a local UTC offset using the syntax returned by `@@SESSION.time_zone`.
+fn format_time_zone_offset(offset_seconds: i32) -> String {
+    let total_minutes = offset_seconds / 60;
+    let sign = if total_minutes < 0 { '-' } else { '+' };
+    let absolute_minutes = total_minutes.unsigned_abs();
+    format!(
+        "{sign}{:02}:{:02}",
+        absolute_minutes / 60,
+        absolute_minutes % 60
+    )
 }
 
 /// Verifies authentication failures use a stable category and redact the supplied password.

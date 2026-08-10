@@ -1,6 +1,6 @@
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
-import { mysqlUtf8Expression, quoteIdentifier } from "../tables/tableSql";
+import { quoteIdentifier } from "../tables/tableSql";
 
 /** Inclusive rectangular selection within a result grid. */
 export interface ResultSelectionRect {
@@ -144,9 +144,19 @@ function escapeMarkdownCell(value: string): string {
 }
 
 /**
+ * Quotes readable text as a regular MySQL string literal.
+ * @param value - Untrusted text copied from a result cell.
+ * @returns A single-quoted literal with MySQL backslashes and apostrophes escaped.
+ * Side effects: none.
+ */
+function mysqlStringLiteral(value: string): string {
+  return `'${value.replace(/\\/gu, "\\\\").replace(/'/gu, "''")}'`;
+}
+
+/**
  * Formats a MySQL temporal transport value as a readable, SQL-mode-independent literal.
  * @param value - DATE, TIME, DATETIME, or TIMESTAMP text returned by the MySQL adapter.
- * @returns A quoted temporal value; unexpected text keeps the hex-encoded safe fallback.
+ * @returns A quoted temporal value; unexpected text remains a regular string literal.
  * Side effects: none.
  */
 function mysqlTemporalLiteral(value: string): string {
@@ -157,7 +167,7 @@ function mysqlTemporalLiteral(value: string): string {
   const validTemporalValue = /^(?:\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)?|-?\d{1,3}:\d{2}:\d{2}(?:\.\d{1,6})?)$/u;
   return validTemporalValue.test(normalizedValue)
     ? `'${normalizedValue}'`
-    : mysqlUtf8Expression(value);
+    : mysqlStringLiteral(value);
 }
 
 /**
@@ -183,13 +193,13 @@ export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType:
       if (/^(float|double|real|decimal|numeric)/u.test(normalizedType)) {
         return String(cell.value);
       }
-      return mysqlUtf8Expression(String(cell.value));
+      return mysqlStringLiteral(String(cell.value));
     }
     case "json":
-      return mysqlUtf8Expression(cell.value);
+      return mysqlStringLiteral(cell.value);
     case "binary":
       // Result transport stores binary as base64; emit a MySQL-native constructor.
-      return `FROM_BASE64(${mysqlUtf8Expression(cell.value)})`;
+      return `FROM_BASE64(${mysqlStringLiteral(cell.value)})`;
     case "date_time":
       return mysqlTemporalLiteral(cell.value);
     case "text": {
@@ -202,7 +212,7 @@ export function cellValueToSqlLiteral(cell: CellValue | undefined, databaseType:
       ) {
         return cell.value.trim();
       }
-      return mysqlUtf8Expression(cell.value);
+      return mysqlStringLiteral(cell.value);
     }
   }
 }

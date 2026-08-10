@@ -3590,7 +3590,7 @@ Cargo:x11rb@0.13.2 (LICENSE-APACHE)
 Cargo:zeroize@1.9.0 (LICENSE-APACHE)
 Cargo:zune-core@0.5.1 (LICENSE-APACHE)
 Cargo:zune-jpeg@0.5.15 (LICENSE-APACHE)
-npm:dompurify@3.4.12 (LICENSE)
+npm:dompurify@3.4.13 (LICENSE)
 --------------------------------------------------------------------------------
 Apache License
                            Version 2.0, January 2004
@@ -5235,7 +5235,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 Cargo:cssparser-macros@0.6.1 (LICENSE)
 Cargo:cssparser@0.36.0 (LICENSE)
 Cargo:dtoa-short@0.3.5 (LICENSE)
-npm:dompurify@3.4.12 (LICENSE-MPL)
+npm:dompurify@3.4.13 (LICENSE-MPL)
 --------------------------------------------------------------------------------
 Mozilla Public License Version 2.0
 ==================================

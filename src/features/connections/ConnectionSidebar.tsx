@@ -11,15 +11,24 @@ import {
 } from "../preferences/sidebarLayout";
 import { executeQueryOnce } from "../query/executeQueryOnce";
 import { useQuerySession } from "../query/useQuerySession";
+import {
+  TableActionMenu,
+  tableTargetKey,
+  type TableQuickAction,
+} from "../tables/TableActionMenu";
 
 interface ConnectionSidebarProps {
   discoverTables?: boolean;
+  discoverTablesForConnectionId?: string | null;
   dirtyTables?: readonly { connectionId: string; tableName: string }[];
   focusConnectionId?: string | null;
   profiles: ConnectionProfile[];
+  pinnedTableKeys?: ReadonlySet<string>;
   selectedConnectionId: string | null;
   tableCatalog?: Readonly<Record<string, readonly string[]>>;
+  tableCatalogRefreshVersions?: Readonly<Record<string, number>>;
   onFocusConnectionHandled?: () => void;
+  onFindTables?: (connectionId?: string) => void;
   onSelectConnection: (id: string) => void;
   onAddConnection: () => void;
   onCopyConfig?: (profile: ConnectionProfile) => void;
@@ -29,6 +38,11 @@ interface ConnectionSidebarProps {
   onRequestRename?: (profile: ConnectionProfile) => void;
   onRequestDelete?: (profile: ConnectionProfile) => void;
   onSelectRedisDatabase?: (connectionId: string, database: string) => void;
+  onRequestTableAction?: (
+    connectionId: string,
+    tableName: string,
+    action: TableQuickAction,
+  ) => void;
   onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
   reconnectingConnectionId?: string | null;
   selectedRedisDatabases?: Readonly<Record<string, string>>;
@@ -44,11 +58,20 @@ interface ConnectionDrawerProps {
   dirtyTableNames: ReadonlySet<string>;
   expanded: boolean;
   profile: ConnectionProfile;
+  pinnedTableKeys: ReadonlySet<string>;
   selected: boolean;
   tableFilter: string;
+  tableCatalogRefreshVersion: number;
   onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
   onOpenTable?: (connectionId: string, tableName: string) => void;
+  onFindTables?: (connectionId?: string) => void;
   onOpenContextMenu: (profile: ConnectionProfile, x: number, y: number) => void;
+  onOpenTableContextMenu: (
+    connectionId: string,
+    tableName: string,
+    x: number,
+    y: number,
+  ) => void;
   onSelect: (connectionId: string) => void;
   onSelectRedisDatabase?: (connectionId: string, database: string) => void;
   onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
@@ -82,6 +105,13 @@ function connectionIdentityMatches(profile: ConnectionProfile, normalizedQuery: 
 
 interface ConnectionContextMenuState {
   profileId: string;
+  x: number;
+  y: number;
+}
+
+interface TableContextMenuState {
+  connectionId: string;
+  tableName: string;
   x: number;
   y: number;
 }
@@ -202,11 +232,15 @@ function ConnectionDrawer({
   dirtyTableNames,
   expanded,
   profile,
+  pinnedTableKeys,
   selected,
   tableFilter,
+  tableCatalogRefreshVersion,
   onOpenRedisKey,
   onOpenTable,
+  onFindTables,
   onOpenContextMenu,
+  onOpenTableContextMenu,
   onSelect,
   onSelectRedisDatabase,
   onTablesLoaded,
@@ -228,11 +262,15 @@ function ConnectionDrawer({
   const [redisExplorerError, setRedisExplorerError] = useState<string | null>(null);
   const redisDatabaseRequestIdRef = useRef(0);
   const redisKeyRequestIdRef = useRef(0);
+  const tableCatalogRefreshVersionRef = useRef(0);
   const normalizedTableFilter = tableFilter.trim().toLocaleLowerCase();
   const objectRows = tables.state.rows.filter((row) => Boolean(objectName(row)));
-  const visibleTableRows = objectRows.filter((row) =>
-    objectName(row).toLocaleLowerCase().includes(normalizedTableFilter),
-  );
+  const visibleTableRows = objectRows
+    .filter((row) => objectName(row).toLocaleLowerCase().includes(normalizedTableFilter))
+    .sort((left, right) => (
+      Number(pinnedTableKeys.has(tableTargetKey(profile.id, objectName(right))))
+      - Number(pinnedTableKeys.has(tableTargetKey(profile.id, objectName(left))))
+    ));
   const visibleRedisKeys = redisKeys.filter((key) =>
     key.toLocaleLowerCase().includes(normalizedTableFilter),
   );
@@ -277,6 +315,20 @@ function ConnectionDrawer({
       void tables.run(metadataCommand());
     }
   }, [canExplore, discoverTables, profile, tables.run, tables.state.queryId, tables.state.running]);
+
+  useEffect(() => {
+    if (
+      tableCatalogRefreshVersion === 0
+      || tableCatalogRefreshVersionRef.current === tableCatalogRefreshVersion
+      || profile.engine !== "my_sql"
+      || !canExplore
+      || tables.state.running
+    ) {
+      return;
+    }
+    tableCatalogRefreshVersionRef.current = tableCatalogRefreshVersion;
+    void tables.run(metadataCommand());
+  }, [canExplore, profile.engine, tableCatalogRefreshVersion, tables.run, tables.state.running]);
 
   /**
    * Loads the Redis database summaries without scanning any database keys.
@@ -396,6 +448,19 @@ function ConnectionDrawer({
     }
   }
 
+  /**
+   * Selects and toggles one connection on the first click of a click sequence.
+   * @param event - Pointer click raised by the connection row.
+   * @returns Nothing (`void`).
+   * Side effects: may select the connection, toggle its drawer, and load object metadata.
+   */
+  function handleConnectionClick(event: MouseEvent<HTMLButtonElement>): void {
+    if (event.detail > 1) {
+      return;
+    }
+    handleToggleRequested();
+  }
+
   /** Moves focus and selection to the adjacent saved connection without wrapping. */
   function focusAdjacentConnection(currentTarget: HTMLButtonElement, offset: -1 | 1): void {
     const connectionButtons = Array.from(
@@ -482,8 +547,31 @@ function ConnectionDrawer({
     }
   }
 
-  /** Moves within the visible table results while keeping keyboard focus and selection aligned. */
-  function handleTableKeyDown(event: KeyboardEvent<HTMLButtonElement>, tableName: string): void {
+  /**
+   * Handles table-row navigation, opening, collapse, and the keyboard context menu.
+   * @param event - Keyboard event raised by one table row.
+   * @param tableName - Exact database-reported table name.
+   * @param allowDestructiveActions - Whether the row is a base table rather than a view.
+   * @returns Nothing (`void`).
+   * Side effects: may move focus, select/open a table, collapse its drawer, or open its action menu.
+   */
+  function handleTableKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    tableName: string,
+    allowDestructiveActions: boolean,
+  ): void {
+    if (
+      allowDestructiveActions
+      && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+    ) {
+      event.preventDefault();
+      const bounds = event.currentTarget.getBoundingClientRect();
+      onSelect(profile.id);
+      setSelectedTableName(tableName);
+      onOpenTableContextMenu(profile.id, tableName, bounds.left + 24, bounds.bottom - 4);
+      return;
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       onOpenTable?.(profile.id, tableName);
@@ -515,6 +603,23 @@ function ConnectionDrawer({
     }
     nextButton.focus();
     setSelectedTableName(nextButton.dataset.tableName ?? null);
+  }
+
+  /**
+   * Opens destructive table shortcuts without triggering the table workspace.
+   * @param event - Native context-menu mouse event from the table row.
+   * @param tableName - Exact database-reported table name.
+   * @returns Nothing (`void`).
+   * Side effects: selects the connection and table, then opens the positioned action menu.
+   */
+  function handleTableContextMenu(
+    event: MouseEvent<HTMLButtonElement>,
+    tableName: string,
+  ): void {
+    event.preventDefault();
+    onSelect(profile.id);
+    setSelectedTableName(tableName);
+    onOpenTableContextMenu(profile.id, tableName, event.clientX, event.clientY);
   }
 
   /**
@@ -570,13 +675,14 @@ function ConnectionDrawer({
         aria-selected={selected}
         className={`connection-row${selected ? " is-selected" : ""}`}
         data-connection-id={profile.id}
-        onClick={() => onSelect(profile.id)}
+        onClick={handleConnectionClick}
         onContextMenu={handleContextMenu}
-        onDoubleClick={handleToggleRequested}
         onKeyDown={handleConnectionKeyDown}
         ref={connectionButtonRef}
         style={{ minHeight: "40px" }}
-        title={supportsExplorer ? `双击或按 Enter 展开${isRedis ? "数据库" : "数据表"}` : undefined}
+        title={supportsExplorer
+          ? `单击或按 Enter ${expanded ? "收起" : "展开"}${isRedis ? "数据库" : "数据表"}`
+          : undefined}
         type="button"
       >
         <span className="connection-row__content">
@@ -593,14 +699,19 @@ function ConnectionDrawer({
               />
             ) : null}
           </span>
-          <span className="connection-row__meta">
-            {profile.host}:{profile.port}
-            <span aria-hidden="true"> · </span>
+          <span
+            className="connection-row__meta"
+            title={isRedis
+              ? `DB ${effectiveRedisDatabase} · ${profile.host}:${profile.port}`
+              : `${profile.database ?? "未指定数据库"} · ${profile.host}:${profile.port}`}
+          >
             {isRedis
               ? `DB ${effectiveRedisDatabase}${
                   selectedRedisDatabase === undefined && !profile.database ? "（默认）" : ""
                 }`
               : profile.database ?? "未指定数据库"}
+            <span aria-hidden="true"> · </span>
+            {profile.host}:{profile.port}
           </span>
         </span>
         {supportsExplorer ? (
@@ -726,18 +837,29 @@ function ConnectionDrawer({
         >
           <header className="connection-drawer__header">
             <span>数据表 <small>{objectRows.length}</small></span>
-            <button
-              aria-label={`刷新 ${profile.name} 数据表`}
-              disabled={!canExplore || tables.state.running}
-              onClick={handleRefresh}
-              type="button"
-            >
-              {tables.state.running ? (
-                <LoaderCircle className="spin" size={12} aria-hidden="true" />
-              ) : (
-                <RefreshCw size={12} aria-hidden="true" />
-              )}
-            </button>
+            <span className="connection-drawer__actions">
+              <button
+                aria-label={`在 ${profile.name} 中查找数据表`}
+                disabled={!canExplore}
+                onClick={() => onFindTables?.(profile.id)}
+                title="在完整列表中模糊查找"
+                type="button"
+              >
+                <Search size={12} aria-hidden="true" />
+              </button>
+              <button
+                aria-label={`刷新 ${profile.name} 数据表`}
+                disabled={!canExplore || tables.state.running}
+                onClick={handleRefresh}
+                type="button"
+              >
+                {tables.state.running ? (
+                  <LoaderCircle className="spin" size={12} aria-hidden="true" />
+                ) : (
+                  <RefreshCw size={12} aria-hidden="true" />
+                )}
+              </button>
+            </span>
           </header>
           {!profile.database ? (
             <p className="connection-drawer__status">请先在连接中指定数据库。</p>
@@ -757,17 +879,28 @@ function ConnectionDrawer({
                 const tableName = objectName(row);
                 const objectType = cellText(row[1]);
                 const isDirty = dirtyTableNames.has(tableName);
+                const isPinned = pinnedTableKeys.has(tableTargetKey(profile.id, tableName));
                 return (
                   <button
                     aria-selected={selectedTableName === tableName}
                     className={`table-tree__item${selectedTableName === tableName ? " is-selected" : ""}`}
+                    data-connection-id={profile.id}
                     data-table-name={tableName}
                     key={`${tableName}-${rowIndex}`}
                     onClick={() => setSelectedTableName(tableName)}
                     onDoubleClick={() => onOpenTable?.(profile.id, tableName)}
-                    onKeyDown={(event) => handleTableKeyDown(event, tableName)}
+                    onContextMenu={objectType === "VIEW"
+                      ? undefined
+                      : (event) => handleTableContextMenu(event, tableName)}
+                    onKeyDown={(event) => handleTableKeyDown(
+                      event,
+                      tableName,
+                      objectType !== "VIEW",
+                    )}
                     role="treeitem"
-                    title="双击或按 Enter 打开表工作区"
+                    title={objectType === "VIEW"
+                      ? "双击或按 Enter 打开视图工作区"
+                      : "双击或按 Enter 打开表工作区；右键可执行表操作"}
                     type="button"
                   >
                     <Table2 size={13} strokeWidth={1.7} aria-hidden="true" />
@@ -779,6 +912,7 @@ function ConnectionDrawer({
                         title="有未提交修改"
                       />
                     ) : null}
+                    {isPinned ? <small>置顶</small> : null}
                     {objectType === "VIEW" ? <small>视图</small> : null}
                   </button>
                 );
@@ -799,12 +933,16 @@ function ConnectionDrawer({
  */
 export function ConnectionSidebar({
   discoverTables = false,
+  discoverTablesForConnectionId = null,
   dirtyTables = [],
   focusConnectionId = null,
+  pinnedTableKeys = new Set(),
   profiles,
   selectedConnectionId,
   tableCatalog = {},
+  tableCatalogRefreshVersions = {},
   onFocusConnectionHandled,
+  onFindTables,
   onSelectConnection,
   onAddConnection,
   onCopyConfig,
@@ -813,6 +951,7 @@ export function ConnectionSidebar({
   onReconnect,
   onRequestRename,
   onRequestDelete,
+  onRequestTableAction,
   onSelectRedisDatabase,
   onTablesLoaded,
   reconnectingConnectionId = null,
@@ -825,7 +964,9 @@ export function ConnectionSidebar({
   );
   const [navigatorFilter, setNavigatorFilter] = useState("");
   const [contextMenu, setContextMenu] = useState<ConnectionContextMenuState | null>(null);
+  const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
   const contextMenuItemRef = useRef<HTMLButtonElement>(null);
+  const tableContextMenuItemRef = useRef<HTMLButtonElement>(null);
   const navigatorSearchRef = useRef<HTMLInputElement>(null);
   const contextProfile = profiles.find((profile) => profile.id === contextMenu?.profileId) ?? null;
   const focusProfile = focusConnectionId
@@ -915,6 +1056,70 @@ export function ConnectionSidebar({
     };
   }, [contextMenu]);
 
+  useEffect(() => {
+    if (!tableContextMenu) {
+      return;
+    }
+    const { connectionId, tableName } = tableContextMenu;
+    tableContextMenuItemRef.current?.focus();
+
+    /**
+     * Closes the table menu after an outside pointer action.
+     * @param event - Document-level pointer event.
+     * @returns Nothing (`void`).
+     * Side effects: may clear the active table menu.
+     */
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".table-context-menu")) {
+        setTableContextMenu(null);
+      }
+    }
+
+    /**
+     * Closes the table menu with Escape and returns focus to its table row.
+     * @param event - Document-level keyboard event.
+     * @returns Nothing (`void`).
+     * Side effects: clears the active menu and schedules focus restoration.
+     */
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key !== "Escape") {
+        return;
+      }
+      const trigger = Array.from(document.querySelectorAll<HTMLButtonElement>(
+        ".table-tree__item[data-connection-id][data-table-name]",
+      )).find((item) => (
+        item.dataset.connectionId === connectionId
+        && item.dataset.tableName === tableName
+      ));
+      setTableContextMenu(null);
+      window.requestAnimationFrame(() => trigger?.focus());
+    }
+
+    /**
+     * Closes the position-bound table menu when viewport geometry changes.
+     * Parameters: none.
+     * @returns Nothing (`void`).
+     * Side effects: clears the active table menu.
+     */
+    function handleViewportChange(): void {
+      setTableContextMenu(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("blur", handleViewportChange);
+    window.addEventListener("resize", handleViewportChange);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("blur", handleViewportChange);
+      window.removeEventListener("resize", handleViewportChange);
+    };
+  }, [tableContextMenu]);
+
   /**
    * Toggles exactly one drawer while preserving every other expanded connection.
    * @param connectionId - Drawer connection identifier.
@@ -980,8 +1185,35 @@ export function ConnectionSidebar({
   function handleOpenContextMenu(profile: ConnectionProfile, x: number, y: number): void {
     const menuWidth = 190;
     const menuHeight = 154;
+    setTableContextMenu(null);
     setContextMenu({
       profileId: profile.id,
+      x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
+    });
+  }
+
+  /**
+   * Opens the compact destructive-action menu for one exact table.
+   * @param connectionId - Connection that owns the table.
+   * @param tableName - Database-reported table name.
+   * @param x - Viewport pointer or keyboard anchor position.
+   * @param y - Viewport pointer or keyboard anchor position.
+   * @returns Nothing (`void`).
+   * Side effects: closes the connection menu and positions the table menu inside the viewport.
+   */
+  function handleOpenTableContextMenu(
+    connectionId: string,
+    tableName: string,
+    x: number,
+    y: number,
+  ): void {
+    const menuWidth = 220;
+    const menuHeight = 390;
+    setContextMenu(null);
+    setTableContextMenu({
+      connectionId,
+      tableName,
       x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
     });
@@ -1040,10 +1272,21 @@ export function ConnectionSidebar({
           value={navigatorFilter}
         />
       </label>
-      <button className="connection-add-global" onClick={onAddConnection} type="button">
-        <Plus size={14} aria-hidden="true" />
-        添加连接
-      </button>
+      <div className="connection-primary-actions">
+        <button
+          className="connection-find-global"
+          onClick={() => onFindTables?.()}
+          title="加载并模糊搜索所有 SQL 连接中的数据表"
+          type="button"
+        >
+          <Search size={14} aria-hidden="true" />
+          查找表
+        </button>
+        <button className="connection-add-global" onClick={onAddConnection} type="button">
+          <Plus size={14} aria-hidden="true" />
+          添加连接
+        </button>
+      </div>
       {ENGINE_GROUPS.map(({ engine, label }) => {
         const engineProfiles = profiles.filter((profile) => profile.engine === engine);
         const visibleProfiles = engineProfiles.filter(profileVisibleInNavigator);
@@ -1091,7 +1334,10 @@ export function ConnectionSidebar({
                     const forceExpandForTableMatch = catalogTableMatches.length > 0;
                     return (
                       <ConnectionDrawer
-                        discoverTables={discoverTables}
+                        discoverTables={discoverTables && (
+                          discoverTablesForConnectionId === null
+                          || discoverTablesForConnectionId === profile.id
+                        )}
                         dirtyTableNames={new Set(
                           dirtyTables
                             .filter((table) => table.connectionId === profile.id)
@@ -1101,15 +1347,19 @@ export function ConnectionSidebar({
                         key={profile.id}
                         onOpenRedisKey={onOpenRedisKey}
                         onOpenTable={onOpenTable}
+                        onFindTables={onFindTables}
                         onOpenContextMenu={handleOpenContextMenu}
+                        onOpenTableContextMenu={handleOpenTableContextMenu}
                         onSelect={onSelectConnection}
                         onSelectRedisDatabase={onSelectRedisDatabase}
                         onTablesLoaded={onTablesLoaded}
                         onToggle={handleToggleConnection}
                         profile={profile}
+                        pinnedTableKeys={pinnedTableKeys}
                         selected={selectedConnectionId === profile.id}
                         selectedRedisDatabase={selectedRedisDatabases[profile.id]}
                         tableFilter={normalizedNavigatorFilter}
+                        tableCatalogRefreshVersion={tableCatalogRefreshVersions[profile.id] ?? 0}
                       />
                     );
                   })}
@@ -1178,6 +1428,23 @@ export function ConnectionSidebar({
             删除连接…
           </button>
         </div>
+      ) : null}
+      {tableContextMenu ? (
+        <TableActionMenu
+          className="table-context-menu"
+          firstItemRef={tableContextMenuItemRef}
+          onAction={(action) => {
+            const target = tableContextMenu;
+            setTableContextMenu(null);
+            onRequestTableAction?.(target.connectionId, target.tableName, action);
+          }}
+          pinned={pinnedTableKeys.has(tableTargetKey(
+            tableContextMenu.connectionId,
+            tableContextMenu.tableName,
+          ))}
+          style={{ left: tableContextMenu.x, top: tableContextMenu.y }}
+          tableName={tableContextMenu.tableName}
+        />
       ) : null}
     </div>
   );

@@ -93,13 +93,20 @@ describe("resultExport", () => {
     expect(cellValueToSqlLiteral({ kind: "boolean", value: true }, "TINYINT")).toBe("1");
     expect(cellValueToSqlLiteral({ kind: "integer", value: "9" }, "BIGINT")).toBe("9");
     expect(cellValueToSqlLiteral({ kind: "text", value: "O'Reilly" }, "VARCHAR")).toBe(
-      "CONVERT(X'4F275265696C6C79' USING utf8mb4)",
+      "'O''Reilly'",
     );
     expect(cellValueToSqlLiteral({ kind: "json", value: "{\"a\":1}" }, "JSON")).toBe(
-      "CONVERT(X'7B2261223A317D' USING utf8mb4)",
+      "'{\"a\":1}'",
     );
     expect(cellValueToSqlLiteral({ kind: "binary", value: "AAEC" }, "BLOB")).toBe(
-      "FROM_BASE64(CONVERT(X'41414543' USING utf8mb4))",
+      "FROM_BASE64('AAEC')",
+    );
+    expect(cellValueToSqlLiteral({ kind: "text", value: "设备与设置" }, "VARCHAR")).toBe(
+      "'设备与设置'",
+    );
+    expect(cellValueToSqlLiteral({ kind: "text", value: "" }, "TEXT")).toBe("''");
+    expect(cellValueToSqlLiteral({ kind: "text", value: "C:\\temp" }, "TEXT")).toBe(
+      "'C:\\\\temp'",
     );
   });
 
@@ -127,7 +134,7 @@ describe("resultExport", () => {
         { kind: "date_time", value: "2026-07-07T11:21:04' OR 1=1" },
         "TIMESTAMP",
       ),
-    ).toMatch(/^CONVERT\(X'[0-9A-F]+' USING utf8mb4\)$/u);
+    ).toBe("'2026-07-07T11:21:04'' OR 1=1'");
   });
 
   it("infers table names from FROM clauses", () => {
@@ -151,7 +158,7 @@ describe("resultExport", () => {
         rowIndexes: [0],
       }),
     ).toBe(
-      "INSERT INTO `demo`.`orders` (`id`, `note`, `payload`) VALUES (1, CONVERT(X'68656C6C6F09776F726C64' USING utf8mb4), CONVERT(X'7B226F6B223A747275657D' USING utf8mb4));",
+      "INSERT INTO `demo`.`orders` (`id`, `note`, `payload`) VALUES (1, 'hello\tworld', '{\"ok\":true}');",
     );
 
     expect(
@@ -163,8 +170,8 @@ describe("resultExport", () => {
     ).toBe(
       [
         "INSERT INTO `orders` (`note`, `payload`) VALUES",
-        "(CONVERT(X'68656C6C6F09776F726C64' USING utf8mb4), CONVERT(X'7B226F6B223A747275657D' USING utf8mb4)),",
-        "(NULL, FROM_BASE64(CONVERT(X'41414543' USING utf8mb4)));",
+        "('hello\tworld', '{\"ok\":true}'),",
+        "(NULL, FROM_BASE64('AAEC'));",
       ].join("\n"),
     );
   });

@@ -374,24 +374,47 @@ body {
   font-size: 11px;
 }
 
+.connection-primary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.connection-find-global,
 .connection-add-global {
   display: flex;
   min-height: 34px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border-strong));
   border-radius: var(--radius-sm);
-  background: var(--brand-soft);
-  color: var(--text-primary);
   cursor: pointer;
   font-size: 10px;
   font-weight: 720;
 }
 
-.connection-add-global:hover {
+.connection-find-global {
+  border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border-strong));
+  background: var(--brand-soft);
+  color: var(--text-primary);
+}
+
+.connection-add-global {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.connection-find-global:hover {
   border-color: var(--brand);
   background: color-mix(in srgb, var(--brand) 18%, var(--surface-panel));
+  box-shadow: var(--shadow-xs);
+}
+
+.connection-add-global:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
   box-shadow: var(--shadow-xs);
 }
 
@@ -720,6 +743,34 @@ body {
   background: color-mix(in srgb, var(--accent-redis) 10%, var(--surface-panel));
 }
 
+.table-action-menu {
+  width: 220px;
+  max-height: calc(100vh - 16px);
+  overflow: visible;
+}
+
+.table-action-menu__submenu {
+  position: relative;
+  display: block;
+}
+
+.table-action-menu__submenu > button .table-action-menu__chevron {
+  margin-left: auto;
+}
+
+.table-action-menu__export-panel {
+  position: absolute;
+  z-index: 1;
+  top: -4px;
+  right: calc(100% + 6px);
+  width: 188px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md), var(--shadow-highlight);
+}
+
 .connection-drawer__body {
   margin: 1px 4px 5px 12px;
   overflow: hidden;
@@ -743,6 +794,12 @@ body {
   margin-left: 3px;
   color: var(--text-tertiary);
   font-size: 8px;
+}
+
+.connection-drawer__actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 
 .connection-drawer__header button {
@@ -780,7 +837,7 @@ body {
 
 .table-tree {
   display: grid;
-  max-height: 220px;
+  max-height: clamp(220px, 38vh, 420px);
   overflow: auto;
   padding: 1px 4px 5px 6px;
 }
@@ -4279,6 +4336,40 @@ body:has(.structure-grid__resize-handle:active) {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 16%, transparent);
 }
 
+.table-copy-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -4px 18px 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.table-copy-option input {
+  accent-color: var(--accent-mysql);
+}
+
+.table-ddl-dialog {
+  width: min(100%, 720px);
+}
+
+.table-ddl-dialog__body {
+  min-height: 240px;
+  padding: 0 18px 16px;
+}
+
+.table-ddl-dialog__body .selectable-sql-block,
+.table-ddl-dialog__body textarea {
+  width: 100%;
+  min-height: 300px;
+}
+
+.table-ddl-dialog__body textarea {
+  resize: none;
+}
+
 .destructive-dialog h2 {
   margin: 2px 0 0;
   font-size: 16px;
@@ -6162,6 +6253,7 @@ body:has(.structure-grid__resize-handle:active) {
   }
 }
 
+.connection-find-global,
 .connection-add-global {
   transition:
     border-color var(--duration-fast) var(--ease-out),
