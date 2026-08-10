@@ -84,6 +84,24 @@ function assertAccessibleSearch(): void {
   expect(results.queryAllByRole("option")).toHaveLength(0);
 }
 
+/** Verifies a connection-scoped table finder starts with the requested range selected. */
+function assertInitialConnectionScope(): void {
+  render(
+    <CommandPalette
+      initialConnectionId="production-id"
+      items={ITEMS}
+      onClose={vi.fn()}
+      onSelect={vi.fn()}
+      open
+    />,
+  );
+
+  expect(screen.getByRole("combobox", { name: "按连接过滤" })).toHaveValue("production-id");
+  const results = within(screen.getByRole("listbox", { name: "命令面板结果" }));
+  expect(results.getByRole("option", { name: /customer_orders/u })).toBeVisible();
+  expect(results.queryByRole("option", { name: /新建 SQL 查询/u })).not.toBeInTheDocument();
+}
+
 /** Verifies wrap-around arrows, Enter selection, Escape dismissal, and pointer selection. */
 function assertKeyboardAndPointerActions(): void {
   const onClose = vi.fn();
@@ -111,10 +129,65 @@ function assertKeyboardAndPointerActions(): void {
   expect(onClose).toHaveBeenCalledTimes(3);
 }
 
+/** Verifies table results expose the complete shared shortcut set by pointer and keyboard. */
+function assertTableContextActions(): void {
+  const onClose = vi.fn();
+  const onRequestTableAction = vi.fn();
+  render(
+    <CommandPalette
+      items={ITEMS}
+      onClose={onClose}
+      onRequestTableAction={onRequestTableAction}
+      onSelect={vi.fn()}
+      open
+    />,
+  );
+
+  const table = screen.getByRole("option", { name: /customer_orders/u });
+  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
+  expect(screen.getByRole("menu", { name: "customer_orders 表操作" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "复制表名" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "重命名表…" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "复制表…" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "置顶表" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "在新窗口中打开表" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "显示 CREATE TABLE 语法…" })).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "拷贝 CREATE TABLE 语法" })).toBeVisible();
+  fireEvent.click(screen.getByRole("menuitem", { name: "导出" }));
+  expect(screen.getByRole("menu", { name: "customer_orders 导出格式" })).toBeVisible();
+  fireEvent.click(screen.getByRole("menuitem", { name: "导出 JSON…" }));
+  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+    "production-id",
+    "customer_orders",
+    "export_json",
+  );
+
+  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "清空表…" }));
+  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+    "production-id",
+    "customer_orders",
+    "truncate",
+  );
+  expect(onClose).not.toHaveBeenCalled();
+
+  const search = screen.getByRole("combobox", { name: /搜索连接/u });
+  fireEvent.change(search, { target: { value: "customer_orders" } });
+  fireEvent.keyDown(search, { key: "F10", shiftKey: true });
+  fireEvent.click(screen.getByRole("menuitem", { name: "删除表…" }));
+  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+    "production-id",
+    "customer_orders",
+    "drop",
+  );
+}
+
 describe("CommandPalette", () => {
   afterEach(cleanup);
   it("scores fuzzy matches", assertFuzzyScoring);
   it("ranks results stably", assertStableRanking);
   it("renders an accessible searchable modal", assertAccessibleSearch);
+  it("starts in the requested connection scope", assertInitialConnectionScope);
   it("supports keyboard and pointer actions", assertKeyboardAndPointerActions);
+  it("requests table actions from result context menus", assertTableContextActions);
 });

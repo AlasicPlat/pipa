@@ -9,6 +9,7 @@ import {
   updateShortcutBinding,
 } from "../features/commands/shortcutRegistry";
 import { executeQueryOnce } from "../features/query/executeQueryOnce";
+import { downloadTextFile } from "../features/query/resultExport";
 import {
   deleteConnection,
   listWorkspaceWindowLabels,
@@ -111,6 +112,11 @@ vi.mock("../features/query/executeQueryOnce", () => ({
     rows: [[{ kind: "integer", value: "0" }, { kind: "null" }]],
     affectedRows: 0,
   }),
+}));
+
+vi.mock("../features/query/resultExport", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../features/query/resultExport")>(),
+  downloadTextFile: vi.fn().mockResolvedValue("saved"),
 }));
 
 vi.mock("@monaco-editor/react", () => ({
@@ -326,7 +332,7 @@ async function assertRedisDatabaseSelectionScopesWorkspace(): Promise<void> {
   render(<App />);
   const redisRow = await screen.findByRole("button", { name: /本地缓存/ });
 
-  fireEvent.doubleClick(redisRow);
+  fireEvent.click(redisRow);
   const database = await screen.findByRole("treeitem", { name: /DB 2/u });
   fireEvent.doubleClick(database);
   await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
@@ -372,6 +378,206 @@ async function assertConfirmedConnectionDeletion(): Promise<void> {
   await waitFor(() => expect(deleteConnection).toHaveBeenCalledWith(PRODUCTION_PROFILE.id));
   await waitFor(() => expect(screen.queryByRole("button", { name: /生产主库/ })).not.toBeInTheDocument());
   expect(screen.getByRole("status")).toHaveTextContent("已删除连接“生产主库”及其本地数据");
+}
+
+/** Verifies TRUNCATE and DROP remain behind the required destructive confirmations. */
+async function assertConfirmedTableDestructiveActions(): Promise<void> {
+  querySessionFixture.rows = [[
+    { kind: "text", value: "inventory" },
+    { kind: "text", value: "BASE TABLE" },
+  ]];
+  render(<App />);
+
+  await screen.findAllByText("开发主库");
+  const developmentRow = document.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${DEVELOPMENT_PROFILE.id}"]`,
+  );
+  expect(developmentRow).not.toBeNull();
+  if (!developmentRow) {
+    return;
+  }
+  fireEvent.click(developmentRow);
+  let table = screen.getByRole("treeitem", { name: "inventory" });
+  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "清空表…" }));
+  expect(screen.getByRole("alertdialog", {
+    name: "清空“inventory”的全部数据？",
+  })).toBeVisible();
+  expect(executeQueryOnce).not.toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    "TRUNCATE TABLE `pipa_dev`.`inventory`;",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "清空全部数据" }));
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    "TRUNCATE TABLE `pipa_dev`.`inventory`;",
+  ));
+  expect(screen.getByRole("status")).toHaveTextContent("已清空表“inventory”的全部数据");
+
+  fireEvent.click(developmentRow);
+  const productionRow = document.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${PRODUCTION_PROFILE.id}"]`,
+  );
+  expect(productionRow).not.toBeNull();
+  if (!productionRow) {
+    return;
+  }
+  fireEvent.click(productionRow);
+  table = screen.getByRole("treeitem", { name: "inventory" });
+  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "删除表…" }));
+  const dropButton = screen.getByRole("button", { name: "永久删除表" });
+  expect(dropButton).toBeEnabled();
+  expect(executeQueryOnce).not.toHaveBeenCalledWith(
+    PRODUCTION_PROFILE.id,
+    "DROP TABLE `pipa`.`inventory`;",
+  );
+  fireEvent.click(dropButton);
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    PRODUCTION_PROFILE.id,
+    "DROP TABLE `pipa`.`inventory`;",
+  ));
+  expect(screen.getByRole("status")).toHaveTextContent("已删除表“inventory”");
+}
+
+/** Verifies rename and duplicate shortcuts issue identifier-safe MySQL statements. */
+async function assertTableNameShortcuts(): Promise<void> {
+  querySessionFixture.rows = [[
+    { kind: "text", value: "inventory" },
+    { kind: "text", value: "BASE TABLE" },
+  ]];
+  render(<App />);
+  await screen.findAllByText("开发主库");
+  const developmentRow = document.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${DEVELOPMENT_PROFILE.id}"]`,
+  );
+  expect(developmentRow).not.toBeNull();
+  if (!developmentRow) return;
+  fireEvent.click(developmentRow);
+  let table = screen.getByRole("treeitem", { name: "inventory" });
+
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "重命名表…" }));
+  const renameInput = screen.getByRole("textbox", { name: "新表名" });
+  fireEvent.change(renameInput, { target: { value: "inventory_archive" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存新表名" }));
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    "RENAME TABLE `pipa_dev`.`inventory` TO `pipa_dev`.`inventory_archive`;",
+  ));
+
+  table = screen.getByRole("treeitem", { name: "inventory" });
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "复制表…" }));
+  const duplicateInput = screen.getByRole("textbox", { name: "复制为" });
+  fireEvent.change(duplicateInput, { target: { value: "inventory_copy" } });
+  expect(screen.getByRole("checkbox", { name: "同时复制表数据" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "开始复制" }));
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    "CREATE TABLE `pipa_dev`.`inventory_copy` LIKE `pipa_dev`.`inventory`;",
+  ));
+  await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    "INSERT INTO `pipa_dev`.`inventory_copy` SELECT * FROM `pipa_dev`.`inventory`;",
+  ));
+}
+
+/** Verifies copy, pin, DDL preview/copy, and export shortcuts execute through shared app services. */
+async function assertTableMetadataAndExportShortcuts(): Promise<void> {
+  querySessionFixture.rows = [[
+    { kind: "text", value: "inventory" },
+    { kind: "text", value: "BASE TABLE" },
+  ]];
+  clipboardState.writeText.mockResolvedValue(undefined);
+  vi.mocked(executeQueryOnce).mockImplementation(async (_connectionId, sql) => {
+    if (sql.startsWith("SHOW CREATE TABLE")) {
+      return {
+        columns: [],
+        rows: [[
+          { kind: "text", value: "inventory" },
+          { kind: "text", value: "CREATE TABLE `inventory` (`id` bigint NOT NULL)" },
+        ]],
+        affectedRows: 0,
+      };
+    }
+    return {
+      columns: [
+        { name: "id", databaseType: "BIGINT", nullable: false },
+        { name: "name", databaseType: "VARCHAR", nullable: true },
+      ],
+      rows: [[{ kind: "integer", value: "1" }, { kind: "text", value: "琴弦" }]],
+      affectedRows: 0,
+    };
+  });
+  render(<App />);
+  await screen.findAllByText("开发主库");
+  const developmentRow = document.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${DEVELOPMENT_PROFILE.id}"]`,
+  );
+  expect(developmentRow).not.toBeNull();
+  if (!developmentRow) return;
+  fireEvent.click(developmentRow);
+  let table = screen.getByRole("treeitem", { name: "inventory" });
+
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "复制表名" }));
+  await waitFor(() => expect(clipboardState.writeText).toHaveBeenLastCalledWith("inventory"));
+
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "置顶表" }));
+  table = screen.getByRole("treeitem", { name: /inventory/u });
+  expect(table).toHaveTextContent("置顶");
+  expect(window.localStorage.getItem("pipa:pinned-tables")).toContain(DEVELOPMENT_PROFILE.id);
+
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "显示 CREATE TABLE 语法…" }));
+  const ddl = await screen.findByRole("textbox", { name: "inventory CREATE TABLE 语法" });
+  expect(ddl).toHaveValue("CREATE TABLE `inventory` (`id` bigint NOT NULL)");
+  fireEvent.click(screen.getByRole("button", { name: "复制语法" }));
+  await waitFor(() => expect(clipboardState.writeText).toHaveBeenLastCalledWith(
+    "CREATE TABLE `inventory` (`id` bigint NOT NULL)",
+  ));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "导出" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "导出 CSV…" }));
+  await waitFor(() => expect(downloadTextFile).toHaveBeenCalledWith(
+    "id,name\n1,琴弦",
+    "pipa_dev-inventory.csv",
+    "text/csv;charset=utf-8",
+  ));
+}
+
+/** Verifies the table-window shortcut reuses the native detached-workspace route. */
+async function assertTableNewWindowShortcut(): Promise<void> {
+  desktopRuntime.tauri = true;
+  querySessionFixture.rows = [[
+    { kind: "text", value: "inventory" },
+    { kind: "text", value: "BASE TABLE" },
+  ]];
+  render(<App />);
+  await screen.findAllByText("开发主库");
+  const developmentRow = document.querySelector<HTMLButtonElement>(
+    `[data-connection-id="${DEVELOPMENT_PROFILE.id}"]`,
+  );
+  expect(developmentRow).not.toBeNull();
+  if (!developmentRow) return;
+  fireEvent.click(developmentRow);
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name: "inventory" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "在新窗口中打开表" }));
+
+  await waitFor(() => expect(desktopRuntime.createWindow).toHaveBeenCalledWith(
+    {
+      kind: "table",
+      id: `${DEVELOPMENT_PROFILE.id}:inventory`,
+      connectionId: DEVELOPMENT_PROFILE.id,
+      tableName: "inventory",
+      title: "开发主库 · inventory",
+    },
+    expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+  ));
 }
 
 /** Verifies shared workspace shortcuts cycle and close the active query tab. */
@@ -832,6 +1038,7 @@ function registerAppTests(): void {
       affectedRows: 0,
     });
     vi.mocked(deleteConnection).mockResolvedValue(undefined);
+    vi.mocked(downloadTextFile).mockResolvedValue("saved");
     vi.mocked(listWorkspaceWindowLabels).mockResolvedValue([]);
     vi.mocked(reconnectConnection).mockResolvedValue(undefined);
     vi.mocked(renameConnection).mockImplementation(async (connectionId, name) => ({
@@ -857,6 +1064,10 @@ function registerAppTests(): void {
   it("creates a native command workspace for Redis", assertRedisConnectionCreatesCommandWorkspace);
   it("switches Redis workspaces to the database opened in the navigator", assertRedisDatabaseSelectionScopesWorkspace);
   it("deletes a connection only after context-menu confirmation", assertConfirmedConnectionDeletion);
+  it("confirms destructive table shortcuts before executing SQL", assertConfirmedTableDestructiveActions);
+  it("renames and duplicates tables from shared shortcuts", assertTableNameShortcuts);
+  it("copies, pins, previews, and exports table metadata", assertTableMetadataAndExportShortcuts);
+  it("opens a table shortcut in a native window", assertTableNewWindowShortcut);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);
   it("keeps query results mounted across workspace switches", assertQueryResultsSurviveWorkspaceSwitch);
   it("uses a configured workspace shortcut and releases its previous default", assertConfiguredGlobalShortcut);

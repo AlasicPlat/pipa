@@ -233,7 +233,7 @@ export function QueryWorkspace({
   const [pendingProductionRedisCommand, setPendingProductionRedisCommand] = useState<string | null>(null);
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
   const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
-  const inferredTableName = resolveExportTableName(tab.sqlText, profile.database);
+  const inferredTableName = resolveExportTableName(session.state.sql, profile.database);
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.

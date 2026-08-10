@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Command as CommandIcon, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, Braces, Command as CommandIcon, Copy, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Sparkles, Trash2 } from "lucide-react";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { Engine } from "../bindings/Engine";
 import { BinlogWorkspace } from "../features/binlog/BinlogWorkspace";
@@ -23,14 +23,30 @@ import { useConnections } from "../features/connections/useConnections";
 import { McpPanel } from "../features/mcp/McpPanel";
 import { ThemeToggle } from "../features/preferences/ThemeToggle";
 import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/preferences/sidebarLayout";
+import { loadPinnedTables, persistPinnedTables } from "../features/preferences/pinnedTables";
 import { useThemePreference } from "../features/preferences/theme";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
+import { executeQueryOnce } from "../features/query/executeQueryOnce";
+import {
+  cellValueToPlainText,
+  downloadTextFile,
+  serializeResultAsCsv,
+  serializeRowsAsInsert,
+  serializeSelectionAsJson,
+} from "../features/query/resultExport";
 import {
   useWorkspacePersistence,
   type WorkspaceTab,
 } from "../features/query/useWorkspacePersistence";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { TableWorkspace } from "../features/tables/TableWorkspace";
+import { SelectableSqlBlock } from "../features/tables/SelectableSqlBlock";
+import {
+  tableTargetKey,
+  type TableDestructiveAction,
+  type TableQuickAction,
+} from "../features/tables/TableActionMenu";
+import { quoteIdentifier } from "../features/tables/tableSql";
 import { UpdateControl } from "../features/updater/UpdateControl";
 import {
   WorkspaceTabs,
@@ -61,6 +77,26 @@ const BINLOG_WORKSPACE_TAB: UtilityWorkspaceTab = {
   kind: "binlog",
   title: "Binlog 分析",
 };
+
+interface PendingTableDestructiveAction {
+  action: TableDestructiveAction;
+  connectionId: string;
+  tableName: string;
+}
+
+interface PendingTableNameAction {
+  action: "rename" | "duplicate";
+  connectionId: string;
+  tableName: string;
+}
+
+interface TableDdlPreview {
+  connectionId: string;
+  error: string | null;
+  loading: boolean;
+  sql: string;
+  tableName: string;
+}
 
 /** Returns a safe connection-deletion error message from an unknown IPC rejection. */
 function getConnectionDeletionError(error: unknown): string {
@@ -121,7 +157,7 @@ function connectionSearchTerms(profile: ConnectionProfile | undefined): string[]
 
 /** Formats the compact connection identity displayed in global search results. */
 function connectionPaletteDetail(profile: ConnectionProfile): string {
-  return `${connectionEngineLabel(profile.engine)} · ${profile.host}:${profile.port}${profile.database ? ` · ${profile.database}` : ""}`;
+  return `${connectionEngineLabel(profile.engine)} · ${profile.database ?? "未指定数据库"} · ${profile.host}:${profile.port}`;
 }
 
 /**
@@ -208,6 +244,18 @@ export function App() {
   const [busyQueryTabId, setBusyQueryTabId] = useState<string | null>(null);
   const [dirtyTableTabIds, setDirtyTableTabIds] = useState<Set<string>>(new Set());
   const [pendingCloseTableId, setPendingCloseTableId] = useState<string | null>(null);
+  const [pendingTableAction, setPendingTableAction] = useState<PendingTableDestructiveAction | null>(null);
+  const [pendingTableNameAction, setPendingTableNameAction] = useState<PendingTableNameAction | null>(null);
+  const [tableNameDraft, setTableNameDraft] = useState("");
+  const [duplicateTableData, setDuplicateTableData] = useState(true);
+  const [executingTableNameAction, setExecutingTableNameAction] = useState(false);
+  const [tableNameActionError, setTableNameActionError] = useState<string | null>(null);
+  const [tableDdlPreview, setTableDdlPreview] = useState<TableDdlPreview | null>(null);
+  const [pinnedTableKeys, setPinnedTableKeys] = useState(loadPinnedTables);
+  const [runningTableUtilityAction, setRunningTableUtilityAction] = useState(false);
+  const [tableActionError, setTableActionError] = useState<string | null>(null);
+  const [executingTableAction, setExecutingTableAction] = useState(false);
+  const [tableCatalogRefreshVersions, setTableCatalogRefreshVersions] = useState<Record<string, number>>({});
   const [deleteCandidate, setDeleteCandidate] = useState<ConnectionProfile | null>(null);
   const [deletingConnectionId, setDeletingConnectionId] = useState<string | null>(null);
   const [connectionDeletionError, setConnectionDeletionError] = useState<string | null>(null);
@@ -218,6 +266,7 @@ export function App() {
   const [renamingConnectionId, setRenamingConnectionId] = useState<string | null>(null);
   const [reconnectingConnectionId, setReconnectingConnectionId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteConnectionId, setCommandPaletteConnectionId] = useState<string | null>(null);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [shortcutDialogView, setShortcutDialogView] = useState<ShortcutDialogView>("help");
   const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
@@ -301,6 +350,21 @@ export function App() {
   );
   const activeTableTab = openTableTabs.find((tab) => tab.id === activeTableTabId);
   const pendingCloseTable = openTableTabs.find((tab) => tab.id === pendingCloseTableId) ?? null;
+  const pendingTableActionProfile = pendingTableAction
+    ? connections.profiles.find((profile) => profile.id === pendingTableAction.connectionId) ?? null
+    : null;
+  const pendingTableNameActionProfile = pendingTableNameAction
+    ? connections.profiles.find((profile) => profile.id === pendingTableNameAction.connectionId) ?? null
+    : null;
+  const pendingTableActionTabId = pendingTableAction
+    ? `${pendingTableAction.connectionId}:${pendingTableAction.tableName}`
+    : null;
+  const pendingTableActionHasDirtyWorkspace = pendingTableActionTabId
+    ? dirtyTableTabIds.has(pendingTableActionTabId)
+    : false;
+  const pendingTableNameActionHasDirtyWorkspace = pendingTableNameAction
+    ? dirtyTableTabIds.has(`${pendingTableNameAction.connectionId}:${pendingTableNameAction.tableName}`)
+    : false;
   const dirtyTables = openTableTabs
     .filter((tab) => dirtyTableTabIds.has(tab.id))
     .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
@@ -503,7 +567,7 @@ export function App() {
         id: `table:${connectionId}:${tableName}`,
         type: "table" as const,
         label: tableName,
-        detail: `${profile.name} · ${profile.host}:${profile.port} · ${profile.database ?? "未指定数据库"}`,
+        detail: `${profile.name} · ${profile.database ?? "未指定数据库"} · ${profile.host}:${profile.port}`,
         keywords: connectionSearchTerms(profile),
         connectionId,
         lastUsedAt: recentItemTimestamps[`table:${connectionId}:${tableName}`],
@@ -630,6 +694,21 @@ export function App() {
     paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    setCommandPaletteConnectionId(null);
+    setCommandPaletteOpen(true);
+  }
+
+  /**
+   * Opens table discovery globally or pre-scoped to one connection.
+   * @param connectionId - Optional connection whose tables should be shown first.
+   * @returns Nothing (`void`).
+   * Side effects: records focus, updates the initial palette scope, and opens global table discovery.
+   */
+  function openTableFinder(connectionId?: string): void {
+    paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setCommandPaletteConnectionId(connectionId ?? null);
     setCommandPaletteOpen(true);
   }
 
@@ -795,6 +874,23 @@ export function App() {
     }
   }
 
+  /**
+   * Leaves command search and opens the shared table-action confirmation.
+   * @param connectionId - Saved connection that owns the table result.
+   * @param tableName - Exact table name selected in command search.
+   * @param action - Requested table shortcut.
+   * @returns Nothing (`void`).
+   * Side effects: closes the palette without restoring background focus and opens confirmation.
+   */
+  function handleCommandPaletteTableAction(
+    connectionId: string,
+    tableName: string,
+    action: TableQuickAction,
+  ): void {
+    setCommandPaletteOpen(false);
+    handleRequestTableAction(connectionId, tableName, action);
+  }
+
   /** Opens the rename dialog with the exact current non-secret profile name. */
   function handleRequestRenameConnection(profile: ConnectionProfile): void {
     setConnectionActionError(null);
@@ -909,6 +1005,14 @@ export function App() {
     try {
       await deleteConnection(profile.id);
       connections.removeProfile(profile.id);
+      setPinnedTableKeys((current) => {
+        const next = new Set([...current].filter((key) => !key.startsWith(`${profile.id}\u0000`)));
+        if (next.size === current.size) {
+          return current;
+        }
+        persistPinnedTables(next);
+        return next;
+      });
       setSelectedRedisDatabases((current) => {
         if (!(profile.id in current)) {
           return current;
@@ -1031,6 +1135,474 @@ export function App() {
     setActiveUtilityTabId(null);
     markPaletteItemRecent(`table:${connectionId}:${tableName}`);
     markPaletteItemRecent(`workspace:table:${tabId}`);
+  }
+
+  /**
+   * Copies table metadata through the desktop clipboard and reports one visible result.
+   * @param text - Exact text to place on the clipboard.
+   * @param successMessage - Toast shown after the platform accepts the write.
+   * @returns A promise settled after the clipboard operation.
+   * Side effects: writes to the system clipboard and updates app feedback.
+   */
+  async function copyTableText(text: string, successMessage: string): Promise<void> {
+    try {
+      await writeText(text);
+      setDeletionNotice(successMessage);
+    } catch (error: unknown) {
+      setConnectionActionError(getConnectionActionError(
+        error,
+        "复制失败，请检查系统剪贴板权限。",
+      ));
+    }
+  }
+
+  /**
+   * Fetches the server-authored CREATE TABLE statement for one exact MySQL table.
+   * @param connectionId - Saved connection identifier.
+   * @param database - Exact database name.
+   * @param tableName - Exact table name.
+   * @returns The server-authored DDL text.
+   * Side effects: executes one internal SHOW CREATE TABLE query.
+   */
+  async function loadCreateTableSql(
+    connectionId: string,
+    database: string,
+    tableName: string,
+  ): Promise<string> {
+    const result = await executeQueryOnce(
+      connectionId,
+      `SHOW CREATE TABLE ${quoteIdentifier(database)}.${quoteIdentifier(tableName)};`,
+    );
+    return cellValueToPlainText(result.rows[0]?.[1] ?? result.rows[0]?.[0]);
+  }
+
+  /**
+   * Toggles one table pin and persists the exact connection-bound identity locally.
+   * @param connectionId - Saved connection identifier.
+   * @param tableName - Exact database-reported table name.
+   * @returns Nothing (`void`).
+   * Side effects: updates React state, local preferences, ordering, and feedback.
+   */
+  function togglePinnedTable(connectionId: string, tableName: string): void {
+    const key = tableTargetKey(connectionId, tableName);
+    setPinnedTableKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      persistPinnedTables(next);
+      setDeletionNotice(next.has(key) ? `已置顶表“${tableName}”。` : `已取消置顶表“${tableName}”。`);
+      return next;
+    });
+  }
+
+  /**
+   * Opens one table in a separate native window, with same-window fallback for browsers.
+   * @param profile - MySQL profile that owns the table.
+   * @param tableName - Exact database-reported table name.
+   * @returns A promise settled after window creation or fallback navigation.
+   * Side effects: creates a desktop window or activates a local table tab.
+   */
+  async function openTableInNewWindow(
+    profile: ConnectionProfile,
+    tableName: string,
+  ): Promise<void> {
+    if (!isTauri()) {
+      handleOpenTable(profile.id, tableName);
+      setDeletionNotice("当前环境不支持独立窗口，已在当前窗口打开表。");
+      return;
+    }
+    try {
+      await createDetachedWorkspaceWindow(
+        {
+          kind: "table",
+          id: `${profile.id}:${tableName}`,
+          connectionId: profile.id,
+          tableName,
+          title: `${profile.name} · ${tableName}`,
+        },
+        { x: window.screenX + 140, y: window.screenY + 90 },
+      );
+      setDeletionNotice(`已在新窗口中打开表“${tableName}”。`);
+    } catch (error: unknown) {
+      setConnectionActionError(getConnectionActionError(error, "无法打开独立表窗口，请重试。"));
+    }
+  }
+
+  /**
+   * Loads an entire table result and saves it in the explicitly selected export format.
+   * @param profile - MySQL profile that owns the table.
+   * @param tableName - Exact database-reported table name.
+   * @param action - Requested CSV, JSON, or SQL INSERT format.
+   * @returns A promise settled after query and save-dialog completion.
+   * Side effects: queries table rows, opens a save dialog, writes a file, and reports progress.
+   */
+  async function exportTable(
+    profile: ConnectionProfile,
+    tableName: string,
+    action: Extract<TableQuickAction, "export_csv" | "export_json" | "export_sql">,
+  ): Promise<void> {
+    if (!profile.database || runningTableUtilityAction) {
+      return;
+    }
+    const target = `${quoteIdentifier(profile.database)}.${quoteIdentifier(tableName)}`;
+    const fileBase = `${profile.database}-${tableName}`
+      .replace(/[^\w\u4e00-\u9fff.-]+/gu, "_")
+      .slice(0, 80) || "table";
+    setRunningTableUtilityAction(true);
+    setConnectionActionError(null);
+    setDeletionNotice(`正在导出表“${tableName}”…`);
+    try {
+      const result = await executeQueryOnce(profile.id, `SELECT * FROM ${target};`);
+      const selection = {
+        startRow: 0,
+        startCol: 0,
+        endRow: Math.max(0, result.rows.length - 1),
+        endCol: Math.max(0, result.columns.length - 1),
+      };
+      const exportDefinition = action === "export_csv"
+        ? {
+          content: serializeResultAsCsv(result.columns, result.rows),
+          fileName: `${fileBase}.csv`,
+          mimeType: "text/csv;charset=utf-8",
+          label: "CSV",
+        }
+        : action === "export_json"
+          ? {
+            content: result.rows.length > 0 && result.columns.length > 0
+              ? serializeSelectionAsJson(result.columns, result.rows, selection)
+              : "[]",
+            fileName: `${fileBase}.json`,
+            mimeType: "application/json;charset=utf-8",
+            label: "JSON",
+          }
+          : {
+            content: serializeRowsAsInsert(result.columns, result.rows, {
+              tableName: `${profile.database}.${tableName}`,
+              includePrimaryKey: true,
+            }) || `-- ${profile.database}.${tableName} 暂无可导出的数据\n`,
+            fileName: `${fileBase}.sql`,
+            mimeType: "application/sql;charset=utf-8",
+            label: "SQL INSERT",
+          };
+      const outcome = await downloadTextFile(
+        exportDefinition.content,
+        exportDefinition.fileName,
+        exportDefinition.mimeType,
+      );
+      setDeletionNotice(outcome === "saved"
+        ? `已导出 ${exportDefinition.label} · ${result.rows.length} 行。`
+        : outcome === "cancelled" ? "已取消导出。" : "导出失败，请重试。");
+    } catch (error: unknown) {
+      setConnectionActionError(getConnectionActionError(error, "无法读取或导出该表，请重试。"));
+    } finally {
+      setRunningTableUtilityAction(false);
+    }
+  }
+
+  /**
+   * Opens the shared DDL preview after loading the server-authored CREATE TABLE statement.
+   * @param profile - MySQL profile that owns the table.
+   * @param tableName - Exact database-reported table name.
+   * @returns A promise settled after the DDL query.
+   * Side effects: opens and updates the DDL preview dialog.
+   */
+  async function showCreateTable(profile: ConnectionProfile, tableName: string): Promise<void> {
+    if (!profile.database) {
+      return;
+    }
+    setTableDdlPreview({ connectionId: profile.id, tableName, loading: true, sql: "", error: null });
+    try {
+      const sql = await loadCreateTableSql(profile.id, profile.database, tableName);
+      setTableDdlPreview((current) => current?.connectionId === profile.id && current.tableName === tableName
+        ? { ...current, loading: false, sql }
+        : current);
+    } catch (error: unknown) {
+      setTableDdlPreview((current) => current?.connectionId === profile.id && current.tableName === tableName
+        ? {
+          ...current,
+          loading: false,
+          error: getConnectionActionError(error, "无法读取 CREATE TABLE 语法。"),
+        }
+        : current);
+    }
+  }
+
+  /**
+   * Loads and copies the server-authored CREATE TABLE statement without opening a preview.
+   * @param profile - MySQL profile that owns the table.
+   * @param tableName - Exact database-reported table name.
+   * @returns A promise settled after query and clipboard completion.
+   * Side effects: executes a metadata query, writes the clipboard, and updates feedback.
+   */
+  async function copyCreateTable(profile: ConnectionProfile, tableName: string): Promise<void> {
+    if (!profile.database || runningTableUtilityAction) {
+      return;
+    }
+    setRunningTableUtilityAction(true);
+    try {
+      const sql = await loadCreateTableSql(profile.id, profile.database, tableName);
+      await copyTableText(sql, `已复制表“${tableName}”的 CREATE TABLE 语法。`);
+    } catch (error: unknown) {
+      setConnectionActionError(getConnectionActionError(error, "无法读取 CREATE TABLE 语法。"));
+    } finally {
+      setRunningTableUtilityAction(false);
+    }
+  }
+
+  /**
+   * Dispatches every shared table shortcut from the navigator or command center.
+   * @param connectionId - Saved connection that owns the table.
+   * @param tableName - Database-reported table name.
+   * @param action - Requested table shortcut.
+   * @returns Nothing (`void`).
+   * Side effects: may copy text, open a window/dialog, export data, pin a table, or request confirmation.
+   */
+  function handleRequestTableAction(
+    connectionId: string,
+    tableName: string,
+    action: TableQuickAction,
+  ): void {
+    const profile = connections.profiles.find((item) => item.id === connectionId);
+    if (profile?.engine !== "my_sql" || !profile.database) {
+      return;
+    }
+    connections.selectConnection(connectionId);
+    setConnectionActionError(null);
+    if (action === "copy_name") {
+      void copyTableText(tableName, `已复制表名“${tableName}”。`);
+    } else if (action === "rename" || action === "duplicate") {
+      setTableNameActionError(null);
+      setDuplicateTableData(true);
+      setTableNameDraft(action === "rename" ? tableName : `${tableName}_copy`);
+      setPendingTableNameAction({ action, connectionId, tableName });
+    } else if (action === "truncate" || action === "drop") {
+      setTableActionError(null);
+      setPendingTableAction({ action, connectionId, tableName });
+    } else if (action === "toggle_pin") {
+      togglePinnedTable(connectionId, tableName);
+    } else if (action === "open_window") {
+      void openTableInNewWindow(profile, tableName);
+    } else if (action === "show_create") {
+      void showCreateTable(profile, tableName);
+    } else if (action === "copy_create") {
+      void copyCreateTable(profile, tableName);
+    } else {
+      void exportTable(profile, tableName, action);
+    }
+  }
+
+  /**
+   * Cancels an idle table operation and restores focus to the invoking table row.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: closes the confirmation layer and schedules focus restoration.
+   */
+  function handleCancelTableAction(): void {
+    if (executingTableAction) {
+      return;
+    }
+    const target = pendingTableAction;
+    setPendingTableAction(null);
+    setTableActionError(null);
+    if (!target) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>(
+        ".table-tree__item[data-connection-id][data-table-name]",
+      )).find((item) => (
+        item.dataset.connectionId === target.connectionId
+        && item.dataset.tableName === target.tableName
+      ))?.focus();
+    });
+  }
+
+  /**
+   * Executes one explicitly confirmed TRUNCATE or DROP statement.
+   * Parameters: none.
+   * @returns A promise settled after SQL execution and navigator/workspace reconciliation.
+   * Side effects: permanently mutates MySQL data, refreshes table metadata, and closes stale table tabs.
+   */
+  async function handleConfirmTableAction(): Promise<void> {
+    const database = pendingTableActionProfile?.database;
+    if (!pendingTableAction || !database || executingTableAction) {
+      return;
+    }
+    const target = pendingTableAction;
+    const qualifiedTable = `${quoteIdentifier(database)}.${quoteIdentifier(target.tableName)}`;
+    const sql = target.action === "drop"
+      ? `DROP TABLE ${qualifiedTable};`
+      : `TRUNCATE TABLE ${qualifiedTable};`;
+    setExecutingTableAction(true);
+    setTableActionError(null);
+    try {
+      await executeQueryOnce(target.connectionId, sql);
+      closeTableImmediately(`${target.connectionId}:${target.tableName}`);
+      if (target.action === "drop") {
+        setTableCatalog((current) => {
+          const previous = current[target.connectionId];
+          if (!previous) {
+            return current;
+          }
+          return {
+            ...current,
+            [target.connectionId]: previous.filter((tableName) => tableName !== target.tableName),
+          };
+        });
+        setPinnedTableKeys((current) => {
+          const key = tableTargetKey(target.connectionId, target.tableName);
+          if (!current.has(key)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(key);
+          persistPinnedTables(next);
+          return next;
+        });
+      }
+      setTableCatalogRefreshVersions((current) => ({
+        ...current,
+        [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
+      }));
+      setPendingTableAction(null);
+      setDeletionNotice(target.action === "drop"
+        ? `已删除表“${target.tableName}”。`
+        : `已清空表“${target.tableName}”的全部数据。`);
+    } catch (error: unknown) {
+      setTableActionError(getConnectionActionError(
+        error,
+        target.action === "drop" ? "删除表失败，请重试。" : "清空表失败，请重试。",
+      ));
+    } finally {
+      setExecutingTableAction(false);
+    }
+  }
+
+  /**
+   * Closes the rename/duplicate dialog while no metadata mutation is running.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: clears dialog state and validation feedback.
+   */
+  function handleCancelTableNameAction(): void {
+    if (executingTableNameAction) {
+      return;
+    }
+    setPendingTableNameAction(null);
+    setTableNameDraft("");
+    setTableNameActionError(null);
+  }
+
+  /**
+   * Renames or duplicates one table after validating the destination identifier.
+   * Parameters: none.
+   * @returns A promise settled after SQL execution and local catalog reconciliation.
+   * Side effects: mutates MySQL schema/data and updates table tabs, pins, and cached metadata.
+   */
+  async function handleConfirmTableNameAction(): Promise<void> {
+    const target = pendingTableNameAction;
+    const profile = pendingTableNameActionProfile;
+    const database = profile?.database;
+    const nextTableName = tableNameDraft.trim();
+    if (!target || !profile || !database || executingTableNameAction) {
+      return;
+    }
+    if (!nextTableName || nextTableName.length > 64) {
+      setTableNameActionError("表名不能为空，且不能超过 64 个字符。");
+      return;
+    }
+    if (nextTableName === target.tableName) {
+      setTableNameActionError(target.action === "rename" ? "请输入不同的新表名。" : "复制表不能与原表同名。");
+      return;
+    }
+    if (target.action === "rename" && pendingTableNameActionHasDirtyWorkspace) {
+      setTableNameActionError("请先提交或撤销该表的本地修改，再重命名。");
+      return;
+    }
+
+    const source = `${quoteIdentifier(database)}.${quoteIdentifier(target.tableName)}`;
+    const destination = `${quoteIdentifier(database)}.${quoteIdentifier(nextTableName)}`;
+    let duplicateStructureCreated = false;
+    setExecutingTableNameAction(true);
+    setTableNameActionError(null);
+    try {
+      if (target.action === "rename") {
+        await executeQueryOnce(target.connectionId, `RENAME TABLE ${source} TO ${destination};`);
+        const previousTabId = `${target.connectionId}:${target.tableName}`;
+        const nextTabId = `${target.connectionId}:${nextTableName}`;
+        setOpenTableTabs((current) => current.map((tab) => tab.id === previousTabId
+          ? {
+            ...tab,
+            id: nextTabId,
+            tableName: nextTableName,
+            title: `${profile.name} · ${nextTableName}`,
+          }
+          : tab));
+        setActiveTableTabId((current) => current === previousTabId ? nextTabId : current);
+        setPinnedTableKeys((current) => {
+          const previousKey = tableTargetKey(target.connectionId, target.tableName);
+          if (!current.has(previousKey)) {
+            return current;
+          }
+          const next = new Set(current);
+          next.delete(previousKey);
+          next.add(tableTargetKey(target.connectionId, nextTableName));
+          persistPinnedTables(next);
+          return next;
+        });
+        setTableCatalog((current) => ({
+          ...current,
+          [target.connectionId]: (current[target.connectionId] ?? []).map((tableName) => (
+            tableName === target.tableName ? nextTableName : tableName
+          )),
+        }));
+        setDeletionNotice(`已将表“${target.tableName}”重命名为“${nextTableName}”。`);
+      } else {
+        await executeQueryOnce(target.connectionId, `CREATE TABLE ${destination} LIKE ${source};`);
+        duplicateStructureCreated = true;
+        setTableCatalog((current) => ({
+          ...current,
+          [target.connectionId]: Array.from(new Set([
+            ...(current[target.connectionId] ?? []),
+            nextTableName,
+          ])),
+        }));
+        if (duplicateTableData) {
+          await executeQueryOnce(target.connectionId, `INSERT INTO ${destination} SELECT * FROM ${source};`);
+        }
+        setDeletionNotice(duplicateTableData
+          ? `已复制表“${target.tableName}”及其数据为“${nextTableName}”。`
+          : `已复制表“${target.tableName}”的结构为“${nextTableName}”。`);
+      }
+      setTableCatalogRefreshVersions((current) => ({
+        ...current,
+        [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
+      }));
+      setPendingTableNameAction(null);
+      setTableNameDraft("");
+    } catch (error: unknown) {
+      if (target.action === "duplicate" && duplicateStructureCreated) {
+        setPendingTableNameAction(null);
+        setTableNameDraft("");
+        setTableCatalogRefreshVersions((current) => ({
+          ...current,
+          [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
+        }));
+        setConnectionActionError(
+          `已创建表“${nextTableName}”的结构，但复制数据失败：${getConnectionActionError(error, "未知错误")}`,
+        );
+        return;
+      }
+      setTableNameActionError(getConnectionActionError(
+        error,
+        target.action === "rename" ? "重命名表失败，请重试。" : "复制表失败，请重试。",
+      ));
+    } finally {
+      setExecutingTableNameAction(false);
+    }
   }
 
   /**
@@ -1312,6 +1884,7 @@ export function App() {
         isAddingConnection ||
         deleteCandidate ||
         pendingCloseTableId ||
+        pendingTableAction ||
         renameCandidate ||
         commandPaletteOpen ||
         shortcutHelpOpen
@@ -1400,6 +1973,25 @@ export function App() {
     document.addEventListener("keydown", handleDeleteDialogKeyDown);
     return () => document.removeEventListener("keydown", handleDeleteDialogKeyDown);
   }, [deleteCandidate, deletingConnectionId]);
+
+  useEffect(() => {
+    if (!pendingTableAction || executingTableAction) {
+      return;
+    }
+    /**
+     * Cancels an idle table operation without mutating database state.
+     * @param event - Document-level keyboard event.
+     * @returns Nothing (`void`).
+     * Side effects: may close the pending table action and restore focus.
+     */
+    function handleTableActionDialogKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        handleCancelTableAction();
+      }
+    }
+    document.addEventListener("keydown", handleTableActionDialogKeyDown);
+    return () => document.removeEventListener("keydown", handleTableActionDialogKeyDown);
+  }, [executingTableAction, pendingTableAction]);
 
   useEffect(() => {
     if (!pendingCloseTableId) {
@@ -1534,24 +2126,29 @@ export function App() {
         ) : null}
         <ConnectionSidebar
           discoverTables={commandPaletteOpen}
+          discoverTablesForConnectionId={commandPaletteConnectionId}
           dirtyTables={dirtyTables}
           focusConnectionId={focusConnectionId}
           onAddConnection={handleAddConnection}
           onCopyConfig={(profile) => void handleCopyConnectionConfig(profile)}
+          onFindTables={openTableFinder}
           onFocusConnectionHandled={() => setFocusConnectionId(null)}
           onOpenRedisKey={handleOpenRedisKey}
           onOpenTable={handleOpenTable}
           onReconnect={(profile) => void handleReconnectConnection(profile)}
           onRequestDelete={handleRequestDeleteConnection}
           onRequestRename={handleRequestRenameConnection}
+          onRequestTableAction={handleRequestTableAction}
           onSelectRedisDatabase={handleSelectRedisDatabase}
           onSelectConnection={handleSelectConnection}
           onTablesLoaded={handleTablesLoaded}
+          pinnedTableKeys={pinnedTableKeys}
           profiles={connections.profiles}
           reconnectingConnectionId={reconnectingConnectionId}
           selectedConnectionId={connections.selectedConnectionId}
           selectedRedisDatabases={selectedRedisDatabases}
           tableCatalog={tableCatalog}
+          tableCatalogRefreshVersions={tableCatalogRefreshVersions}
         />
       </nav>
       <main className="workspace" aria-label="查询工作区">
@@ -1915,10 +2512,13 @@ export function App() {
         </div>
       ) : null}
       <CommandPalette
+        initialConnectionId={commandPaletteConnectionId}
         items={commandPaletteItems}
         onClose={closeCommandPalette}
+        onRequestTableAction={handleCommandPaletteTableAction}
         onSelect={handleCommandPaletteSelect}
         open={commandPaletteOpen}
+        pinnedTableKeys={pinnedTableKeys}
       />
       <ShortcutHelpDialog
         initialView={shortcutDialogView}
@@ -1977,6 +2577,223 @@ export function App() {
               </button>
               <button className="button button--primary" disabled={Boolean(renamingConnectionId) || !renameDraft.trim()} onClick={() => void handleConfirmRenameConnection()} type="button">
                 {renamingConnectionId ? "正在保存…" : "保存名称"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {pendingTableNameAction && pendingTableNameActionProfile ? (
+        <div
+          className="destructive-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCancelTableNameAction();
+            }
+          }}
+        >
+          <section
+            aria-labelledby="table-name-action-title"
+            aria-modal="true"
+            className="destructive-dialog connection-action-dialog"
+            role="dialog"
+          >
+            <header>
+              <span className="connection-action-dialog__icon" aria-hidden="true">
+                {pendingTableNameAction.action === "rename" ? <Pencil size={17} /> : <Copy size={17} />}
+              </span>
+              <span>
+                <span className="eyebrow">TABLE OPERATION</span>
+                <h2 id="table-name-action-title">
+                  {pendingTableNameAction.action === "rename" ? "重命名表" : "复制表"}
+                </h2>
+              </span>
+            </header>
+            <dl>
+              <div><dt>连接</dt><dd>{pendingTableNameActionProfile.name}</dd></div>
+              <div><dt>原表</dt><dd>{pendingTableNameAction.tableName}</dd></div>
+            </dl>
+            <label className="connection-action-dialog__field">
+              <span>{pendingTableNameAction.action === "rename" ? "新表名" : "复制为"}</span>
+              <input
+                autoFocus
+                disabled={executingTableNameAction}
+                maxLength={64}
+                onChange={(event) => setTableNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleConfirmTableNameAction();
+                  }
+                }}
+                value={tableNameDraft}
+              />
+            </label>
+            {pendingTableNameAction.action === "duplicate" ? (
+              <label className="table-copy-option">
+                <input
+                  checked={duplicateTableData}
+                  disabled={executingTableNameAction}
+                  onChange={(event) => setDuplicateTableData(event.target.checked)}
+                  type="checkbox"
+                />
+                同时复制表数据
+              </label>
+            ) : null}
+            {pendingTableNameActionHasDirtyWorkspace ? (
+              <p className="destructive-dialog__warning">
+                该表有未提交的本地修改；请先提交或撤销后再重命名。
+              </p>
+            ) : null}
+            {tableNameActionError ? (
+              <p className="destructive-dialog__error" role="alert">{tableNameActionError}</p>
+            ) : null}
+            <footer>
+              <button
+                className="button button--secondary"
+                disabled={executingTableNameAction}
+                onClick={handleCancelTableNameAction}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="button button--primary"
+                disabled={executingTableNameAction || !tableNameDraft.trim()}
+                onClick={() => void handleConfirmTableNameAction()}
+                type="button"
+              >
+                {executingTableNameAction
+                  ? "正在执行…"
+                  : pendingTableNameAction.action === "rename" ? "保存新表名" : "开始复制"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {tableDdlPreview ? (
+        <div
+          className="destructive-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setTableDdlPreview(null);
+            }
+          }}
+        >
+          <section
+            aria-labelledby="table-ddl-preview-title"
+            aria-modal="true"
+            className="destructive-dialog connection-action-dialog table-ddl-dialog"
+            role="dialog"
+          >
+            <header>
+              <span className="connection-action-dialog__icon" aria-hidden="true">
+                <Braces size={17} />
+              </span>
+              <span>
+                <span className="eyebrow">SHOW CREATE TABLE</span>
+                <h2 id="table-ddl-preview-title">{tableDdlPreview.tableName}</h2>
+              </span>
+            </header>
+            <div className="table-ddl-dialog__body">
+              {tableDdlPreview.loading ? (
+                <p className="panel-status">正在读取 CREATE TABLE 语法…</p>
+              ) : tableDdlPreview.error ? (
+                <p className="destructive-dialog__error" role="alert">{tableDdlPreview.error}</p>
+              ) : (
+                <SelectableSqlBlock
+                  ariaLabel={`${tableDdlPreview.tableName} CREATE TABLE 语法`}
+                  value={tableDdlPreview.sql}
+                />
+              )}
+            </div>
+            <footer>
+              <button className="button button--secondary" onClick={() => setTableDdlPreview(null)} type="button">
+                关闭
+              </button>
+              <button
+                className="button button--primary"
+                disabled={!tableDdlPreview.sql}
+                onClick={() => void copyTableText(
+                  tableDdlPreview.sql,
+                  `已复制表“${tableDdlPreview.tableName}”的 CREATE TABLE 语法。`,
+                )}
+                type="button"
+              >
+                <Copy size={14} aria-hidden="true" />
+                复制语法
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {pendingTableAction && pendingTableActionProfile ? (
+        <div
+          className="destructive-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCancelTableAction();
+            }
+          }}
+        >
+          <section
+            aria-describedby="table-action-description"
+            aria-labelledby="table-action-title"
+            aria-modal="true"
+            className="destructive-dialog"
+            role="alertdialog"
+          >
+            <header>
+              <span className="destructive-dialog__icon" aria-hidden="true">
+                <AlertTriangle size={18} />
+              </span>
+              <span>
+                <span className="eyebrow">DESTRUCTIVE SQL</span>
+                <h2 id="table-action-title">
+                  {pendingTableAction.action === "drop"
+                    ? `删除表“${pendingTableAction.tableName}”？`
+                    : `清空“${pendingTableAction.tableName}”的全部数据？`}
+                </h2>
+              </span>
+            </header>
+            <p id="table-action-description">
+              {pendingTableAction.action === "drop"
+                ? "DROP TABLE 会永久删除表结构及全部数据，无法撤销。"
+                : "TRUNCATE TABLE 会永久删除全部行并重置自增计数，无法撤销。"}
+              {pendingTableActionHasDirtyWorkspace
+                ? " 此表还有未提交的本地修改；执行成功后工作区会关闭，这些修改也会丢失。"
+                : " 执行成功后会关闭已打开的表工作区，避免继续显示旧数据。"}
+            </p>
+            <dl>
+              <div><dt>连接</dt><dd>{pendingTableActionProfile.name}</dd></div>
+              <div><dt>数据库</dt><dd>{pendingTableActionProfile.database}</dd></div>
+              <div>
+                <dt>SQL</dt>
+                <dd>{pendingTableAction.action === "drop" ? "DROP TABLE" : "TRUNCATE TABLE"}</dd>
+              </div>
+            </dl>
+            {tableActionError ? (
+              <p className="destructive-dialog__error" role="alert">{tableActionError}</p>
+            ) : null}
+            <footer>
+              <button
+                autoFocus
+                className="button button--secondary"
+                disabled={executingTableAction}
+                onClick={handleCancelTableAction}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="button button--danger"
+                disabled={executingTableAction}
+                onClick={() => void handleConfirmTableAction()}
+                type="button"
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                {executingTableAction
+                  ? "正在执行…"
+                  : pendingTableAction.action === "drop" ? "永久删除表" : "清空全部数据"}
               </button>
             </footer>
           </section>

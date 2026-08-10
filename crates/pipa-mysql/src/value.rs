@@ -77,13 +77,9 @@ fn text_cell(value: &[u8]) -> CellValue {
     CellValue::Text(String::from_utf8_lossy(value).into_owned())
 }
 
-/// Preserves MySQL temporal text while normalizing the date-time separator when present.
-fn temporal_cell(value: &[u8], normalize_date_time_separator: bool) -> CellValue {
-    let mut value = String::from_utf8_lossy(value).into_owned();
-    if normalize_date_time_separator && value.as_bytes().get(10) == Some(&b' ') {
-        value.replace_range(10..11, "T");
-    }
-    CellValue::DateTime(value)
+/// Preserves MySQL temporal text in its native readable representation.
+fn temporal_cell(value: &[u8]) -> CellValue {
+    CellValue::DateTime(String::from_utf8_lossy(value).into_owned())
 }
 
 /// Converts one dynamically typed SQLx MySQL cell into Pipa's lossless transport value.
@@ -106,10 +102,9 @@ pub(crate) fn convert_cell(
         ValueKind::Float64 => float_cell(row.try_get_unchecked::<f64, _>(index)?),
         ValueKind::Json => CellValue::Json(row.try_get_unchecked::<String, _>(index)?),
         ValueKind::Binary => binary_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?),
-        ValueKind::Date | ValueKind::Time => {
-            temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?, false)
+        ValueKind::Date | ValueKind::Time | ValueKind::DateTime => {
+            temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?)
         }
-        ValueKind::DateTime => temporal_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?, true),
         ValueKind::Text => text_cell(&row.try_get_unchecked::<Vec<u8>, _>(index)?),
         ValueKind::Null => CellValue::Null,
     })
@@ -193,8 +188,8 @@ mod tests {
         assert_eq!(classify_type("DATETIME"), ValueKind::DateTime);
         assert_eq!(classify_type("TIMESTAMP"), ValueKind::DateTime);
         assert!(matches!(
-            temporal_cell(b"0000-00-00 00:00:00.000000", true),
-            CellValue::DateTime(value) if value == "0000-00-00T00:00:00.000000"
+            temporal_cell(b"0000-00-00 00:00:00.000000"),
+            CellValue::DateTime(value) if value == "0000-00-00 00:00:00.000000"
         ));
     }
 

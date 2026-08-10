@@ -39,8 +39,21 @@ const monacoState = vi.hoisted(() => ({
   position: { lineNumber: 2, column: 4 },
 }));
 
+const resultGridState = vi.hoisted(() => ({ tableName: "" }));
+
 vi.mock("./useQuerySession", () => ({ useQuerySession: () => sessionController }));
-vi.mock("./ResultGrid", () => ({ ResultGrid: () => <div aria-label="查询结果" /> }));
+vi.mock("./ResultGrid", () => ({
+  /**
+   * Captures the table target passed to the mocked result grid.
+   * @param tableName - Table inferred by the query workspace for INSERT copy.
+   * @returns A minimal result-grid placeholder.
+   * Side effects: updates the hoisted assertion state.
+   */
+  ResultGrid: ({ tableName = "" }: { tableName?: string }) => {
+    resultGridState.tableName = tableName;
+    return <div aria-label="查询结果" />;
+  },
+}));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => vi.fn()),
 }));
@@ -240,6 +253,36 @@ function assertToolbarCursorExecution(): void {
   expect(sessionController.run).toHaveBeenCalledWith("select 2");
 }
 
+/**
+ * Verifies INSERT copy targets the table from the executed statement, not the editor's first SQL.
+ * Parameters: none.
+ * @returns Nothing (`void`).
+ * Side effects: renders a query workspace with a completed result schema.
+ */
+function assertInsertTargetUsesExecutedSql(): void {
+  sessionController.state.running = false;
+  sessionController.state.sql =
+    "select * from guitar_video where guitar_vgroup_id = 1785395195620260400 and visible = 1";
+  sessionController.state.columns = [
+    { name: "id", databaseType: "BIGINT UNSIGNED", nullable: false },
+  ];
+  render(
+    <QueryWorkspace
+      {...WORKSPACE_PROPS}
+      profile={{ ...PROFILE, database: "smart_guitar_db_exam" }}
+      tab={{
+        ...TAB,
+        sqlText: [
+          "select * from guitar_vgroup where use_type = 3 and visible = 1;",
+          sessionController.state.sql,
+        ].join("\n"),
+      }}
+    />,
+  );
+
+  expect(resultGridState.tableName).toBe("smart_guitar_db_exam.guitar_video");
+}
+
 /** Verifies a captured editor shortcut cannot start a second query while one is running. */
 function assertRunningSessionIgnoresExecuteShortcut(): void {
   sessionController.state.running = true;
@@ -347,6 +390,7 @@ function registerQueryWorkspaceTests(): void {
     vi.clearAllMocks();
     resetAllShortcutBindings();
     sessionController.state.running = true;
+    sessionController.state.sql = "select 1";
     sessionController.state.cancelRequested = true;
     sessionController.state.incomplete = false;
     sessionController.state.columns = [];
@@ -361,6 +405,7 @@ function registerQueryWorkspaceTests(): void {
       endColumn: 9,
     };
     monacoState.position = { lineNumber: 2, column: 4 };
+    resultGridState.tableName = "";
   });
   afterEach(() => {
     cleanup();
@@ -369,6 +414,7 @@ function registerQueryWorkspaceTests(): void {
   it("keeps cancel visible without diagnostic loading copy", assertMinimalQueryLoading);
   it("executes only Monaco's selected SQL from the toolbar", assertToolbarSelectionExecution);
   it("executes only Monaco's cursor statement from the toolbar", assertToolbarCursorExecution);
+  it("uses the executed SQL table for INSERT copy", assertInsertTargetUsesExecutedSql);
   it("does not start a second query from the shortcut while running", assertRunningSessionIgnoresExecuteShortcut);
   it("cancels a running query with its configured binding", assertRunningSessionCancelsViaShortcut);
   it("ignores the cancel shortcut while idle", assertIdleCancelShortcutIsIgnored);

@@ -1,4 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  TableActionMenu,
+  tableTargetKey,
+  type TableQuickAction,
+} from "../tables/TableActionMenu";
 
 export type CommandPaletteItemType = "command" | "connection" | "table" | "workspace";
 
@@ -13,10 +18,23 @@ export interface CommandPaletteItem {
 }
 
 export interface CommandPaletteProps {
+  initialConnectionId?: string | null;
   open: boolean;
   items: readonly CommandPaletteItem[];
+  pinnedTableKeys?: ReadonlySet<string>;
   onClose: () => void;
+  onRequestTableAction?: (
+    connectionId: string,
+    tableName: string,
+    action: TableQuickAction,
+  ) => void;
   onSelect: (item: CommandPaletteItem) => void;
+}
+
+interface CommandPaletteTableContextMenu {
+  item: CommandPaletteItem;
+  x: number;
+  y: number;
 }
 
 interface RankedCommandPaletteItem {
@@ -169,17 +187,27 @@ function groupCommandPaletteItems(items: readonly CommandPaletteItem[], query: s
 
 /**
  * Renders the global searchable command palette.
- * @param props - Visibility, searchable items, and close/select callbacks.
+ * @param props - Visibility, optional initial connection scope, searchable items, and callbacks.
  * @returns An accessible modal palette when open, otherwise `null`.
  * Side effects: focuses the search input on open and invokes parent actions after selection or dismissal.
  */
-export function CommandPalette({ open, items, onClose, onSelect }: CommandPaletteProps) {
+export function CommandPalette({
+  initialConnectionId = null,
+  open,
+  items,
+  pinnedTableKeys = new Set(),
+  onClose,
+  onRequestTableAction,
+  onSelect,
+}: CommandPaletteProps) {
   const headingId = useId();
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const tableContextMenuItemRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [connectionFilter, setConnectionFilter] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [tableContextMenu, setTableContextMenu] = useState<CommandPaletteTableContextMenu | null>(null);
   const connectionItems = useMemo(
     () => items.filter((item) => item.type === "connection" && item.connectionId),
     [items],
@@ -198,14 +226,91 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
   useEffect(() => {
     if (!open) return;
     setQuery("");
-    setConnectionFilter("");
+    setConnectionFilter(initialConnectionId ?? "");
     setActiveIndex(0);
+    setTableContextMenu(null);
     inputRef.current?.focus();
-  }, [open]);
+  }, [initialConnectionId, open]);
 
   useEffect(() => {
     if (activeIndex >= displayedItems.length) setActiveIndex(Math.max(0, displayedItems.length - 1));
   }, [activeIndex, displayedItems.length]);
+
+  useEffect(() => {
+    if (!tableContextMenu) {
+      return;
+    }
+    tableContextMenuItemRef.current?.focus();
+
+    /**
+     * Closes the table menu after an outside pointer action.
+     * @param event - Document-level pointer event.
+     * @returns Nothing (`void`).
+     * Side effects: may clear the local table menu.
+     */
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".command-palette-context-menu")) {
+        setTableContextMenu(null);
+      }
+    }
+
+    /**
+     * Closes the table menu with Escape and returns focus to palette search.
+     * @param event - Document-level keyboard event.
+     * @returns Nothing (`void`).
+     * Side effects: clears the local menu and schedules search focus restoration.
+     */
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setTableContextMenu(null);
+        window.requestAnimationFrame(() => inputRef.current?.focus());
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tableContextMenu]);
+
+  /**
+   * Opens table maintenance shortcuts at a pointer or keyboard anchor.
+   * @param item - Active table palette result.
+   * @param x - Viewport horizontal anchor.
+   * @param y - Viewport vertical anchor.
+   * @returns Nothing (`void`).
+   * Side effects: positions and opens the table action menu.
+   */
+  function openTableContextMenu(item: CommandPaletteItem, x: number, y: number): void {
+    if (item.type !== "table" || !item.connectionId || !onRequestTableAction) {
+      return;
+    }
+    const menuWidth = 220;
+    const menuHeight = 390;
+    setTableContextMenu({
+      item,
+      x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
+    });
+  }
+
+  /**
+   * Sends one table action to the parent-owned confirmation flow.
+   * @param action - Requested table shortcut.
+   * @returns Nothing (`void`).
+   * Side effects: closes the local menu and invokes the parent callback.
+   */
+  function requestTableAction(action: TableQuickAction): void {
+    const item = tableContextMenu?.item;
+    if (!item?.connectionId) {
+      return;
+    }
+    setTableContextMenu(null);
+    onRequestTableAction?.(item.connectionId, item.label, action);
+  }
 
   /** Selects an item and lets the parent close any palette-owned global state. */
   const selectItem = (item: CommandPaletteItem): void => {
@@ -215,6 +320,15 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
 
   /** Handles all palette navigation while keeping keyboard focus in the search field. */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (
+      (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+      && activeItem?.type === "table"
+    ) {
+      event.preventDefault();
+      const bounds = document.getElementById(`${listboxId}-${activeItem.id}`)?.getBoundingClientRect();
+      openTableContextMenu(activeItem, bounds?.left ?? 8, bounds?.bottom ?? 8);
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
@@ -304,6 +418,14 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
                     id={`${listboxId}-${item.id}`}
                     key={item.id}
                     onClick={() => selectItem(item)}
+                    onContextMenu={(event) => {
+                      if (item.type !== "table" || !item.connectionId || !onRequestTableAction) {
+                        return;
+                      }
+                      event.preventDefault();
+                      setActiveIndex(itemIndex);
+                      openTableContextMenu(item, event.clientX, event.clientY);
+                    }}
                     onMouseEnter={() => setActiveIndex(itemIndex)}
                     role="option"
                     tabIndex={-1}
@@ -334,6 +456,20 @@ export function CommandPalette({ open, items, onClose, onSelect }: CommandPalett
           <span><kbd>Esc</kbd> 关闭</span>
         </footer>
       </section>
+      {tableContextMenu ? (
+        <TableActionMenu
+          className="command-palette-context-menu"
+          firstItemRef={tableContextMenuItemRef}
+          onMouseDown={(event) => event.stopPropagation()}
+          onAction={requestTableAction}
+          pinned={pinnedTableKeys.has(tableTargetKey(
+            tableContextMenu.item.connectionId ?? "",
+            tableContextMenu.item.label,
+          ))}
+          style={{ left: tableContextMenu.x, top: tableContextMenu.y }}
+          tableName={tableContextMenu.item.label}
+        />
+      ) : null}
     </div>
   );
 }
