@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
@@ -195,21 +195,49 @@ function assertProductionRedisReadRunsDirectly(): void {
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 }
 
-/**
- * Verifies running feedback remains intentionally small after cancellation is requested.
- * Parameters: none.
- * @returns Nothing (`void`).
- * Side effects: renders a query workspace with a mocked active session.
- */
-function assertMinimalQueryLoading(): void {
-  render(<QueryWorkspace {...WORKSPACE_PROPS} />);
+/** 验证执行按钮、状态带、耗时与完成摘要覆盖一轮完整 SQL 生命周期。 */
+function assertProminentExecutionLifecycle(): void {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-21T08:00:00.000Z"));
+  sessionController.state.cancelRequested = false;
+  const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
-  expect(screen.getByText("查询中…")).toBeVisible();
+  const runningButton = screen.getByRole("button", { name: "SQL 执行中" });
+  expect(runningButton).toBeDisabled();
+  expect(runningButton).toHaveClass("is-running");
+  expect(screen.getByText("正在执行 SQL")).toBeVisible();
+  expect(screen.getByText("等待数据库响应 · 刚刚开始")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("SQL 正在执行");
   const cancelButton = screen.getByRole("button", { name: /取消/ });
   expect(cancelButton).toBeVisible();
   expect(cancelButton).toHaveAttribute("title", "取消当前查询（Ctrl/Cmd + .）");
   expect(screen.getByText("Ctrl/Cmd + .")).toBeVisible();
-  expect(screen.queryByText(/耗时|行数|连接中|执行阶段|正在认证/)).not.toBeInTheDocument();
+
+  act(() => vi.advanceTimersByTime(1_200));
+  expect(screen.getByText("等待数据库响应 · 已等待 1.0 秒")).toBeVisible();
+
+  sessionController.state.running = false;
+  sessionController.state.affectedRows = 0;
+  sessionController.state.columns = [
+    { name: "id", databaseType: "BIGINT", nullable: false },
+  ];
+  sessionController.state.rows = [
+    [{ kind: "integer", value: "1" }],
+    [{ kind: "integer", value: "2" }],
+  ];
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+
+  expect(screen.getByText("SQL 执行完成")).toBeVisible();
+  expect(screen.getByText("返回 2 行 · 用时 1.2 秒")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("SQL 执行完成，返回 2 行");
+  expect(screen.getByRole("button", { name: /执行/ })).toBeEnabled();
+
+  sessionController.state.columns = [];
+  sessionController.state.rows = [];
+  sessionController.state.affectedRows = 3;
+  view.rerender(<QueryWorkspace {...WORKSPACE_PROPS} />);
+  expect(screen.getByText("影响 3 行 · 用时 1.2 秒")).toBeVisible();
+  expect(screen.getByText("本次执行没有返回结果集。")).toBeVisible();
 }
 
 /**
@@ -375,7 +403,8 @@ function assertCanceledEmptyQueryState(): void {
   sessionController.state.incomplete = true;
   const view = render(<QueryWorkspace {...WORKSPACE_PROPS} />);
 
-  expect(screen.getByText("查询已取消")).toBeVisible();
+  expect(screen.getByText("SQL 已取消")).toBeVisible();
+  expect(screen.getByText("可调整查询后重新执行。")).toBeVisible();
   expect(screen.queryByText("执行查询后，结果会显示在这里。")).not.toBeInTheDocument();
 
   sessionController.state.incomplete = false;
@@ -409,9 +438,10 @@ function registerQueryWorkspaceTests(): void {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     resetAllShortcutBindings();
   });
-  it("keeps cancel visible without diagnostic loading copy", assertMinimalQueryLoading);
+  it("emphasizes the full running and completed SQL lifecycle", assertProminentExecutionLifecycle);
   it("executes only Monaco's selected SQL from the toolbar", assertToolbarSelectionExecution);
   it("executes only Monaco's cursor statement from the toolbar", assertToolbarCursorExecution);
   it("uses the executed SQL table for INSERT copy", assertInsertTargetUsesExecutedSql);

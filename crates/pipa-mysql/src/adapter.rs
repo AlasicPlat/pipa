@@ -318,7 +318,7 @@ fn convert_row(row: &MySqlRow) -> Result<Vec<pipa_core::CellValue>, SqlxError> {
     row.columns()
         .iter()
         .enumerate()
-        .map(|(index, column)| convert_cell(row, index, column.type_info().name()))
+        .map(|(index, column)| convert_cell(row, index, column.type_info()))
         .collect()
 }
 

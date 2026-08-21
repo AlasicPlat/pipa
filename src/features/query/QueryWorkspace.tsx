@@ -1,5 +1,15 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Bookmark, Copy, Download, Play, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Bookmark,
+  CircleCheck,
+  Copy,
+  Download,
+  LoaderCircle,
+  Play,
+  Search,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
@@ -202,6 +212,76 @@ function queryErrorAdvice(error: AppError, isRedis: boolean): string {
   }
 }
 
+interface QueryExecutionTiming {
+  elapsedMs: number;
+  durationMs: number | null;
+}
+
+/**
+ * 将查询耗时格式化为紧凑、可快速扫读的文本。
+ * @param durationMs - 非负毫秒数。
+ * @returns 小于一秒时返回毫秒，否则返回一位小数或整数秒。
+ * 副作用：无。
+ */
+function formatExecutionDuration(durationMs: number): string {
+  if (durationMs < 1_000) {
+    return `${Math.max(1, Math.round(durationMs))} 毫秒`;
+  }
+  if (durationMs < 10_000) {
+    return `${(durationMs / 1_000).toFixed(1)} 秒`;
+  }
+  return `${Math.round(durationMs / 1_000)} 秒`;
+}
+
+/**
+ * 跟踪当前查询的可见等待时间，并在终态保留本次执行耗时。
+ * @param queryId - 当前查询标识；新标识会开始一轮新的计时。
+ * @param running - 当前查询是否仍在执行。
+ * @returns 当前等待毫秒数和最近一次终态耗时。
+ * 副作用：查询执行期间创建一个 250ms 的界面计时器，结束或卸载时清理。
+ */
+function useQueryExecutionTiming(queryId: string | null, running: boolean): QueryExecutionTiming {
+  const startedAtRef = useRef<{ queryId: string; value: number } | null>(null);
+  const [timing, setTiming] = useState<{
+    queryId: string | null;
+    elapsedMs: number;
+    durationMs: number | null;
+  }>({ queryId: null, elapsedMs: 0, durationMs: null });
+
+  useEffect(() => {
+    if (!queryId) {
+      startedAtRef.current = null;
+      return;
+    }
+
+    if (!running) {
+      const startedAt = startedAtRef.current;
+      if (startedAt?.queryId === queryId) {
+        const durationMs = Math.max(0, Date.now() - startedAt.value);
+        setTiming({ queryId, elapsedMs: durationMs, durationMs });
+        startedAtRef.current = null;
+      }
+      return;
+    }
+
+    const startedAt = Date.now();
+    startedAtRef.current = { queryId, value: startedAt };
+    setTiming({ queryId, elapsedMs: 0, durationMs: null });
+    const timer = window.setInterval(() => {
+      setTiming({
+        queryId,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+        durationMs: null,
+      });
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [queryId, running]);
+
+  return timing.queryId === queryId
+    ? { elapsedMs: timing.elapsedMs, durationMs: timing.durationMs }
+    : { elapsedMs: 0, durationMs: null };
+}
+
 /**
  * Composes one connection-bound native editor, run controls, and streamed results.
  * @param props - Active persisted tab, its fixed non-secret profile, and tab actions.
@@ -234,6 +314,55 @@ export function QueryWorkspace({
   const hasResultRows = session.state.columns.length > 0 && session.state.rows.length > 0;
   const exportBaseName = tab.title.replace(/[^\w\u4e00-\u9fff.-]+/gu, "_").slice(0, 48) || "query";
   const inferredTableName = resolveExportTableName(session.state.sql, profile.database);
+  const executionTiming = useQueryExecutionTiming(session.state.queryId, session.state.running);
+  const executionLabel = isRedis ? "Redis 命令" : "SQL";
+  const executionSucceeded = session.state.queryId !== null
+    && !session.state.running
+    && !session.state.error
+    && !session.state.incomplete
+    && session.state.affectedRows !== null;
+  const completionSummary = session.state.columns.length > 0
+    ? `返回 ${session.state.rows.length} 行`
+    : (session.state.affectedRows ?? 0) > 0
+      ? `影响 ${session.state.affectedRows} 行`
+      : "执行成功，无返回结果";
+  const terminalDuration = executionTiming.durationMs === null
+    ? ""
+    : ` · 用时 ${formatExecutionDuration(executionTiming.durationMs)}`;
+  const runningDuration = executionTiming.elapsedMs < 100
+    ? "刚刚开始"
+    : `已等待 ${formatExecutionDuration(executionTiming.elapsedMs)}`;
+  const canceledSummary = session.state.rows.length > 0
+    ? `已保留 ${session.state.rows.length} 行结果`
+    : "未返回结果";
+  const executionStatus = session.state.running
+    ? {
+        tone: "running",
+        title: session.state.cancelRequested ? "正在取消当前执行" : `正在执行 ${executionLabel}`,
+        detail: session.state.cancelRequested
+          ? `取消请求已发送 · ${runningDuration}`
+          : session.state.rows.length > 0
+            ? `已接收 ${session.state.rows.length} 行 · ${runningDuration}`
+            : `${isRedis ? "等待 Redis 响应" : "等待数据库响应"} · ${runningDuration}`,
+        announcement: session.state.cancelRequested
+          ? "取消请求已发送，正在等待执行停止"
+          : `${executionLabel} 正在执行`,
+      }
+    : executionSucceeded
+      ? {
+          tone: "success",
+          title: `${executionLabel} 执行完成`,
+          detail: `${completionSummary}${terminalDuration}`,
+          announcement: `${executionLabel} 执行完成，${completionSummary}`,
+        }
+      : session.state.incomplete && !session.state.error
+        ? {
+            tone: "canceled",
+            title: `${executionLabel} 已取消`,
+            detail: `${canceledSummary}${terminalDuration}`,
+            announcement: `${executionLabel} 已取消，${canceledSummary}`,
+          }
+        : null;
 
   /**
    * Executes editor-selected SQL while the current workspace is idle.
@@ -561,15 +690,27 @@ export function QueryWorkspace({
               常用 SQL
             </button>
             <button
-              className="query-run-button"
+              aria-label={session.state.running ? `${executionLabel} 执行中` : undefined}
+              className={`query-run-button${session.state.running ? " is-running" : ""}`}
               disabled={session.state.running}
               onClick={handleToolbarExecute}
-              title={`执行选中${isRedis ? "命令" : " SQL 或当前语句"}（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
+              title={session.state.running
+                ? `${executionLabel} 正在执行`
+                : `执行选中${isRedis ? "命令" : " SQL 或当前语句"}（${getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}）`}
               type="button"
             >
-              <Play size={13} fill="currentColor" aria-hidden="true" />
-              执行
-              <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
+              {session.state.running ? (
+                <>
+                  <LoaderCircle className="spin" size={14} aria-hidden="true" />
+                  执行中
+                </>
+              ) : (
+                <>
+                  <Play size={13} fill="currentColor" aria-hidden="true" />
+                  执行
+                  <kbd>{getShortcutKeyLabels(shortcuts.bindings.executeQuery).join(" + ")}</kbd>
+                </>
+              )}
             </button>
           </span>
         </div>
@@ -664,70 +805,88 @@ export function QueryWorkspace({
                 </div>
               </>
             ) : null}
-            {session.state.running ? (
-              <span className="query-loading" role="status">
-                <span className="loading-spinner" aria-hidden="true" />
-                {isRedis ? "命令执行中…" : "查询中…"}
+          </span>
+        </header>
+
+        <div className="query-results__body">
+          {executionStatus ? (
+            <div className={`query-execution-status query-execution-status--${executionStatus.tone}`}>
+              <span className="sr-only" role="status">{executionStatus.announcement}</span>
+              <span className="query-execution-status__icon" aria-hidden="true">
+                {executionStatus.tone === "running" ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : executionStatus.tone === "success" ? (
+                  <CircleCheck size={15} />
+                ) : (
+                  <X size={15} />
+                )}
+              </span>
+              <span className="query-execution-status__copy" aria-hidden="true">
+                <strong>{executionStatus.title}</strong>
+                <span>{executionStatus.detail}</span>
+              </span>
+              {session.state.running ? (
                 <button
+                  className="query-execution-status__cancel"
                   disabled={session.state.cancelRequested}
                   onClick={handleCancel}
                   title={`取消当前${isRedis ? "命令" : "查询"}（${getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}）`}
                   type="button"
                 >
                   <X size={12} aria-hidden="true" />
-                  取消
+                  {session.state.cancelRequested ? "取消中" : "取消"}
                   <kbd>{getShortcutKeyLabels(shortcuts.bindings.cancelQuery).join(" + ")}</kbd>
                 </button>
-              </span>
-            ) : null}
-          </span>
-        </header>
+              ) : null}
+            </div>
+          ) : null}
 
-        {session.state.error && !session.state.running ? (
-          <div className="query-error" role="alert">
-            <strong>{isRedis ? "命令失败" : "查询失败"}</strong>
-            <span className="query-error__summary">{session.state.error.message}</span>
-            <span className="query-error__advice">{queryErrorAdvice(session.state.error, isRedis)}</span>
-            {session.state.error.technicalDetails ? (
-              <details className="query-error__details">
-                <summary>诊断详情</summary>
-                <pre>{session.state.error.technicalDetails}</pre>
-              </details>
-            ) : null}
-          </div>
-        ) : null}
+          {session.state.error && !session.state.running ? (
+            <div className="query-error" role="alert">
+              <strong>{isRedis ? "命令失败" : "查询失败"}</strong>
+              <span className="query-error__summary">{session.state.error.message}</span>
+              <span className="query-error__advice">{queryErrorAdvice(session.state.error, isRedis)}</span>
+              {session.state.error.technicalDetails ? (
+                <details className="query-error__details">
+                  <summary>诊断详情</summary>
+                  <pre>{session.state.error.technicalDetails}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
 
-        {session.state.columns.length > 0 ? (
-          <ResultGrid
-            columns={session.state.columns}
-            rows={session.state.rows}
-            running={session.state.running}
-            incomplete={session.state.incomplete}
-            searchQuery={resultSearch}
-            tableName={inferredTableName}
-            onCopyAll={handleCopyAllResults}
-            onCopyText={handleCopyText}
-            onSelectionChange={setSelectionStatus}
-          />
-        ) : null}
+          {session.state.columns.length > 0 ? (
+            <ResultGrid
+              columns={session.state.columns}
+              rows={session.state.rows}
+              running={session.state.running}
+              incomplete={session.state.incomplete}
+              searchQuery={resultSearch}
+              tableName={inferredTableName}
+              onCopyAll={handleCopyAllResults}
+              onCopyText={handleCopyText}
+              onSelectionChange={setSelectionStatus}
+            />
+          ) : null}
 
-        {!session.state.running &&
-        !session.state.error &&
-        session.state.columns.length === 0 &&
-        session.state.affectedRows === null ? (
-          <div className="query-results__empty">
-            {session.state.incomplete
-              ? `${isRedis ? "命令" : "查询"}已取消`
-              : `执行${isRedis ? "命令" : "查询"}后，结果会显示在这里。`}
-          </div>
-        ) : null}
+          {!session.state.running &&
+          !session.state.error &&
+          session.state.columns.length === 0 &&
+          session.state.affectedRows === null ? (
+            <div className="query-results__empty">
+              {session.state.incomplete
+                ? `可调整${isRedis ? "命令" : "查询"}后重新执行。`
+                : `执行${isRedis ? "命令" : "查询"}后，结果会显示在这里。`}
+            </div>
+          ) : null}
 
-        {!session.state.running &&
-        !session.state.error &&
-        session.state.columns.length === 0 &&
-        session.state.affectedRows !== null ? (
-          <div className="query-results__empty">执行完成</div>
-        ) : null}
+          {!session.state.running &&
+          !session.state.error &&
+          session.state.columns.length === 0 &&
+          session.state.affectedRows !== null ? (
+            <div className="query-results__empty">本次执行没有返回结果集。</div>
+          ) : null}
+        </div>
       </section>
 
       {sqlLibraryOpen ? (

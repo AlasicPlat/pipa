@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use pipa_core::CellValue;
-use sqlx_core::{row::Row, value::ValueRef};
-use sqlx_mysql::MySqlRow;
+use sqlx_core::{row::Row, type_info::TypeInfo, types::Type, value::ValueRef};
+use sqlx_mysql::{MySql, MySqlRow, MySqlTypeInfo};
 
 /// Conversion family selected from SQLx's stable MySQL type names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,8 +19,24 @@ enum ValueKind {
     Null,
 }
 
-/// Classifies a SQLx MySQL database type into its transport conversion family.
-fn classify_type(database_type: &str) -> ValueKind {
+/// 根据 SQLx 类型名称与真实字符集兼容性选择传输类型。
+///
+/// # 参数
+/// `database_type` 是 SQLx 根据 MySQL 字段标志生成的类型名称。
+/// `text_compatible` 表示字段的 collation 是否允许按字符串解码。
+///
+/// # 返回值
+/// 返回单元格应采用的无损传输类型。
+///
+/// # 副作用
+/// 无。
+fn classify_type(database_type: &str, text_compatible: bool) -> ValueKind {
+    // MySQL 会给 utf8mb3_bin 等文本元数据设置 BINARY 标志，SQLx 因而把类型名称
+    // 报告为 VARBINARY；真实 collation 仍可区分这些文本与 binary 字符集。
+    if text_compatible {
+        return ValueKind::Text;
+    }
+
     match normalize_database_type(database_type) {
         "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "TINYINT UNSIGNED"
         | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED" | "BIGINT UNSIGNED"
@@ -82,17 +98,28 @@ fn temporal_cell(value: &[u8]) -> CellValue {
     CellValue::DateTime(String::from_utf8_lossy(value).into_owned())
 }
 
-/// Converts one dynamically typed SQLx MySQL cell into Pipa's lossless transport value.
+/// 将一个动态 SQLx MySQL 单元格转换为 Pipa 的无损传输值。
+///
+/// # 参数
+/// `row` 是当前 MySQL 结果行，`index` 是字段位置，`type_info` 是完整 SQLx 类型信息。
+///
+/// # 返回值
+/// 返回保留数值精度、文本语义与二进制字节的单元格值；解码失败时返回 SQLx 错误。
+///
+/// # 副作用
+/// 无。
 pub(crate) fn convert_cell(
     row: &MySqlRow,
     index: usize,
-    database_type: &str,
+    type_info: &MySqlTypeInfo,
 ) -> Result<CellValue, sqlx_core::Error> {
     if row.try_get_raw(index)?.is_null() {
         return Ok(CellValue::Null);
     }
 
-    Ok(match classify_type(database_type) {
+    let database_type = normalize_database_type(type_info.name());
+    let text_compatible = <String as Type<MySql>>::compatible(type_info);
+    Ok(match classify_type(database_type, text_compatible) {
         ValueKind::Integer if database_type.ends_with("UNSIGNED") || database_type == "YEAR" => {
             integer_cell(row.try_get_unchecked::<u64, _>(index)?)
         }
@@ -134,7 +161,7 @@ mod tests {
             "BIGINT UNSIGNED",
             "YEAR",
         ] {
-            assert_eq!(classify_type(database_type), ValueKind::Integer);
+            assert_eq!(classify_type(database_type, false), ValueKind::Integer);
         }
         assert!(matches!(integer_cell(18_u64), CellValue::Integer(value) if value == "18"));
     }
@@ -142,22 +169,22 @@ mod tests {
     /// Verifies exact MySQL decimals stay decimal strings.
     #[test]
     fn classifies_exact_decimals() {
-        assert_eq!(classify_type("DECIMAL"), ValueKind::Decimal);
-        assert_eq!(classify_type("NEWDECIMAL"), ValueKind::Decimal);
+        assert_eq!(classify_type("DECIMAL", false), ValueKind::Decimal);
+        assert_eq!(classify_type("NEWDECIMAL", false), ValueKind::Decimal);
     }
 
     /// Verifies MySQL floating families become transport-safe f64 cells.
     #[test]
     fn classifies_floating_values() {
-        assert_eq!(classify_type("FLOAT"), ValueKind::Float32);
-        assert_eq!(classify_type("DOUBLE"), ValueKind::Float64);
+        assert_eq!(classify_type("FLOAT", false), ValueKind::Float32);
+        assert_eq!(classify_type("DOUBLE", false), ValueKind::Float64);
         assert!(matches!(float_cell(1.5), CellValue::Float(value) if value == 1.5));
     }
 
     /// Verifies JSON uses raw text so JavaScript cannot round large numbers.
     #[test]
     fn classifies_json_values() {
-        assert_eq!(classify_type("JSON"), ValueKind::Json);
+        assert_eq!(classify_type("JSON", false), ValueKind::Json);
         let raw = "{\"id\":18446744073709551615}".to_owned();
         assert!(matches!(CellValue::Json(raw.clone()), CellValue::Json(value) if value == raw));
     }
@@ -175,7 +202,7 @@ mod tests {
             "LONGBLOB",
             "GEOMETRY",
         ] {
-            assert_eq!(classify_type(database_type), ValueKind::Binary);
+            assert_eq!(classify_type(database_type, false), ValueKind::Binary);
         }
         assert!(matches!(binary_cell(&[0, 255]), CellValue::Binary(value) if value == "AP8="));
     }
@@ -183,10 +210,10 @@ mod tests {
     /// Verifies date and time families use date-time transport strings.
     #[test]
     fn classifies_date_and_time_values() {
-        assert_eq!(classify_type("DATE"), ValueKind::Date);
-        assert_eq!(classify_type("TIME"), ValueKind::Time);
-        assert_eq!(classify_type("DATETIME"), ValueKind::DateTime);
-        assert_eq!(classify_type("TIMESTAMP"), ValueKind::DateTime);
+        assert_eq!(classify_type("DATE", false), ValueKind::Date);
+        assert_eq!(classify_type("TIME", false), ValueKind::Time);
+        assert_eq!(classify_type("DATETIME", false), ValueKind::DateTime);
+        assert_eq!(classify_type("TIMESTAMP", false), ValueKind::DateTime);
         assert!(matches!(
             temporal_cell(b"0000-00-00 00:00:00.000000"),
             CellValue::DateTime(value) if value == "0000-00-00 00:00:00.000000"
@@ -206,7 +233,7 @@ mod tests {
             "ENUM",
             "SET",
         ] {
-            assert_eq!(classify_type(database_type), ValueKind::Text);
+            assert_eq!(classify_type(database_type, true), ValueKind::Text);
         }
         assert!(matches!(text_cell(b"Pipa"), CellValue::Text(value) if value == "Pipa"));
         assert!(matches!(text_cell(&[b'P', 0xff]), CellValue::Text(value) if value == "P�"));
@@ -216,12 +243,21 @@ mod tests {
     #[test]
     fn normalizes_boolean_as_tinyint() {
         assert_eq!(normalize_database_type("BOOLEAN"), "TINYINT");
-        assert_eq!(classify_type("BOOLEAN"), ValueKind::Integer);
+        assert_eq!(classify_type("BOOLEAN", false), ValueKind::Integer);
     }
 
     /// Verifies SQL NULL is a dedicated conversion category.
     #[test]
     fn classifies_sql_null() {
-        assert_eq!(classify_type("NULL"), ValueKind::Null);
+        assert_eq!(classify_type("NULL", false), ValueKind::Null);
+    }
+
+    /// 验证带 BINARY 标志但拥有文本 collation 的 MySQL 元数据仍按字符串传输。
+    #[test]
+    fn classifies_binary_flagged_text_metadata_as_text() {
+        assert_eq!(classify_type("VARBINARY", true), ValueKind::Text);
+        assert_eq!(classify_type("BLOB", true), ValueKind::Text);
+        assert_eq!(classify_type("VARBINARY", false), ValueKind::Binary);
+        assert_eq!(classify_type("BLOB", false), ValueKind::Binary);
     }
 }

@@ -53,13 +53,13 @@ export function quoteIdentifier(identifier: string): string {
 }
 
 /**
- * Encodes UTF-8 text as a SQL-mode-independent MySQL expression.
- * @param value - Untrusted text that must remain data.
- * @returns A MySQL UTF-8 conversion expression containing hexadecimal bytes only.
+ * 将不可信文本编码为 MySQL 字符串字面量。
+ * @param value - 需要作为数据处理的文本。
+ * @returns 使用双写引号和反斜杠转义的字符串字面量。
  * Side effects: none.
  */
-export function mysqlUtf8Expression(value: string): string {
-  return `CONVERT(X'${bytesToHex(new TextEncoder().encode(value))}' USING utf8mb4)`;
+export function mysqlStringLiteral(value: string): string {
+  return `'${value.replace(/\\/gu, "\\\\").replace(/'/gu, "''")}'`;
 }
 
 /**
@@ -407,7 +407,7 @@ export function buildDdlStatements(
  * Side effects: none.
  */
 export function buildAlterTableCommentStatement(database: string, table: string, comment: string): string {
-  return `ALTER TABLE ${quoteIdentifier(database)}.${quoteIdentifier(table)} COMMENT = ${hexStringLiteral(comment)};`;
+  return `ALTER TABLE ${quoteIdentifier(database)}.${quoteIdentifier(table)} COMMENT = ${mysqlStringLiteral(comment)};`;
 }
 
 /**
@@ -593,7 +593,7 @@ function columnSql(column: TableColumnDefinition): string {
   }
   pieces.push(...preservedExtraClauses(column.extra));
   if (column.comment) {
-    pieces.push(`COMMENT ${hexStringLiteral(column.comment)}`);
+    pieces.push(`COMMENT ${mysqlStringLiteral(column.comment)}`);
   }
   return pieces.join(" ");
 }
@@ -1037,7 +1037,7 @@ function mutationPredicate(fields: readonly TableMutationField[]): string {
     : `${quoteIdentifier(field.name)} = ${mutationValueLiteral(field.value)}`).join(" AND ");
 }
 
-/** Formats typed values for display only, using hex expressions for every text family. */
+/** Formats typed values for display only. */
 function mutationValueLiteral(value: TableMutationValue): string {
   switch (value.kind) {
     case "null":
@@ -1049,15 +1049,15 @@ function mutationValueLiteral(value: TableMutationValue): string {
     case "decimal":
       return value.value;
     case "binary":
-      return `FROM_BASE64(${mysqlUtf8Expression(value.value)})`;
+      return `FROM_BASE64(${mysqlStringLiteral(value.value)})`;
     case "text":
     case "json":
     case "date_time":
-      return mysqlUtf8Expression(value.value);
+      return mysqlStringLiteral(value.value);
   }
 }
 
-/** Keeps recognized MySQL default expressions raw and hex-encodes ordinary values. */
+/** Keeps recognized MySQL default expressions raw and quotes ordinary values. */
 function defaultLiteral(value: string, databaseType: string): string {
   const trimmed = value.trim();
   if (
@@ -1069,7 +1069,7 @@ function defaultLiteral(value: string, databaseType: string): string {
   if (/^(?:tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit)/iu.test(databaseType.trim()) && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(trimmed)) {
     return trimmed;
   }
-  return hexStringLiteral(value);
+  return mysqlStringLiteral(value);
 }
 
 /** Returns whether a server default is the SQL-mode-independent current timestamp token. */
@@ -1080,14 +1080,4 @@ function isCurrentTimestampExpression(value: string | null): boolean {
 /** Reconstructs a read-only server expression, preserving the special timestamp shorthand. */
 function expressionDefault(value: string): string {
   return isCurrentTimestampExpression(value) ? value.trim().toUpperCase() : `(${value})`;
-}
-
-/** Encodes UTF-8 as a MySQL hexadecimal string literal accepted by DDL literal positions. */
-function hexStringLiteral(value: string): string {
-  return `X'${bytesToHex(new TextEncoder().encode(value))}'`;
-}
-
-/** Converts bytes into uppercase hexadecimal without depending on locale or SQL mode. */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join("");
 }

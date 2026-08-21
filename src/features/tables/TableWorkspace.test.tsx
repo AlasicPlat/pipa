@@ -200,7 +200,9 @@ async function assertVisualChangePreviews(): Promise<void> {
   expect(screen.getByRole("dialog", { name: "编辑单元格" })).toBeVisible();
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "new" } });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-  expect(screen.getByText(/UPDATE `shop`.`orders` SET `name` = CONVERT\(X'6E6577' USING utf8mb4\) WHERE `id` = 1;/)).toBeVisible();
+  expect(screen.getByLabelText("待提交 DML（实际执行使用参数绑定）")).toHaveValue(
+    "START TRANSACTION;\nUPDATE `shop`.`orders` SET `name` = 'new' WHERE `id` = 1;\nCOMMIT;",
+  );
 
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
   expect(screen.getByText("PRIMARY")).toBeVisible();
@@ -367,6 +369,30 @@ async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
   await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
 }
 
+/**
+ * 验证字段注释编辑生成普通字符串 DDL，并将同一条 SQL 交给执行会话。
+ * 参数：无。
+ * @returns 完成页面交互和异步结构加载后的 Promise。
+ * Side effects: 渲染并操作模拟表结构工作区。
+ */
+async function assertCommentDdlUsesQuotedString(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 name 注释" }));
+  fireEvent.change(screen.getByLabelText("name 注释"), {
+    target: { value: "客户 O'Reilly\\archive" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存注释" }));
+
+  const expectedDdl = "ALTER TABLE `shop`.`orders` CHANGE COLUMN `name` `name` varchar(50) CHARACTER SET `utf8mb4_0900_ai_ci` NULL COMMENT '客户 O''Reilly\\\\archive';";
+  expect(screen.getByLabelText("待执行 DDL")).toHaveValue(expectedDdl);
+
+  fireEvent.click(screen.getByRole("button", { name: "执行 1 条 DDL" }));
+  expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(expectedDdl);
+}
+
 /** Verifies page reads are primary-key ordered and refresh cannot replace a dirty row snapshot. */
 async function assertStableOrderingAndDirtyRefreshLock(): Promise<void> {
   render(<TableWorkspace profile={PROFILE} tableName="orders" />);
@@ -445,6 +471,7 @@ describe("TableWorkspace", () => {
   it("keeps production saves behind a second confirmation", assertProductionSaveConfirmation);
   it("invalidates production confirmation when an insert changes", assertProductionConfirmationTracksLatestInsert);
   it("reports and saves dirty DDL", assertDdlDirtyStateAndSaveShortcut);
+  it("executes field comments as quoted strings instead of hex literals", assertCommentDdlUsesQuotedString);
   it("orders pages by primary key and locks refresh while dirty", assertStableOrderingAndDirtyRefreshLock);
   it("keeps DEFAULT distinct from explicit NULL on inserts", assertInsertDefaultAndNullStates);
   it("retains staged values when a typed transaction fails", assertFailedTypedCommitKeepsChanges);

@@ -55,6 +55,31 @@ async fn streams_lossless_values_in_order() {
     ));
 }
 
+/// 验证 MySQL 8.4 带 BINARY 标志的 SHOW 元数据仍作为普通字符串传输。
+///
+/// # 副作用
+/// 只读取测试数据库自带的 information_schema，不修改任何数据。
+#[tokio::test]
+async fn streams_show_full_tables_metadata_as_text() {
+    let profile = test_profile();
+    let events = run_query(
+        &profile,
+        Uuid::new_v4(),
+        "SHOW FULL TABLES FROM information_schema",
+    )
+    .await;
+
+    let QueryEvent::Batch { rows, .. } = &events[2] else {
+        panic!("third event should be a batch");
+    };
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| matches!(
+        row.as_slice(),
+        [CellValue::Text(table_name), CellValue::Text(table_type)]
+            if !table_name.is_empty() && !table_type.is_empty()
+    )));
+}
+
 /// Verifies every MySQL value family is decoded through a live SQLx row.
 #[tokio::test]
 async fn streams_every_lossless_value_category() {
