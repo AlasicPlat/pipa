@@ -352,7 +352,7 @@ fn unix_timestamp_literal(value: &str) -> Result<String, &'static str> {
     Ok(format!("FROM_UNIXTIME({value})"))
 }
 
-/// Serializes one lossless value using validated numerics and hex-backed text/binary literals.
+/// Serializes one lossless value using validated numerics, quoted text, and binary literals.
 fn value_literal(value: &CellValue) -> Result<String, &'static str> {
     match value {
         CellValue::Null => Ok("NULL".into()),
@@ -362,8 +362,8 @@ fn value_literal(value: &CellValue) -> Result<String, &'static str> {
             .map_err(|_| "a numeric value is not valid MySQL syntax"),
         CellValue::Float(value) if value.is_finite() => Ok(value.to_string()),
         CellValue::Float(_) => Err("a floating-point value is not finite"),
-        CellValue::Text(value) | CellValue::DateTime(value) => Ok(utf8_literal(value)),
-        CellValue::Json(value) => Ok(utf8_literal(value)),
+        CellValue::Text(value) | CellValue::DateTime(value) => Ok(quoted_string(value)),
+        CellValue::Json(value) => Ok(quoted_string(value)),
         CellValue::Binary(value) => STANDARD
             .decode(value)
             .map(|bytes| format!("X'{}'", hex(&bytes)))
@@ -371,9 +371,12 @@ fn value_literal(value: &CellValue) -> Result<String, &'static str> {
     }
 }
 
-/// Encodes UTF-8 text as a SQL-mode-independent MySQL expression.
-fn utf8_literal(value: &str) -> String {
-    format!("CONVERT(X'{}' USING utf8mb4)", hex(value.as_bytes()))
+/// 将文本编码为可读的 MySQL 字符串字面量。
+///
+/// `value` 是待写入的原始文本；返回值会双写单引号和反斜杠，不修改其他字符。
+/// 此函数无副作用。
+fn quoted_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 /// Encodes bytes as uppercase hexadecimal without adding an extra dependency.
@@ -383,7 +386,7 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_transaction_reset_sql;
+    use super::{generate_transaction_reset_sql, quoted_string};
     use pipa_core::{
         BinlogCell, BinlogChange, BinlogOperation, BinlogRowChange, BinlogTableConfidence,
         BinlogTransaction, BinlogTransactionStatus, CellValue,
@@ -461,13 +464,17 @@ mod tests {
 
         assert!(output.complete);
         assert_eq!(output.statement_count, 1);
-        assert!(output.sql.contains(
-            "UPDATE `shop`.`orders` SET `id` = 7, `status` = CONVERT(X'70656E64696E67' USING utf8mb4), `note` = NULL"
-        ));
-        assert!(output.sql.contains("`id` <=> 7"));
         assert!(output
             .sql
-            .contains("`status` <=> CONVERT(X'70616964' USING utf8mb4)"));
+            .contains("UPDATE `shop`.`orders` SET `id` = 7, `status` = 'pending', `note` = NULL"));
+        assert!(output.sql.contains("`id` <=> 7"));
+        assert!(output.sql.contains("`status` <=> 'paid'"));
+    }
+
+    /// 验证 Reset SQL 的文本保持可读，并安全转义引号和反斜杠。
+    #[test]
+    fn text_literals_are_quoted_without_hex_conversion() {
+        assert_eq!(quoted_string("O'Reilly\\archive"), "'O''Reilly\\\\archive'");
     }
 
     /// Verifies INSERT and DELETE are inverted and transaction order is reversed.

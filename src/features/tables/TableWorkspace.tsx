@@ -34,7 +34,7 @@ import {
   columnTypeValidationError,
   formatMysqlColumnType,
   isStructureColumnEditable,
-  mysqlUtf8Expression,
+  mysqlStringLiteral,
   parseCreateTableComment,
   parseMysqlColumnType,
   quoteIdentifier,
@@ -251,7 +251,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     () =>
       `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT, CHARACTER_SET_NAME, COLLATION_NAME, GENERATION_EXPRESSION\n` +
       `FROM INFORMATION_SCHEMA.COLUMNS\n` +
-      `WHERE TABLE_SCHEMA = ${mysqlUtf8Expression(database)} AND TABLE_NAME = ${mysqlUtf8Expression(tableName)}\n` +
+      `WHERE TABLE_SCHEMA = ${mysqlStringLiteral(database)} AND TABLE_NAME = ${mysqlStringLiteral(tableName)}\n` +
       "ORDER BY ORDINAL_POSITION;",
     [database, tableName],
   );
@@ -259,7 +259,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     () =>
       `SELECT INDEX_NAME, NON_UNIQUE, SUB_PART, COLUMN_NAME, INDEX_TYPE, CARDINALITY\n` +
       `FROM INFORMATION_SCHEMA.STATISTICS\n` +
-      `WHERE TABLE_SCHEMA = ${mysqlUtf8Expression(database)} AND TABLE_NAME = ${mysqlUtf8Expression(tableName)}\n` +
+      `WHERE TABLE_SCHEMA = ${mysqlStringLiteral(database)} AND TABLE_NAME = ${mysqlStringLiteral(tableName)}\n` +
       "ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME, SEQ_IN_INDEX;",
     [database, tableName],
   );

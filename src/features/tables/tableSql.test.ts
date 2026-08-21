@@ -61,7 +61,7 @@ function stagedUpdate(row: CellValue[], column: string, value: string | null): M
 }
 
 describe("table SQL generation", () => {
-  it("preserves charset/collation and encodes DDL strings without SQL-mode escapes", () => {
+  it("preserves charset/collation and emits quoted DDL strings", () => {
     const renamed = { ...ID_COLUMN, name: "order_id", comment: "主键" };
     const added: TableColumnDefinition = {
       ...NAME_COLUMN,
@@ -75,8 +75,8 @@ describe("table SQL generation", () => {
     };
 
     expect(buildDdlStatements("shop", "orders", [ID_COLUMN], [renamed, added])).toEqual([
-      "ALTER TABLE `shop`.`orders` CHANGE COLUMN `id` `order_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT X'E4B8BBE994AE';",
-      "ALTER TABLE `shop`.`orders` ADD COLUMN `status` varchar(20) NOT NULL DEFAULT X'6E6577';",
+      "ALTER TABLE `shop`.`orders` CHANGE COLUMN `id` `order_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '主键';",
+      "ALTER TABLE `shop`.`orders` ADD COLUMN `status` varchar(20) NOT NULL DEFAULT 'new';",
     ]);
   });
 
@@ -106,10 +106,10 @@ describe("table SQL generation", () => {
       key: [{ name: "id", value: { kind: "integer", value: "18446744073709551615" } }],
       values: [{ name: "name", value: { kind: "text", value: "O'Reilly" } }],
     }]);
-    expect(plan.statements[0]).toContain("CONVERT(X'4F275265696C6C79' USING utf8mb4)");
+    expect(plan.statements[0]).toContain("`name` = 'O''Reilly'");
   });
 
-  it("never places quote/backslash payloads into preview SQL text", () => {
+  it("quotes apostrophes and backslashes in preview SQL text", () => {
     const payload = "C:\\tmp\\'; DELETE FROM users; --";
     const plan = buildTableMutationPlan({
       database: "shop",
@@ -122,8 +122,8 @@ describe("table SQL generation", () => {
     });
 
     expect(plan.errors).toEqual([]);
-    expect(plan.statements[0]).not.toContain(payload);
-    expect(plan.statements[0]).not.toContain("DELETE FROM users");
+    expect(plan.statements[0]).toContain("`name` = 'C:\\\\tmp\\\\''; DELETE FROM users; --'");
+    expect(plan.statements[0]).not.toContain("CONVERT(X'");
     expect(plan.mutations[0]).toMatchObject({
       type: "update",
       values: [{ value: { kind: "text", value: payload } }],
@@ -383,8 +383,8 @@ describe("table SQL generation", () => {
     };
 
     expect(buildDdlStatements("shop", "orders", [], [nullText, timestampText])).toEqual([
-      "ALTER TABLE `shop`.`orders` ADD COLUMN `null_text` varchar(50) NULL DEFAULT X'4E554C4C';",
-      "ALTER TABLE `shop`.`orders` ADD COLUMN `timestamp_text` varchar(50) NULL DEFAULT X'43555252454E545F54494D455354414D50';",
+      "ALTER TABLE `shop`.`orders` ADD COLUMN `null_text` varchar(50) NULL DEFAULT 'NULL';",
+      "ALTER TABLE `shop`.`orders` ADD COLUMN `timestamp_text` varchar(50) NULL DEFAULT 'CURRENT_TIMESTAMP';",
     ]);
   });
 
@@ -466,8 +466,8 @@ describe("table SQL generation", () => {
     ].join("\n");
     expect(parseCreateTableComment(createSql)).toBe("订单表'主表");
     expect(parseCreateTableComment("CREATE TABLE `t` (`id` int)")).toBe("");
-    expect(buildAlterTableCommentStatement("shop", "orders", "订单表")).toBe(
-      "ALTER TABLE `shop`.`orders` COMMENT = X'E8AEA2E58D95E8A1A8';",
+    expect(buildAlterTableCommentStatement("shop", "orders", "订单表'归档\\路径")).toBe(
+      "ALTER TABLE `shop`.`orders` COMMENT = '订单表''归档\\\\路径';",
     );
   });
 });
