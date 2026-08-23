@@ -62,6 +62,35 @@
   --space-3: 16px;
   --space-4: 24px;
 
+  /*
+   * Type scale. Aligned to the macOS control font (13px) so dense instrument
+   * chrome stays legible. Never go below --text-xs for user-facing copy;
+   * --text-2xs is reserved for uppercase eyebrow labels and kbd hints.
+   */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 19px;
+  --text-2xl: 23px;
+
+  /*
+   * Control heights. 28px is the smallest comfortable pointer target for
+   * secondary chrome; primary rows and buttons use --control-h-md or larger.
+   */
+  --control-h-xs: 24px;
+  --control-h-sm: 28px;
+  --control-h-md: 32px;
+  --control-h-lg: 36px;
+
+  /* Layout - overridable at runtime by the sidebar resizer */
+  --rail-width: 58px;
+  --sidebar-width: 316px;
+  --sidebar-width-min: 220px;
+  --sidebar-width-max: 560px;
+
   /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);

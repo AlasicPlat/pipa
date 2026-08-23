@@ -16,19 +16,19 @@
   background: var(--surface-raised);
   box-shadow: var(--shadow-md), var(--shadow-highlight);
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
 .update-menu__eyebrow {
   color: var(--text-tertiary);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 8px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.12em;
 }
 
 .update-menu strong {
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .update-menu p {
@@ -77,14 +77,14 @@
 
 .update-menu__download-title {
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--text-sm);
   font-weight: 650;
 }
 
 .update-menu__percentage {
   color: var(--brand);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   line-height: 1;
@@ -115,14 +115,14 @@
 .update-menu__download-meta {
   color: var(--text-tertiary);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 8px;
+  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
 }
 
 .update-menu .update-menu__assurance {
   align-items: center;
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size: var(--text-xs);
   line-height: 1.35;
 }
 
@@ -149,12 +149,12 @@
 
 .update-menu__processing strong {
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--text-sm);
 }
 
 .update-menu__processing small {
   color: var(--text-tertiary);
-  font-size: 8px;
+  font-size: var(--text-2xs);
 }
 
 .update-menu__spinner {
@@ -173,7 +173,7 @@
   min-height: 28px;
   border-color: var(--border-subtle);
   background: var(--surface-muted);
-  font-size: 10px;
+  font-size: var(--text-sm);
 }
 
 .workspace__topbar-actions .update-menu__actions .update-menu__primary {

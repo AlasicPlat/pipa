@@ -48,7 +48,7 @@
 
 .binlog-workspace__eyebrow {
   color: var(--accent-mysql);
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   font-weight: 720;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -64,7 +64,7 @@
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   font-weight: 620;
 }
 
@@ -194,7 +194,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -221,7 +221,7 @@
 .binlog-inline-error {
   margin: 0 0 12px;
   color: var(--status-danger);
-  font-size: 0.76rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-loading {
@@ -246,7 +246,7 @@
 
 .binlog-loading span {
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-spin {
@@ -290,7 +290,7 @@
   display: block;
   margin-top: 10px;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
 }
 
 .binlog-state-card__actions {
@@ -330,7 +330,7 @@
 
 .binlog-summary__card > span:first-child {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   font-weight: 650;
 }
 
@@ -347,7 +347,7 @@
   overflow: hidden;
   margin-top: 3px;
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -369,7 +369,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-panel);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-diagnostics summary {
@@ -397,7 +397,7 @@
 .binlog-diagnostics code,
 .binlog-diagnostics small {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
 }
 
 .binlog-diagnostic {
@@ -450,7 +450,7 @@
   align-items: center;
   column-gap: 4px;
   color: var(--text-tertiary);
-  font-size: 0.62rem;
+  font-size: var(--text-xs);
 }
 
 .binlog-filters label span {
@@ -467,7 +467,7 @@
   border-radius: 6px;
   background: var(--surface-raised);
   color: var(--text-primary);
-  font-size: 0.72rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-timeline__legend {
@@ -477,7 +477,7 @@
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-muted);
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: var(--text-xs);
 }
 
 .binlog-timeline__items {
@@ -526,7 +526,7 @@
 
 .binlog-transaction__time {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -539,19 +539,19 @@
 
 .binlog-transaction__rows {
   color: var(--text-secondary);
-  font-size: 0.69rem;
+  font-size: var(--text-xs);
   text-align: right;
 }
 
 .binlog-status,
 .binlog-operation {
   display: inline-flex;
-  min-height: 20px;
+  min-height: var(--control-h-xs);
   align-items: center;
   justify-content: center;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.62rem;
+  font-size: var(--text-xs);
   font-weight: 720;
   white-space: nowrap;
 }
@@ -595,7 +595,7 @@
 
 .binlog-reset-sql > button {
   display: inline-flex;
-  min-height: 24px;
+  min-height: var(--control-h-xs);
   align-items: center;
   gap: 5px;
   padding: 3px 7px;
@@ -605,7 +605,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   font-family: inherit;
-  font-size: 0.64rem;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
@@ -624,7 +624,7 @@
   max-width: 220px;
   overflow: hidden;
   font-family: inherit;
-  font-size: 0.62rem;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -671,7 +671,7 @@
   gap: 8px;
   padding: 7px 9px;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.71rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-change__heading > span:last-child {
@@ -701,7 +701,7 @@
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -710,7 +710,7 @@
   margin: 0;
   padding: 10px;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-change__empty--error {
@@ -731,7 +731,7 @@
   padding: 8px;
   border-right: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: var(--text-xs);
 }
 
 .binlog-diff__scroll {
@@ -808,7 +808,7 @@
   justify-content: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-timeline__empty {
@@ -844,7 +844,7 @@
   margin: 0;
   padding: 10px;
   color: var(--text-tertiary);
-  font-size: 0.67rem;
+  font-size: var(--text-xs);
   text-align: center;
 }
 

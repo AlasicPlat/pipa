@@ -35,6 +35,63 @@ export interface UseMcpStateResult {
 }
 
 /**
+ * Tracks how many MCP proposals are waiting for confirmation, even while the console is closed.
+ *
+ * The console's own state hook only subscribes while it is open, so without this
+ * the app gives no sign that an agent is blocked waiting for approval.
+ * Parameters: none.
+ * @returns The number of proposals currently in the `pending` state.
+ * Side effects: reads one snapshot and subscribes to MCP updates for the app's lifetime.
+ */
+export function useMcpPendingApprovals(): number {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+    /** Counts only proposals that still block an agent. */
+    function countPending(next: McpPanelSnapshot): number {
+      return next.proposals.filter((proposal) => proposal.status === "pending").length;
+    }
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    void (async () => {
+      try {
+        const next = await mcpGetSnapshot();
+        if (!disposed && next?.status) {
+          setPendingCount(countPending(next));
+        }
+      } catch {
+        // A failed poll must not surface an error badge; the console reports it.
+      }
+    })();
+    void (async () => {
+      try {
+        const fn = await listen<McpPanelSnapshot>(MCP_UPDATED_EVENT, (event) => {
+          if (event.payload?.status) {
+            setPendingCount(countPending(event.payload));
+          }
+        });
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      } catch {
+        // Losing the subscription only costs badge freshness.
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return pendingCount;
+}
+
+/**
  * Loads MCP panel state, listens for backend updates, and exposes control actions.
  */
 export function useMcpState(enabled: boolean): UseMcpStateResult {
