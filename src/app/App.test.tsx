@@ -59,6 +59,7 @@ vi.mock("../lib/tauriClient", () => ({
   listWorkspaceWindowLabels: vi.fn(),
   listConnections: vi.fn(),
   loadWorkspace: vi.fn(),
+  mcpGetSnapshot: vi.fn(),
   recordQueryHistory: vi.fn(),
   reconnectConnection: vi.fn(),
   renameConnection: vi.fn(),
@@ -334,7 +335,7 @@ async function assertRedisDatabaseSelectionScopesWorkspace(): Promise<void> {
 
   fireEvent.click(redisRow);
   const database = await screen.findByRole("treeitem", { name: /DB 2/u });
-  fireEvent.doubleClick(database);
+  fireEvent.click(database);
   await waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
     REDIS_PROFILE.id,
     'SCAN 0 MATCH "*" COUNT 500',
@@ -612,6 +613,37 @@ async function assertWorkspaceTabShortcuts(): Promise<void> {
   );
 }
 
+/** 验证 Ctrl/Cmd+数字可按标签顺序直接跳转，且 9 始终选中最后一个工作区。 */
+async function assertPositionalWorkspaceJumpShortcuts(): Promise<void> {
+  render(<App />);
+  const productionRow = await screen.findByRole("button", { name: /生产主库/ });
+  fireEvent.click(productionRow);
+  fireEvent.click(screen.getByRole("button", {
+    name: "在当前已选 MySQL 连接 生产主库 中新建查询",
+  }));
+
+  // 标签顺序为「恢复的查询」「生产主库 · 查询 1」。
+  fireEvent.keyDown(document, { key: "1", metaKey: true });
+  expect(screen.getByRole("tab", { name: "恢复的查询" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  fireEvent.keyDown(document, { key: "2", metaKey: true });
+  expect(screen.getByRole("tab", { name: "生产主库 · 查询 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  // 9 越界时跳到最后一个标签，而不是什么都不做。
+  fireEvent.keyDown(document, { key: "1", metaKey: true });
+  fireEvent.keyDown(document, { key: "9", metaKey: true });
+  expect(screen.getByRole("tab", { name: "生产主库 · 查询 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+}
+
 /** 验证切换到其他工作区后，已完成的查询结果及其视图状态仍会保留。 */
 async function assertQueryResultsSurviveWorkspaceSwitch(): Promise<void> {
   querySessionFixture.columns = [
@@ -834,6 +866,16 @@ async function assertSidebarCollapseToggleAndPersistence(): Promise<void> {
   expect(window.localStorage.getItem("pipa.sidebar-collapsed.v1")).toBe("1");
   expect(document.getElementById("connection-panel")).toBeTruthy();
   expect(document.querySelector(`[data-connection-id="${PRODUCTION_PROFILE.id}"]`)).toBeTruthy();
+  // The workspace must survive collapse. Every shell region stays mounted and in
+  // document order so the grid keeps all four of its explicitly placed tracks;
+  // dropping one shifts the workspace into the collapsed zero-width column.
+  expect(screen.getByRole("main", { name: "查询工作区" })).toBeVisible();
+  expect([...shell.children].map((child) => child.className.split(" ")[0])).toEqual([
+    "activity-rail",
+    "connection-panel",
+    "sidebar-resizer",
+    "workspace",
+  ]);
 
   fireEvent.keyDown(document, { key: "b", metaKey: true });
   expect(shell).not.toHaveClass("app-shell--sidebar-collapsed");
@@ -1069,6 +1111,7 @@ function registerAppTests(): void {
   it("copies, pins, previews, and exports table metadata", assertTableMetadataAndExportShortcuts);
   it("opens a table shortcut in a native window", assertTableNewWindowShortcut);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);
+  it("jumps directly to a workspace by position", assertPositionalWorkspaceJumpShortcuts);
   it("keeps query results mounted across workspace switches", assertQueryResultsSurviveWorkspaceSwitch);
   it("uses a configured workspace shortcut and releases its previous default", assertConfiguredGlobalShortcut);
   it("switches and persists the selected interface appearance", assertThemeSwitching);

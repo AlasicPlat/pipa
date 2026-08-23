@@ -41,6 +41,12 @@ const GROUP_LABELS = {
 
 const FIXED_SHORTCUT_GROUPS: Readonly<Record<string, readonly FixedShortcutItem[]>> = {
   workspace: [
+    {
+      action: "跳转到第 N 个工作区",
+      description: "按标签顺序直接切换；⌘9 始终跳到最后一个",
+      keys: ["Ctrl/Cmd", "1-9"],
+      searchTerms: ["标签", "切换", "序号", "tab", "cmd1"],
+    },
     { action: "退出当前操作", description: "逐层关闭菜单、弹窗、编辑或选择", keys: ["Escape"], searchTerms: ["Esc"] },
   ],
   sql: [

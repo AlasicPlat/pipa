@@ -219,7 +219,7 @@ async function assertRedisKeyBrowser(): Promise<void> {
   );
 
   const database = await screen.findByRole("treeitem", { name: /DB 2/u });
-  fireEvent.doubleClick(database);
+  fireEvent.click(database);
   await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
     REDIS_CONNECTION.id,
     'SCAN 0 MATCH "*" COUNT 500',
@@ -227,12 +227,12 @@ async function assertRedisKeyBrowser(): Promise<void> {
   ));
   expect(selectRedisDatabase).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2");
 
-  fireEvent.doubleClick(await screen.findByRole("treeitem", { name: "user:1" }));
+  fireEvent.click(await screen.findByRole("treeitem", { name: "user:1" }));
   expect(openRedisKey).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2", "user:1");
 }
 
-/** Verifies unified navigator filtering and double-click-only workspace opening. */
-function assertTableSearchAndDoubleClickOpen(): void {
+/** Verifies unified navigator filtering and single-click workspace opening. */
+function assertTableSearchAndSingleClickOpen(): void {
   tableSession.state.rows = [
     [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
     [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
@@ -257,8 +257,6 @@ function assertTableSearchAndDoubleClickOpen(): void {
   expect(screen.queryByRole("treeitem", { name: "customers" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("treeitem", { name: "orders" }));
-  expect(openTable).not.toHaveBeenCalled();
-  fireEvent.doubleClick(screen.getByRole("treeitem", { name: "orders" }));
   expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "orders");
 }
 
@@ -626,7 +624,7 @@ function registerConnectionSidebarTests(): void {
   it("toggles connection drawers on a single click", assertSingleClickConnectionToggle);
   it("opens global or connection-scoped table discovery", assertTableFinderEntryPoints);
   it("browses Redis keys and opens native key commands", assertRedisKeyBrowser);
-  it("filters tables and opens them only on double click", assertTableSearchAndDoubleClickOpen);
+  it("filters tables and opens them on a single click", assertTableSearchAndSingleClickOpen);
   it("requests reviewed destructive table actions from its context menu", assertTableDestructiveContextMenu);
   it("keeps pinned tables at the top of their connection", assertPinnedTableOrdering);
   it("matches loaded catalog tables from the unified navigator search", assertUnifiedSearchMatchesCatalogTables);

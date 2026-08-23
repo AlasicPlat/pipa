@@ -19,6 +19,7 @@ interface WorkspacePersistenceController {
   closeTab: (tabId: string) => void;
   closeTabsForConnection: (connectionId: string) => void;
   renameConnectionTabTitles: (connectionId: string, previousName: string, nextName: string) => void;
+  reorderTab: (tabId: string, targetIndex: number) => void;
   selectTab: (tabId: string) => void;
   updateTabSql: (tabId: string, sqlText: string) => void;
   discardWorkspace: () => Promise<void>;
@@ -389,6 +390,39 @@ export function useWorkspacePersistence(windowLabel = "main"): WorkspacePersiste
     [updateTabs],
   );
 
+  /**
+   * Moves one tab to a new index and repersists the whole ordering.
+   * @param tabId - Tab being dragged.
+   * @param targetIndex - Destination index within the current tab list.
+   * @returns Nothing (`void`).
+   * Side effects: renumbers `position` for every tab and schedules encrypted persistence.
+   */
+  const reorderTab = useCallback(
+    (tabId: string, targetIndex: number): void => {
+      if (recoveryBlockedRef.current) {
+        return;
+      }
+      const currentTabs = tabsRef.current;
+      const fromIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+      if (fromIndex === -1) {
+        return;
+      }
+      const toIndex = Math.min(Math.max(targetIndex, 0), currentTabs.length - 1);
+      if (fromIndex === toIndex) {
+        return;
+      }
+      const nextTabs = [...currentTabs];
+      const [movedTab] = nextTabs.splice(fromIndex, 1);
+      if (!movedTab) {
+        return;
+      }
+      nextTabs.splice(toIndex, 0, movedTab);
+      // `updateTabs` renumbers `position` from array order, keeping storage consistent.
+      updateTabs(nextTabs);
+    },
+    [updateTabs],
+  );
+
   /** Selects an existing tab without changing its stored connection identifier. */
   const selectTab = useCallback((tabId: string): void => {
     if (tabsRef.current.some((tab) => tab.id === tabId)) {
@@ -427,6 +461,7 @@ export function useWorkspacePersistence(windowLabel = "main"): WorkspacePersiste
     closeTab,
     closeTabsForConnection,
     renameConnectionTabTitles,
+    reorderTab,
     selectTab,
     updateTabSql,
     discardWorkspace,

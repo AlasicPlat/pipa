@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { AlertTriangle, Braces, Command as CommandIcon, Copy, Database, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Sparkles, Trash2 } from "lucide-react";
@@ -21,8 +21,15 @@ import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { ConnectionTypePicker } from "../features/connections/ConnectionTypePicker";
 import { useConnections } from "../features/connections/useConnections";
 import { McpPanel } from "../features/mcp/McpPanel";
+import { useMcpPendingApprovals } from "../features/mcp/useMcpState";
 import { ThemeToggle } from "../features/preferences/ThemeToggle";
-import { loadSidebarCollapsed, persistSidebarCollapsed } from "../features/preferences/sidebarLayout";
+import { SidebarResizer } from "../features/preferences/SidebarResizer";
+import {
+  loadSidebarCollapsed,
+  loadSidebarWidth,
+  persistSidebarCollapsed,
+  persistSidebarWidth,
+} from "../features/preferences/sidebarLayout";
 import { loadPinnedTables, persistPinnedTables } from "../features/preferences/pinnedTables";
 import { useThemePreference } from "../features/preferences/theme";
 import { QueryWorkspace } from "../features/query/QueryWorkspace";
@@ -134,6 +141,15 @@ function connectionEngineLabel(engine: Engine): string {
   }[engine];
 }
 
+/** Returns the compact badge label for one stored connection environment. */
+function connectionEnvironmentLabel(environment: ConnectionProfile["environment"]): string {
+  return {
+    production: "生产",
+    development: "开发",
+    unspecified: "未指定",
+  }[environment];
+}
+
 /** Returns connection metadata fields shared by global object and workspace search. */
 function connectionSearchTerms(profile: ConnectionProfile | undefined): string[] {
   if (!profile) return [];
@@ -225,6 +241,7 @@ export function App() {
   const queryWorkspace = useWorkspacePersistence(workspaceWindowContext.windowLabel);
   const theme = useThemePreference();
   const shortcuts = useShortcutSettings();
+  const mcpPendingApprovals = useMcpPendingApprovals();
   const detachedTableTab = workspaceWindowContext.descriptor?.kind === "table"
     ? workspaceWindowContext.descriptor
     : null;
@@ -271,6 +288,7 @@ export function App() {
   const [shortcutDialogView, setShortcutDialogView] = useState<ShortcutDialogView>("help");
   const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [focusConnectionId, setFocusConnectionId] = useState<string | null>(null);
   const [tableCatalog, setTableCatalog] = useState<Record<string, string[]>>({});
   const [selectedRedisDatabases, setSelectedRedisDatabases] = useState<Record<string, string>>({});
@@ -1738,6 +1756,33 @@ export function App() {
     markPaletteItemRecent(`workspace:query:${tabId}`);
   }
 
+  /**
+   * Moves one open table tab to a new position in the shared tab strip.
+   * @param tabId - Table tab being dragged.
+   * @param targetIndex - Destination index among the open table tabs.
+   * @returns Nothing (`void`).
+   * Side effects: reorders session-local table tabs without touching their workspaces.
+   */
+  function handleReorderTableTab(tabId: string, targetIndex: number): void {
+    setOpenTableTabs((current) => {
+      const fromIndex = current.findIndex((tab) => tab.id === tabId);
+      if (fromIndex === -1) {
+        return current;
+      }
+      const toIndex = Math.min(Math.max(targetIndex, 0), current.length - 1);
+      if (fromIndex === toIndex) {
+        return current;
+      }
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) {
+        return current;
+      }
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }
+
   /** Activates one already-mounted table workspace without losing its local change set. */
   function handleSelectTableTab(tabId: string): void {
     if (openTableTabs.some((tab) => tab.id === tabId)) {
@@ -1824,20 +1869,69 @@ export function App() {
     }
   }
 
-  /** Cycles through shared tabs, limiting a busy query to itself and the read-only Binlog workspace. */
-  function cycleWorkspaceTabs(reverse: boolean): void {
-    const orderedTabs = [
+  /**
+   * Lists every open workspace in the exact order the shared tab strip renders it.
+   * Parameters: none.
+   * @returns Ordered tab identities across the query, table, and utility collections.
+   * Side effects: none.
+   */
+  function orderedWorkspaceTabs(): { id: string; type: "query" | "table" | "utility" }[] {
+    return [
       ...queryWorkspace.tabs.map((tab) => ({ id: tab.id, type: "query" as const })),
       ...openTableTabs.map((tab) => ({ id: tab.id, type: "table" as const })),
       ...(binlogWorkspaceOpen
         ? [{ id: BINLOG_WORKSPACE_TAB.id, type: "utility" as const }]
         : []),
     ];
-    const cycleableTabs = busyQueryTabId
-      ? orderedTabs.filter(
-        (tab) => tab.type === "utility" || (tab.type === "query" && tab.id === busyQueryTabId),
-      )
-      : orderedTabs;
+  }
+
+  /**
+   * Activates one workspace by its identity and collection.
+   * @param tab - Ordered tab identity resolved from the shared strip.
+   * @returns Nothing (`void`).
+   * Side effects: updates the active workspace and session-local recency.
+   */
+  function activateWorkspaceTab(tab: { id: string; type: "query" | "table" | "utility" }): void {
+    if (tab.type === "query") {
+      handleSelectQueryTab(tab.id);
+    } else if (tab.type === "table") {
+      handleSelectTableTab(tab.id);
+    } else {
+      handleSelectUtilityTab(tab.id);
+    }
+  }
+
+  /**
+   * Jumps directly to the nth open workspace in the shared tab strip.
+   * @param position - One-based position; 9 always selects the last tab.
+   * @returns `true` when a tab was activated, so the caller can consume the event.
+   * Side effects: activates one workspace; a running query keeps executing in the background.
+   */
+  function jumpToWorkspaceTab(position: number): boolean {
+    const orderedTabs = orderedWorkspaceTabs();
+    if (orderedTabs.length === 0) {
+      return false;
+    }
+    const targetTab = position >= 9
+      ? orderedTabs[orderedTabs.length - 1]
+      : orderedTabs[position - 1];
+    if (!targetTab) {
+      return false;
+    }
+    activateWorkspaceTab(targetTab);
+    return true;
+  }
+
+  /**
+   * Cycles through every open workspace tab.
+   *
+   * A running query keeps executing while hidden, so navigation stays available.
+   * @param reverse - Whether to move to the previous tab instead of the next.
+   * @returns Nothing (`void`).
+   * Side effects: activates the adjacent workspace.
+   */
+  function cycleWorkspaceTabs(reverse: boolean): void {
+    const cycleableTabs = orderedWorkspaceTabs();
     if (cycleableTabs.length < 2) {
       return;
     }
@@ -1846,12 +1940,8 @@ export function App() {
     const delta = reverse ? -1 : 1;
     const nextIndex = (currentIndex + delta + cycleableTabs.length) % cycleableTabs.length;
     const nextTab = cycleableTabs[nextIndex];
-    if (nextTab?.type === "query") {
-      handleSelectQueryTab(nextTab.id);
-    } else if (nextTab?.type === "table") {
-      handleSelectTableTab(nextTab.id);
-    } else if (nextTab) {
-      handleSelectUtilityTab(nextTab.id);
+    if (nextTab) {
+      activateWorkspaceTab(nextTab);
     }
   }
 
@@ -1927,6 +2017,18 @@ export function App() {
           handleCloseTable(activeTableTabId);
         } else if (queryWorkspace.activeTabId && busyQueryTabId !== queryWorkspace.activeTabId) {
           handleCloseQueryTab(queryWorkspace.activeTabId);
+        }
+        return;
+      }
+      // Positional jumps are fixed rather than rebindable, matching platform tab strips.
+      if (
+        (event.metaKey || event.ctrlKey)
+        && !event.altKey
+        && !event.shiftKey
+        && /^[1-9]$/u.test(event.key)
+      ) {
+        if (jumpToWorkspaceTab(Number.parseInt(event.key, 10))) {
+          event.preventDefault();
         }
         return;
       }
@@ -2070,6 +2172,7 @@ export function App() {
   return (
     <div
       className={`app-shell${sidebarCollapsed ? " app-shell--sidebar-collapsed" : ""}`}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       role="application"
       aria-label="Pipa 数据库工作台"
     >
@@ -2151,25 +2254,60 @@ export function App() {
           tableCatalogRefreshVersions={tableCatalogRefreshVersions}
         />
       </nav>
+      <SidebarResizer
+        onWidthChange={setSidebarWidth}
+        onWidthCommit={persistSidebarWidth}
+        width={sidebarWidth}
+      />
+
       <main className="workspace" aria-label="查询工作区">
         <header className="workspace__topbar">
           {isBinlogWorkspaceActive ? (
             <span>Binlog 分析</span>
-          ) : sidebarCollapsed && workspaceContextProfile ? (
+          ) : workspaceContextProfile ? (
             <button
               aria-label={`当前连接 ${workspaceContextProfile.name} · ${workspaceContextProfile.database ?? "未指定数据库"}`}
               className="workspace__topbar-context"
               onClick={() => handleRevealConnection(workspaceContextProfile.id)}
-              title="展开侧边栏并定位到当前连接"
+              title={sidebarCollapsed
+                ? "展开侧边栏并定位到当前连接"
+                : "在侧边栏中定位当前连接"}
               type="button"
             >
+              <span
+                aria-hidden="true"
+                className={`workspace__topbar-engine workspace__topbar-engine--${workspaceContextProfile.engine}`}
+              >
+                {connectionEngineLabel(workspaceContextProfile.engine)}
+              </span>
               <strong>{workspaceContextProfile.name}</strong>
               <span>{workspaceContextProfile.database ?? "未指定数据库"}</span>
+              <span
+                className={`environment-badge environment-badge--${workspaceContextProfile.environment}`}
+              >
+                {connectionEnvironmentLabel(workspaceContextProfile.environment)}
+              </span>
             </button>
           ) : (
             <span>连接工作区</span>
           )}
           <span className="workspace__topbar-actions">
+            {/* Primary global entry point: everything else is reachable from here. */}
+            <button
+              aria-label={`打开命令面板（${shortcutLabel("commandPalette")}）`}
+              className="workspace__topbar-primary"
+              onClick={openCommandPalette}
+              title={`打开命令面板（${shortcutLabel("commandPalette")}）`}
+              type="button"
+            >
+              <CommandIcon size={13} aria-hidden="true" />
+              命令
+              <kbd>{shortcutLabel("commandPalette")}</kbd>
+            </button>
+
+            <span className="workspace__topbar-divider" aria-hidden="true" />
+
+            {/* Workspace destinations. */}
             <button
               aria-label="打开 Binlog 分析"
               className={isBinlogWorkspaceActive ? "is-active" : undefined}
@@ -2181,30 +2319,40 @@ export function App() {
               Binlog
             </button>
             <button
-              aria-label={`打开命令面板（${shortcutLabel("commandPalette")}）`}
-              onClick={openCommandPalette}
-              title={`打开命令面板（${shortcutLabel("commandPalette")}）`}
-              type="button"
-            >
-              <CommandIcon size={13} aria-hidden="true" />
-              命令
-            </button>
-            <button aria-label="打开快捷键设置" onClick={() => openShortcutDialog("settings")} title="快捷键设置" type="button">
-              <Keyboard size={14} aria-hidden="true" />
-              快捷键
-            </button>
-            <button
-              aria-label="打开 MCP 控制台"
+              aria-label={mcpPendingApprovals > 0
+                ? `打开 MCP 控制台，${mcpPendingApprovals} 条 SQL 待确认`
+                : "打开 MCP 控制台"}
+              className={`workspace__topbar-icon${
+                mcpPendingApprovals > 0 ? " has-pending" : ""
+              }`}
               onClick={() => setMcpPanelOpen(true)}
-              title="MCP 控制台"
+              title={mcpPendingApprovals > 0
+                ? `MCP 控制台 · ${mcpPendingApprovals} 条 SQL 等待确认`
+                : "MCP 控制台"}
               type="button"
             >
               <Server size={14} aria-hidden="true" />
-              MCP
+              {mcpPendingApprovals > 0 ? (
+                <span className="workspace__topbar-pending" aria-hidden="true">
+                  {mcpPendingApprovals > 9 ? "9+" : mcpPendingApprovals}
+                </span>
+              ) : null}
+            </button>
+
+            <span className="workspace__topbar-divider" aria-hidden="true" />
+
+            {/* Application preferences and status. */}
+            <button
+              aria-label="打开快捷键设置"
+              className="workspace__topbar-icon"
+              onClick={() => openShortcutDialog("settings")}
+              title={`快捷键设置（${shortcutLabel("shortcutHelp")}）`}
+              type="button"
+            >
+              <Keyboard size={14} aria-hidden="true" />
             </button>
             <UpdateControl />
             <ThemeToggle preference={theme.preference} onChange={theme.setPreference} />
-            <span className="workspace__scope">本地会话</span>
           </span>
         </header>
 
@@ -2258,6 +2406,8 @@ export function App() {
                 onCloseUtility={handleCloseUtilityTab}
                 onCreateQuery={handleCreateQuery}
                 onDetach={isTauri() ? (request) => void handleDetachWorkspace(request) : undefined}
+                onReorderQuery={queryWorkspace.reorderTab}
+                onReorderTable={handleReorderTableTab}
                 onSelectQuery={handleSelectQueryTab}
                 onSelectTable={handleSelectTableTab}
                 onSelectUtility={handleSelectUtilityTab}
@@ -2410,7 +2560,7 @@ export function App() {
                       <strong>在侧栏展开连接</strong>
                       <span>
                         {selectedProfile.engine === "redis"
-                          ? "浏览逻辑库与键，双击键可打开检查工作区。"
+                          ? "浏览逻辑库与键，点击键即可打开检查工作区。"
                           : "展开后加载数据表，点击即可进入表工作区。"}
                       </span>
                     </span>

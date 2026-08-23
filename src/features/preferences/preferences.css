@@ -24,7 +24,7 @@
 .theme-menu__heading {
   padding: 5px 7px 6px;
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size: var(--text-xs);
   font-weight: 740;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -65,7 +65,7 @@
 
 .theme-menu__label {
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: var(--text-sm);
   font-weight: 680;
   line-height: 1.4;
 }
@@ -73,7 +73,7 @@
 .theme-menu__description {
   overflow: hidden;
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size: var(--text-xs);
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;

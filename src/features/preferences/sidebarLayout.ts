@@ -1,8 +1,67 @@
 import type { Engine } from "../../bindings/Engine";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "pipa.sidebar-collapsed.v1";
+const SIDEBAR_WIDTH_STORAGE_KEY = "pipa.sidebar-width.v1";
 const ENGINE_SECTION_COLLAPSE_STORAGE_KEY = "pipa.engine-section-collapse.v1";
 const KNOWN_ENGINES: readonly Engine[] = ["my_sql", "postgre_sql", "mongo_db", "redis"];
+
+/** Sidebar width bounds; kept in sync with `--sidebar-width-*` in `tokens.css`. */
+export const SIDEBAR_WIDTH_DEFAULT = 316;
+export const SIDEBAR_WIDTH_MIN = 220;
+export const SIDEBAR_WIDTH_MAX = 560;
+
+/**
+ * Constrains any candidate width to the supported sidebar range.
+ * @param width - Candidate pixel width from a drag, keyboard step, or storage.
+ * @returns An integer width within the inclusive supported bounds.
+ * Side effects: none.
+ */
+export function clampSidebarWidth(width: number): number {
+  if (!Number.isFinite(width)) {
+    return SIDEBAR_WIDTH_DEFAULT;
+  }
+  return Math.round(Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, width)));
+}
+
+/**
+ * Loads the user's saved connection-sidebar width.
+ * Parameters: none.
+ * @returns The persisted width, or the default when unset, invalid, or unreadable.
+ * Side effects: reads `localStorage` when available.
+ */
+export function loadSidebarWidth(): number {
+  if (typeof window === "undefined") {
+    return SIDEBAR_WIDTH_DEFAULT;
+  }
+  try {
+    const serialized = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!serialized) {
+      return SIDEBAR_WIDTH_DEFAULT;
+    }
+    const parsed = Number.parseInt(serialized, 10);
+    return Number.isNaN(parsed) ? SIDEBAR_WIDTH_DEFAULT : clampSidebarWidth(parsed);
+  } catch (error) {
+    console.warn("[sidebar] Failed to load width; using the default.", { error });
+    return SIDEBAR_WIDTH_DEFAULT;
+  }
+}
+
+/**
+ * Persists the connection-sidebar width for the next session.
+ * @param width - Width chosen by dragging or keyboard adjustment.
+ * @returns Nothing (`void`).
+ * Side effects: writes `localStorage` when available.
+ */
+export function persistSidebarWidth(width: number): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(width)));
+  } catch (error) {
+    console.warn("[sidebar] Failed to persist width.", { error });
+  }
+}
 
 /**
  * Loads whether the connection sidebar should start collapsed.

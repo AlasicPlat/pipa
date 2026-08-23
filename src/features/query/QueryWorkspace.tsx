@@ -10,10 +10,18 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import { PaneSplitter } from "../preferences/PaneSplitter";
+import { loadEditorSplit, persistEditorSplit } from "../preferences/paneLayout";
 import type { ResolvedTheme } from "../preferences/theme";
 import { SqlLibraryDialog } from "../sql-library/SqlLibraryDialog";
 import { QueryEditor, type QueryEditorHandle } from "./QueryEditor";
@@ -308,6 +316,7 @@ export function QueryWorkspace({
   const [resultActionFeedback, setResultActionFeedback] = useState<string | null>(null);
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [resultSearch, setResultSearch] = useState("");
+  const [editorSplit, setEditorSplit] = useState(loadEditorSplit);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [sqlLibraryOpen, setSqlLibraryOpen] = useState(false);
   const [pendingProductionRedisCommand, setPendingProductionRedisCommand] = useState<string | null>(null);
@@ -657,6 +666,7 @@ export function QueryWorkspace({
     <section
       className={`query-workspace${isRedis ? " query-workspace--redis" : ""}`}
       aria-label={`${profile.name} 查询工作区`}
+      style={{ "--editor-split": `${editorSplit}%` } as CSSProperties}
     >
       <header className="query-context">
         <span className="query-context__engine">{isRedis ? "Redis" : "MySQL"}</span>
@@ -738,6 +748,13 @@ export function QueryWorkspace({
           theme={theme}
         />
       </div>
+
+      <PaneSplitter
+        label={`调整${isRedis ? "命令" : "编辑器"}与结果区高度`}
+        onRatioChange={setEditorSplit}
+        onRatioCommit={persistEditorSplit}
+        ratio={editorSplit}
+      />
 
       <section className="query-results" aria-label="结果区域" onKeyDown={handleResultsKeyDown}>
         <header className="query-results__header">

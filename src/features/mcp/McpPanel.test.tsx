@@ -190,6 +190,61 @@ describe("McpPanel", () => {
     expect(detail).toHaveAttribute("hidden");
   });
 
+  it("closes on Escape and on a backdrop click", () => {
+    const onClose = vi.fn();
+    render(<McpPanel onClose={onClose} open profiles={[PROFILE]} />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    const backdrop = document.querySelector(".mcp-panel-backdrop");
+    if (!backdrop) throw new Error("expected the console to render a backdrop");
+    fireEvent.mouseDown(backdrop);
+    expect(onClose).toHaveBeenCalledTimes(2);
+
+    // Interacting inside the dialog must not dismiss it.
+    fireEvent.mouseDown(screen.getByRole("dialog"));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("masks the bearer token until it is explicitly revealed", () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    expect(screen.queryByText("abc123")).not.toBeInTheDocument();
+    const reveal = screen.getByRole("button", { name: "显示 Token" });
+    expect(reveal).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(reveal);
+    expect(screen.getByText("abc123")).toBeVisible();
+    expect(screen.getByRole("button", { name: "隐藏 Token" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("explains why an invalid port was rejected", () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    const apply = screen.getByRole("button", { name: "应用" });
+    // Nothing typed yet, so there is nothing to apply.
+    expect(apply).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("端口"), { target: { value: "70000" } });
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("端口需为 1 到 65535 之间的整数。");
+  });
+
+  it("leads with approvals and flags the scope risk while unrestricted", () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    // A waiting proposal reprioritizes the stacked layout.
+    expect(screen.getByRole("dialog")).toHaveClass("mcp-panel--has-pending");
+    expect(
+      screen.getByText(/未限定范围时，MCP 可以访问全部 1 个已保存连接/),
+    ).toBeVisible();
+  });
+
   it("adds another MCP target without replacing the existing selection", () => {
     render(
       <McpPanel

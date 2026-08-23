@@ -759,11 +759,10 @@ function ConnectionDrawer({
                       aria-expanded={databaseExpanded}
                       aria-selected={databaseSelected}
                       className={`redis-database-tree__database${databaseSelected ? " is-selected" : ""}`}
-                      onClick={() => onSelect(profile.id)}
-                      onDoubleClick={() => void openRedisDatabase(databaseInfo.database)}
+                      onClick={() => void openRedisDatabase(databaseInfo.database)}
                       onKeyDown={(event) => handleRedisDatabaseKeyDown(event, databaseInfo.database)}
                       role="treeitem"
-                      title={`双击切换到 DB ${databaseInfo.database} 并浏览键；${
+                      title={`单击切换到 DB ${databaseInfo.database} 并浏览键；${
                         databaseInfo.keys
                       } 个键，${databaseInfo.expires} 个带过期时间${
                         databaseInfo.averageTtlMs > 0
@@ -802,19 +801,21 @@ function ConnectionDrawer({
                             className={`table-tree__item redis-database-tree__key${selectedTableName === keyName ? " is-selected" : ""}`}
                             data-table-name={keyName}
                             key={keyName}
-                            onClick={() => setSelectedTableName(keyName)}
-                            onDoubleClick={() => onOpenRedisKey?.(
-                              profile.id,
-                              databaseInfo.database,
-                              keyName,
-                            )}
+                            onClick={() => {
+                              setSelectedTableName(keyName);
+                              onOpenRedisKey?.(
+                                profile.id,
+                                databaseInfo.database,
+                                keyName,
+                              );
+                            }}
                             onKeyDown={(event) => handleRedisKeyDown(
                               event,
                               databaseInfo.database,
                               keyName,
                             )}
                             role="treeitem"
-                            title="双击或按 Enter 打开键工作区"
+                            title="单击或按 Enter 打开键工作区"
                             type="button"
                           >
                             <KeyRound size={13} strokeWidth={1.7} aria-hidden="true" />
@@ -887,8 +888,10 @@ function ConnectionDrawer({
                     data-connection-id={profile.id}
                     data-table-name={tableName}
                     key={`${tableName}-${rowIndex}`}
-                    onClick={() => setSelectedTableName(tableName)}
-                    onDoubleClick={() => onOpenTable?.(profile.id, tableName)}
+                    onClick={() => {
+                      setSelectedTableName(tableName);
+                      onOpenTable?.(profile.id, tableName);
+                    }}
                     onContextMenu={objectType === "VIEW"
                       ? undefined
                       : (event) => handleTableContextMenu(event, tableName)}
@@ -899,8 +902,8 @@ function ConnectionDrawer({
                     )}
                     role="treeitem"
                     title={objectType === "VIEW"
-                      ? "双击或按 Enter 打开视图工作区"
-                      : "双击或按 Enter 打开表工作区；右键可执行表操作"}
+                      ? "单击或按 Enter 打开视图工作区"
+                      : "单击或按 Enter 打开表工作区；右键可执行表操作"}
                     type="button"
                   >
                     <Table2 size={13} strokeWidth={1.7} aria-hidden="true" />

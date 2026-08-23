@@ -33,6 +33,9 @@ pipa-updater.key.pub
 .release/
 release-output/
 
+# Local generated artifacts and inspection output
+outputs/
+
 # Local encrypted application state
 *.db
 *.db-shm

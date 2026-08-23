@@ -1,6 +1,6 @@
 [package]
 name = "pipa-app"
-version = "0.2.17"
+version = "0.2.18"
 description = "Pipa desktop database client"
 edition = "2021"
 authors.workspace = true
