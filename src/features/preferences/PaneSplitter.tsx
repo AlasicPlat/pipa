@@ -68,18 +68,20 @@ export function PaneSplitter({
     if (!draggingRef.current) {
       return;
     }
-    // The ratio is consumed by CSS as a percentage of the grid's own height,
-    // so it has to be measured against exactly that box.
+    // CSS 百分比以整个网格高度为基准，但编辑区从固定头部之后开始。
+    // 使用编辑区顶部作为原点，避免首次拖动时把头部高度重复计入比例。
     const grid = event.currentTarget.parentElement;
-    if (!(grid instanceof HTMLElement)) {
+    const editorPanel = event.currentTarget.previousElementSibling;
+    if (!(grid instanceof HTMLElement) || !(editorPanel instanceof HTMLElement)) {
       return;
     }
     const bounds = grid.getBoundingClientRect();
     if (bounds.height <= 0) {
       return;
     }
+    const editorTop = editorPanel.getBoundingClientRect().top;
     const nextRatio = clampEditorSplit(
-      ((event.clientY - bounds.top) / bounds.height) * 100,
+      ((event.clientY - editorTop) / bounds.height) * 100,
     );
     latestRatioRef.current = nextRatio;
     onRatioChange(nextRatio);

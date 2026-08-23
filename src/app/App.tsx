@@ -1977,6 +1977,7 @@ export function App() {
         pendingTableAction ||
         renameCandidate ||
         commandPaletteOpen ||
+        mcpPanelOpen ||
         shortcutHelpOpen
       ) {
         return;

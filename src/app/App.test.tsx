@@ -644,6 +644,27 @@ async function assertPositionalWorkspaceJumpShortcuts(): Promise<void> {
   );
 }
 
+/** 验证 MCP 模态框打开时，工作区切换和关闭快捷键不会穿透到背景。 */
+async function assertMcpDialogBlocksWorkspaceShortcuts(): Promise<void> {
+  render(<App />);
+  const productionRow = await screen.findByRole("button", { name: /生产主库/ });
+  fireEvent.click(productionRow);
+  fireEvent.click(screen.getByRole("button", {
+    name: "在当前已选 MySQL 连接 生产主库 中新建查询",
+  }));
+  const activeTab = screen.getByRole("tab", { name: "生产主库 · 查询 1" });
+  expect(activeTab).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: "打开 MCP 控制台" }));
+  expect(screen.getByRole("dialog", { name: "MCP 控制台" })).toBeVisible();
+  fireEvent.keyDown(document, { key: "Tab", ctrlKey: true });
+  fireEvent.keyDown(document, { key: "1", metaKey: true });
+  fireEvent.keyDown(document, { key: "w", metaKey: true });
+
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  expect(activeTab).toHaveAttribute("aria-selected", "true");
+}
+
 /** 验证切换到其他工作区后，已完成的查询结果及其视图状态仍会保留。 */
 async function assertQueryResultsSurviveWorkspaceSwitch(): Promise<void> {
   querySessionFixture.columns = [
@@ -1112,6 +1133,7 @@ function registerAppTests(): void {
   it("opens a table shortcut in a native window", assertTableNewWindowShortcut);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);
   it("jumps directly to a workspace by position", assertPositionalWorkspaceJumpShortcuts);
+  it("blocks workspace shortcuts while the MCP dialog is open", assertMcpDialogBlocksWorkspaceShortcuts);
   it("keeps query results mounted across workspace switches", assertQueryResultsSurviveWorkspaceSwitch);
   it("uses a configured workspace shortcut and releases its previous default", assertConfiguredGlobalShortcut);
   it("switches and persists the selected interface appearance", assertThemeSwitching);

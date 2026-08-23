@@ -1308,6 +1308,11 @@ body.is-sidebar-resizing .app-shell {
   content: "";
 }
 
+.query-tab.is-drop-target-after::before {
+  right: -1px;
+  left: auto;
+}
+
 .workspace-tab-menu {
   width: 208px;
 }
