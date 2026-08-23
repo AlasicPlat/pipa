@@ -219,10 +219,29 @@ function assertDroppingOnSiblingReorders(): void {
   fireEvent.dragStart(firstTab, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
   fireEvent.dragOver(secondSlot, { dataTransfer: { dropEffect: "none" } });
   expect(secondSlot).toHaveClass("is-drop-target");
+  expect(secondSlot).toHaveClass("is-drop-target-after");
 
   fireEvent.drop(secondSlot, { dataTransfer: { dropEffect: "move" } });
   expect(onReorderQuery).toHaveBeenCalledWith(QUERY_TAB.id, 1);
   expect(secondSlot).not.toHaveClass("is-drop-target");
+}
+
+/** 验证向左拖动时落点标记保留在目标标签左侧。 */
+function assertLeftwardDropUsesLeadingIndicator(): void {
+  const onReorderQuery = vi.fn();
+  renderReorderableTabs({ onReorderQuery });
+
+  const secondTab = screen.getByRole("tab", { name: "查询 2" });
+  const firstSlot = screen.getByRole("tab", { name: "查询 1" }).parentElement;
+  if (!firstSlot) throw new Error("expected the first tab to have a slot wrapper");
+
+  fireEvent.dragStart(secondTab, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
+  fireEvent.dragOver(firstSlot, { dataTransfer: { dropEffect: "none" } });
+  expect(firstSlot).toHaveClass("is-drop-target");
+  expect(firstSlot).not.toHaveClass("is-drop-target-after");
+
+  fireEvent.drop(firstSlot, { dataTransfer: { dropEffect: "move" } });
+  expect(onReorderQuery).toHaveBeenCalledWith(SECOND_QUERY_TAB.id, 0);
 }
 
 /** Verifies the context menu closes every sibling tab but the invoking one. */
@@ -300,6 +319,7 @@ describe("WorkspaceTabs", () => {
   it("allows utility switching while a query is busy", assertBusyQueryAllowsUtilitySwitching);
   it("requests detachment when a safe tab is dragged outside", assertDraggingOutsideRequestsDetach);
   it("reorders a tab dropped onto a sibling slot", assertDroppingOnSiblingReorders);
+  it("uses a leading indicator for leftward drops", assertLeftwardDropUsesLeadingIndicator);
   it("closes sibling tabs from the context menu", assertContextMenuClosesOtherTabs);
   it("preserves a busy query during context-menu close actions", assertContextMenuPreservesBusyQuery);
   it("detaches a workspace from the context menu", assertContextMenuDetaches);

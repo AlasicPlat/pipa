@@ -20,6 +20,8 @@ function renderSplitter(ratio = 44): RenderedSplitter {
   const onRatioCommit = vi.fn();
   render(
     <div data-testid="grid">
+      <header />
+      <section data-testid="editor" />
       <PaneSplitter
         label="调整编辑器与结果区高度"
         onRatioChange={onRatioChange}
@@ -41,6 +43,17 @@ function renderSplitter(ratio = 44): RenderedSplitter {
     y: 100,
     toJSON: () => ({}),
   }) as DOMRect;
+  screen.getByTestId("editor").getBoundingClientRect = () => ({
+    top: 142,
+    bottom: 362,
+    height: 220,
+    left: 0,
+    right: 0,
+    width: 0,
+    x: 0,
+    y: 142,
+    toJSON: () => ({}),
+  }) as DOMRect;
   return {
     splitter: screen.getByRole("separator", { name: "调整编辑器与结果区高度" }),
     onRatioChange,
@@ -56,13 +69,13 @@ function assertDragReportsMeasuredRatio(): void {
   splitter.releasePointerCapture = vi.fn();
 
   fireEvent.pointerDown(splitter, { button: 0, pointerId: 1 });
-  // 350px sits 250px into a 500px grid that starts at y=100, so 50%.
-  fireEvent.pointerMove(splitter, { clientY: 350, pointerId: 1 });
-  expect(onRatioChange).toHaveBeenLastCalledWith(50);
+  // 编辑区从 y=142 开始；指针位于 y=342 时占整个 500px 网格的 40%。
+  fireEvent.pointerMove(splitter, { clientY: 342, pointerId: 1 });
+  expect(onRatioChange).toHaveBeenLastCalledWith(40);
   expect(onRatioCommit).not.toHaveBeenCalled();
 
   fireEvent.pointerUp(splitter, { pointerId: 1 });
-  expect(onRatioCommit).toHaveBeenCalledWith(50);
+  expect(onRatioCommit).toHaveBeenCalledWith(40);
   expect(document.body.classList.contains("is-pane-resizing")).toBe(false);
 }
 

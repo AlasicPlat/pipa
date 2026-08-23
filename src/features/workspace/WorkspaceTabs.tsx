@@ -358,6 +358,20 @@ export function WorkspaceTabs({
     return dropTarget?.kind === kind && dropTarget.index === index;
   }
 
+  /**
+   * 判断右移拖放是否应把落点标记画在目标标签右侧。
+   * @param kind - 标签所属集合。
+   * @param index - 当前目标标签索引。
+   * @returns 右移到目标最终位置时返回 `true`。
+   * Side effects: none.
+   */
+  function isDropAfter(kind: WorkspaceTabKind, index: number): boolean {
+    if (!isDropSlot(kind, index) || dragState?.kind !== kind) {
+      return false;
+    }
+    return tabIdsForKind(kind).indexOf(dragState.tabId) < index;
+  }
+
   const menuTabCount = tabMenu ? tabIdsForKind(tabMenu.kind).length : 0;
   const menuTabIndex = tabMenu ? tabIdsForKind(tabMenu.kind).indexOf(tabMenu.tabId) : -1;
   const menuTabIsDirtyTable = Boolean(
@@ -378,7 +392,7 @@ export function WorkspaceTabs({
             <span
               className={`query-tab${isActive ? " is-active" : ""}${
                 isDropSlot("query", index) ? " is-drop-target" : ""
-              }`}
+              }${isDropAfter("query", index) ? " is-drop-target-after" : ""}`}
               key={tab.id}
               onContextMenu={(event) => handleTabContextMenu(event, "query", tab.id)}
               onDragOver={(event) => handleWorkspaceDragOver(event, "query", index)}
@@ -421,7 +435,9 @@ export function WorkspaceTabs({
             <span
               className={`query-tab query-tab--table${isActive ? " is-active" : ""}${
                 isDirty ? " is-dirty" : ""
-              }${isDropSlot("table", index) ? " is-drop-target" : ""}`}
+              }${isDropSlot("table", index) ? " is-drop-target" : ""}${
+                isDropAfter("table", index) ? " is-drop-target-after" : ""
+              }`}
               key={tab.id}
               onContextMenu={(event) => handleTabContextMenu(event, "table", tab.id)}
               onDragOver={(event) => handleWorkspaceDragOver(event, "table", index)}
