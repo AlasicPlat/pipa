@@ -18,10 +18,14 @@
   --text-tertiary: #8a929c;
   --text-inverse: #ffffff;
 
-  /* Borders & focus */
-  --border-grid: #e6e9ee;
-  --border-subtle: #d8dde5;
-  --border-strong: #b8c0cb;
+  /*
+   * Borders & focus. Dividers are deliberately low-contrast: they should imply structure
+   * rather than draw a cage around every region. --border-strong stays legible because it
+   * carries meaning (drag handles, active edges), and --focus-ring is never softened.
+   */
+  --border-grid: #eef0f4;
+  --border-subtle: #e3e7ed;
+  --border-strong: #c4ccd6;
   --focus-ring: #c47a1a;
 
   /* Brand - loquat amber (identity only) */
@@ -41,20 +45,21 @@
   --status-warning: #d0891a;
   --status-danger: #c0392b;
 
-  /* Elevation */
-  --shadow-xs: 0 1px 2px color-mix(in srgb, #121417 6%, transparent);
-  --shadow-sm: 0 6px 18px color-mix(in srgb, #121417 8%, transparent);
-  --shadow-md: 0 16px 40px color-mix(in srgb, #121417 12%, transparent);
-  --shadow-lg: 0 28px 70px color-mix(in srgb, #121417 16%, transparent);
-  --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 34%, transparent);
-  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent);
+  /* Elevation - wider, softer falloff so panels lift off the canvas without a hard edge. */
+  --shadow-xs: 0 1px 3px color-mix(in srgb, #121417 5%, transparent);
+  --shadow-sm: 0 8px 24px color-mix(in srgb, #121417 7%, transparent);
+  --shadow-md: 0 18px 48px color-mix(in srgb, #121417 10%, transparent);
+  --shadow-lg: 0 30px 80px color-mix(in srgb, #121417 13%, transparent);
+  --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 30%, transparent);
+  /* A faint bevel. At 72% white this read as a crisp mechanical seam on every toolbar. */
+  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 34%, transparent);
 
-  /* Radius */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* Radius - one rounded language; nothing in the UI should look square-cornered. */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
 
   /* Spacing */
   --space-1: 8px;
@@ -122,9 +127,9 @@
   --text-tertiary: #7a8490;
   --text-inverse: #ffffff;
 
-  --border-grid: #2a2f36;
-  --border-subtle: #323840;
-  --border-strong: #4a5360;
+  --border-grid: #24282e;
+  --border-subtle: #2b3038;
+  --border-strong: #454e5a;
   --focus-ring: #e0a04a;
 
   --brand: #e0a04a;
@@ -141,12 +146,12 @@
   --status-warning: #e8b04a;
   --status-danger: #e2554f;
 
-  --shadow-xs: 0 1px 2px color-mix(in srgb, #000000 35%, transparent);
-  --shadow-sm: 0 4px 14px color-mix(in srgb, #000000 40%, transparent);
-  --shadow-md: 0 14px 36px color-mix(in srgb, #000000 48%, transparent);
-  --shadow-lg: 0 28px 70px color-mix(in srgb, #000000 55%, transparent);
-  --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 55%, transparent);
-  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  --shadow-xs: 0 1px 3px color-mix(in srgb, #000000 32%, transparent);
+  --shadow-sm: 0 8px 22px color-mix(in srgb, #000000 36%, transparent);
+  --shadow-md: 0 18px 44px color-mix(in srgb, #000000 44%, transparent);
+  --shadow-lg: 0 30px 80px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 52%, transparent);
+  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
 }
 
 /* Preserve the system preference before the startup script has resolved it. */
@@ -165,9 +170,9 @@
     --text-secondary: #a8b0ba;
     --text-tertiary: #7a8490;
     --text-inverse: #ffffff;
-    --border-grid: #2a2f36;
-    --border-subtle: #323840;
-    --border-strong: #4a5360;
+    --border-grid: #24282e;
+    --border-subtle: #2b3038;
+    --border-strong: #454e5a;
     --focus-ring: #e0a04a;
     --brand: #e0a04a;
     --brand-strong: #f0bd6b;
@@ -180,11 +185,11 @@
     --status-success: #4db883;
     --status-warning: #e8b04a;
     --status-danger: #e2554f;
-    --shadow-xs: 0 1px 2px color-mix(in srgb, #000000 35%, transparent);
-    --shadow-sm: 0 4px 14px color-mix(in srgb, #000000 40%, transparent);
-    --shadow-md: 0 14px 36px color-mix(in srgb, #000000 48%, transparent);
-    --shadow-lg: 0 28px 70px color-mix(in srgb, #000000 55%, transparent);
-    --shadow-overlay: 0 28px 80px color-mix(in srgb, #000000 55%, transparent);
-    --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+    --shadow-xs: 0 1px 3px color-mix(in srgb, #000000 32%, transparent);
+    --shadow-sm: 0 8px 22px color-mix(in srgb, #000000 36%, transparent);
+    --shadow-md: 0 18px 44px color-mix(in srgb, #000000 44%, transparent);
+    --shadow-lg: 0 30px 80px color-mix(in srgb, #000000 50%, transparent);
+    --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 52%, transparent);
+    --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
   }
 }

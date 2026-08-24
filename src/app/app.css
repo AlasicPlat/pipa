@@ -413,7 +413,7 @@ body.is-sidebar-resizing .app-shell {
   margin: 10px;
   padding: 9px 10px;
   border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--status-danger) 7%, var(--surface-panel));
 }
 
@@ -437,6 +437,13 @@ body.is-sidebar-resizing .app-shell {
 }
 
 .connection-groups {
+  /*
+   * One density scale for every navigator level. Rows previously ranged from 28px to 42px with
+   * ad-hoc indents, which made the tree read as unrelated lists stacked together.
+   */
+  --tree-row-height: 30px;
+  --tree-indent: 14px;
+  --tree-row-radius: var(--radius-sm);
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -450,7 +457,7 @@ body.is-sidebar-resizing .app-shell {
   gap: 6px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
   color: var(--text-tertiary);
 }
@@ -513,13 +520,16 @@ body.is-sidebar-resizing .app-shell {
   box-shadow: var(--shadow-xs);
 }
 
+/*
+ * Grouped by tone rather than outlined. This card already sits inside the bordered sidebar
+ * panel, so its own frame made the navigator read as boxes stacked inside boxes.
+ */
 .engine-section {
   --engine-accent: var(--text-secondary);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--surface-panel);
-  box-shadow: var(--shadow-highlight), var(--shadow-xs);
+  background: color-mix(in srgb, var(--surface-muted) 48%, var(--surface-panel));
 }
 
 .engine-section--my_sql {
@@ -631,7 +641,7 @@ body.is-sidebar-resizing .app-shell {
   min-height: var(--control-h-sm);
   padding: 3px 5px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -661,20 +671,20 @@ body.is-sidebar-resizing .app-shell {
 
 .connection-drawer {
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .connection-row {
   position: relative;
   display: grid;
   width: 100%;
-  min-height: 42px;
+  min-height: 40px;
   grid-template-columns: minmax(0, 1fr) 18px;
   align-items: center;
-  padding: 6px 7px 6px 10px;
+  padding: 5px 7px 5px 9px;
   overflow: hidden;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--tree-row-radius);
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -733,7 +743,7 @@ body.is-sidebar-resizing .app-shell {
   flex: 0 0 auto;
   padding: 0 4px;
   border: 1px solid var(--border-subtle);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
   font-size: var(--text-2xs);
   font-weight: 720;
@@ -791,7 +801,7 @@ body.is-sidebar-resizing .app-shell {
   width: 190px;
   padding: 4px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   box-shadow: 0 12px 30px color-mix(in srgb, #000000 20%, transparent);
 }
@@ -805,7 +815,7 @@ body.is-sidebar-resizing .app-shell {
   gap: 7px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -872,23 +882,29 @@ body.is-sidebar-resizing .app-shell {
   box-shadow: var(--shadow-md), var(--shadow-highlight);
 }
 
+/* Children hang off a single guide line aligned with the connection row's own text. */
 .connection-drawer__body {
-  margin: 1px 4px 5px 12px;
-  overflow: hidden;
-  border-left: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--surface-muted) 34%, transparent);
+  margin: 0 2px 4px var(--tree-indent);
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0 var(--tree-row-radius) var(--tree-row-radius) 0;
+  background: color-mix(in srgb, var(--surface-muted) 26%, transparent);
 }
 
 .connection-drawer__header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   display: flex;
-  min-height: 28px;
+  min-height: var(--tree-row-height);
   align-items: center;
   justify-content: space-between;
-  padding: 3px 5px 3px 10px;
-  color: var(--text-secondary);
+  padding: 2px 4px 2px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 92%, var(--surface-panel));
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   font-weight: 720;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
 }
 
 .connection-drawer__header small {
@@ -909,7 +925,7 @@ body.is-sidebar-resizing .app-shell {
   height: 22px;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -936,22 +952,25 @@ body.is-sidebar-resizing .app-shell {
   color: var(--accent-redis);
 }
 
+/*
+ * The panel itself scrolls, so object lists must not introduce a second scroll container. A
+ * nested scroller meant long tables produced a scrollbar inside a scrollbar and swallowed wheel
+ * events before they reached the sidebar.
+ */
 .table-tree {
   display: grid;
-  max-height: clamp(220px, 38vh, 420px);
-  overflow: auto;
-  padding: 1px 4px 5px 6px;
+  padding: 1px 4px 4px;
 }
 
 .table-tree__item {
   display: grid;
-  min-height: 32px;
-  grid-template-columns: 15px minmax(0, 1fr) auto auto;
+  min-height: var(--tree-row-height);
+  grid-template-columns: 15px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
-  padding: 4px 6px;
+  gap: 6px;
+  padding: 2px 6px 2px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--tree-row-radius);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -964,16 +983,44 @@ body.is-sidebar-resizing .app-shell {
   color: var(--text-primary);
 }
 
-.table-tree__item.is-selected {
-  background: var(--surface-selected);
-  color: var(--text-primary);
-  box-shadow: inset 2px 0 0 var(--accent-mysql);
+.table-tree__item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
-.table-tree__item span {
+/* Distinct from hover/current: this row already has a workspace tab open. */
+.table-tree__item.is-open {
+  background: color-mix(in srgb, var(--engine-accent) 9%, transparent);
+  color: var(--text-primary);
+  font-weight: 640;
+  box-shadow: inset 2px 0 0 var(--engine-accent);
+}
+
+.table-tree__item[aria-selected="true"] {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.table-tree__item > svg {
+  color: var(--text-tertiary);
+}
+
+.table-tree__item.is-open > svg {
+  color: var(--engine-accent);
+}
+
+.table-tree__item > span:not(.object-dirty-indicator) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Trailing badges share one slot so a pinned view cannot overflow the row. */
+.table-tree__badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .table-tree__item .object-dirty-indicator {
@@ -987,9 +1034,7 @@ body.is-sidebar-resizing .app-shell {
 
 .redis-database-tree {
   display: grid;
-  max-height: 300px;
-  overflow: auto;
-  padding: 1px 4px 5px 6px;
+  padding: 1px 4px 4px;
 }
 
 .redis-database-tree__branch {
@@ -999,13 +1044,13 @@ body.is-sidebar-resizing .app-shell {
 .redis-database-tree__database {
   display: grid;
   width: 100%;
-  min-height: 30px;
+  min-height: var(--tree-row-height);
   grid-template-columns: 12px 15px minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--tree-row-radius);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -1013,13 +1058,19 @@ body.is-sidebar-resizing .app-shell {
   text-align: left;
 }
 
-.redis-database-tree__database:hover,
-.redis-database-tree__database.is-selected {
+.redis-database-tree__database:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
+.redis-database-tree__database:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .redis-database-tree__database.is-selected {
+  background: color-mix(in srgb, var(--accent-redis) 9%, transparent);
+  color: var(--text-primary);
   box-shadow: inset 2px 0 0 var(--accent-redis);
 }
 
@@ -1046,18 +1097,13 @@ body.is-sidebar-resizing .app-shell {
 
 .redis-database-tree__keys {
   display: grid;
-  margin-left: 13px;
-  padding-left: 4px;
+  margin-left: var(--tree-indent);
   border-left: 1px solid var(--border-subtle);
 }
 
 .redis-database-tree__key {
-  grid-template-columns: 15px minmax(0, 1fr);
-  min-height: 28px;
-}
-
-.redis-database-tree__key.is-selected {
-  box-shadow: inset 2px 0 0 var(--accent-redis);
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  padding-left: 8px;
 }
 
 .workspace {
@@ -1128,7 +1174,7 @@ body.is-sidebar-resizing .app-shell {
   flex: 0 0 auto;
   padding: 1px 5px;
   border: 1px solid color-mix(in srgb, var(--accent-mysql) 44%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--accent-mysql);
   font-size: var(--text-2xs);
   font-weight: 760;
@@ -1292,25 +1338,35 @@ body.is-sidebar-resizing .app-shell {
 }
 
 .query-tab.is-dragging {
-  opacity: 0.55;
+  opacity: 0.4;
 }
 
 /* Marks the slot the dragged tab would take on drop. */
 .query-tab.is-drop-target::before {
   position: absolute;
   z-index: 1;
-  top: 4px;
-  bottom: 4px;
-  left: -1px;
-  width: 2px;
-  border-radius: 1px;
+  top: 3px;
+  bottom: 3px;
+  left: -2px;
+  width: 3px;
+  border-radius: 999px;
   background: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 22%, transparent);
   content: "";
 }
 
 .query-tab.is-drop-target-after::before {
   right: -1px;
   left: auto;
+}
+
+/* A grab affordance, so the strip reads as reorderable before the drag starts. */
+.query-tab__select[draggable="true"] {
+  cursor: grab;
+}
+
+.query-tab.is-dragging .query-tab__select {
+  cursor: grabbing;
 }
 
 .workspace-tab-menu {
@@ -1375,7 +1431,7 @@ body.is-sidebar-resizing .app-shell {
   flex: 0 0 auto;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -1447,7 +1503,7 @@ body.is-sidebar-resizing .app-shell {
 .query-context__engine {
   padding: 2px 5px;
   border: 1px solid color-mix(in srgb, var(--accent-mysql) 44%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--accent-mysql);
   font-size: var(--text-2xs);
   font-weight: 760;
@@ -1490,7 +1546,7 @@ body.is-sidebar-resizing .app-shell {
 .workspace-save-error button {
   padding: 1px 4px;
   border: 1px solid color-mix(in srgb, var(--accent-redis) 36%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   cursor: pointer;
   font-size: var(--text-xs);
@@ -1647,7 +1703,7 @@ body.is-sidebar-resizing .app-shell {
   gap: 3px;
   padding: 2px 6px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-primary);
   cursor: pointer;
@@ -1669,7 +1725,7 @@ body.is-sidebar-resizing .app-shell {
   min-width: 148px;
   padding: 4px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   box-shadow: 0 12px 30px color-mix(in srgb, #000000 20%, transparent);
 }
@@ -1681,7 +1737,7 @@ body.is-sidebar-resizing .app-shell {
   align-items: center;
   padding: 4px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -1912,7 +1968,7 @@ body.is-sidebar-resizing .app-shell {
   margin-left: auto;
   padding: 2px 6px;
   border: 1px solid color-mix(in srgb, var(--execution-status-color) 34%, var(--border-subtle));
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-primary);
   cursor: pointer;
@@ -2017,9 +2073,10 @@ body.is-sidebar-resizing .app-shell {
   z-index: 2;
   top: 0;
   min-height: 34px;
-  border-bottom: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-toolbar);
-  box-shadow: var(--shadow-highlight), 0 2px 5px color-mix(in srgb, var(--text-primary) 5%, transparent);
+  /* A soft drop instead of a hard rule: the shadow alone separates header from rows. */
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .result-grid__column,
@@ -2137,7 +2194,7 @@ body.is-sidebar-resizing .app-shell {
   padding: 4px;
   overflow: auto;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   box-shadow: 0 12px 30px color-mix(in srgb, #000000 20%, transparent);
 }
@@ -2150,7 +2207,7 @@ body.is-sidebar-resizing .app-shell {
   gap: 7px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -2193,7 +2250,7 @@ body.is-sidebar-resizing .app-shell {
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   box-shadow: 0 18px 40px color-mix(in srgb, #000000 28%, transparent);
 }
@@ -2236,7 +2293,7 @@ body.is-sidebar-resizing .app-shell {
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--surface-muted);
   color: var(--text-primary);
   cursor: pointer;
@@ -2269,7 +2326,7 @@ body.is-sidebar-resizing .app-shell {
 .result-cell--binary {
   padding: 1px 4px;
   border: 1px solid var(--border-subtle);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
   font-family: var(--font-sans);
   font-size: var(--text-2xs);
@@ -2346,7 +2403,7 @@ body.is-sidebar-resizing .app-shell {
   flex: 0 0 auto;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -2383,14 +2440,28 @@ body.is-sidebar-resizing .app-shell {
   cursor: pointer;
   font-size: var(--text-sm);
   font-weight: 680;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .table-view-nav__tabs button {
   position: relative;
 }
 
+.table-view-nav__tabs button svg {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
 .table-view-nav__tabs button[aria-selected="true"] {
   color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-mysql) 7%, transparent);
+}
+
+.table-view-nav__tabs button[aria-selected="true"] svg {
+  color: var(--accent-mysql);
 }
 
 .table-view-nav__tabs button[aria-selected="true"]::after {
@@ -2399,6 +2470,7 @@ body.is-sidebar-resizing .app-shell {
   bottom: -1px;
   left: 12px;
   height: 2px;
+  border-radius: 2px 2px 0 0;
   background: var(--accent-mysql);
   content: "";
 }
@@ -2407,6 +2479,27 @@ body.is-sidebar-resizing .app-shell {
 .table-refresh:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.table-view-nav__tabs button:hover svg,
+.table-view-nav__tabs button:focus-visible svg {
+  color: currentColor;
+}
+
+.table-view-nav__tabs button:focus-visible,
+.table-refresh:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Marks a panel holding uncommitted edits so switching tabs never hides pending work. */
+.table-view-nav__dirty {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--status-warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-warning) 22%, transparent);
 }
 
 .table-refresh:disabled {
@@ -2436,7 +2529,7 @@ body.is-sidebar-resizing .app-shell {
 }
 
 .data-editor {
-  grid-template-rows: 46px minmax(0, 1fr) auto auto;
+  grid-template-rows: 46px auto minmax(0, 1fr) auto auto;
 }
 
 .structure-editor {
@@ -2539,6 +2632,252 @@ body.is-sidebar-resizing .app-shell {
   box-shadow: var(--shadow-highlight), var(--shadow-xs);
 }
 
+.table-filter {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-toolbar);
+  font-size: var(--text-sm);
+}
+
+.table-filter__summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 12px;
+}
+
+.table-filter__toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 680;
+}
+
+.table-filter__toggle:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.table-filter__toggle.is-active {
+  border-color: var(--accent-mysql);
+  color: var(--accent-mysql);
+}
+
+.table-filter__toggle small {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-mysql);
+  color: var(--text-inverse);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.table-filter__hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-filter__applied {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-mysql) 40%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-mysql) 10%, transparent);
+  color: var(--text-secondary);
+}
+
+.table-filter__applied > span {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-filter__applied button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.table-filter__applied button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.table-filter__applied button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.table-filter__editor {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 8px 12px;
+}
+
+.table-filter__conditions {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 5px;
+  list-style: none;
+}
+
+.table-filter__condition {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-filter__condition select,
+.table-filter__condition input[type="text"] {
+  min-width: 0;
+  height: 27px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.table-filter__condition input[type="text"] {
+  flex: 1 1 160px;
+}
+
+.table-filter__condition input[type="text"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.table-filter__condition select:focus-visible,
+.table-filter__condition input[type="text"]:focus-visible {
+  border-color: var(--accent-mysql);
+  outline: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-mysql) 28%, transparent);
+}
+
+.table-filter__conjunction {
+  flex: 0 0 auto;
+  min-width: 88px;
+}
+
+.table-filter__conjunction--fixed {
+  display: inline-flex;
+  height: 27px;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 6px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.table-filter__enabled {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.table-filter__condition > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.table-filter__condition > button:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-hover);
+  color: var(--accent-redis);
+}
+
+.table-filter__errors {
+  margin: 0;
+  color: var(--accent-redis);
+  font-size: var(--text-xs);
+}
+
+.table-filter__empty {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.table-filter__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-filter__spacer {
+  flex: 1 1 auto;
+}
+
+.table-filter__actions button {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 680;
+}
+
+.table-filter__actions button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.table-filter__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.table-filter__actions .table-filter__submit {
+  border-color: var(--accent-mysql);
+  background: var(--accent-mysql);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-highlight), var(--shadow-xs);
+}
+
 .table-state {
   margin: 0;
   padding: 16px;
@@ -2573,7 +2912,58 @@ body.is-sidebar-resizing .app-shell {
   top: 0;
   min-height: 38px;
   background: var(--surface-toolbar);
-  box-shadow: var(--shadow-highlight), 0 2px 5px color-mix(in srgb, var(--text-primary) 5%, transparent);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+/* Zero-row results became common once the quick filter shipped, so the grid states it plainly
+   instead of rendering a bare header with empty space below it. */
+.editable-grid__empty {
+  display: grid;
+  border-bottom: 0;
+}
+
+.editable-grid__empty > span {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 40px 16px 46px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.editable-grid__empty svg {
+  color: color-mix(in srgb, var(--text-tertiary) 62%, transparent);
+}
+
+.editable-grid__empty strong {
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  font-weight: 680;
+}
+
+.editable-grid__empty small {
+  max-width: 520px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.editable-grid__empty button {
+  margin-top: 3px;
+  min-height: var(--control-h-sm);
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.editable-grid__empty button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .editable-grid__header > span {
@@ -2604,10 +2994,35 @@ body.is-sidebar-resizing .app-shell {
 }
 
 .editable-grid__header small {
+  overflow: hidden;
   color: var(--text-tertiary);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 500;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The label must clip rather than push the type hint out of a narrowly resized column. */
+.editable-grid__column {
+  overflow: hidden;
+}
+
+.editable-grid__column-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editable-grid__column-name svg {
+  flex: 0 0 auto;
+  color: var(--accent-mysql);
 }
 
 .editable-grid__row.is-deleted {
@@ -2621,10 +3036,16 @@ body.is-sidebar-resizing .app-shell {
 
 .editable-grid__row:not(.editable-grid__header) {
   cursor: default;
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
 .editable-grid__row:not(.editable-grid__header):hover {
   background: color-mix(in srgb, var(--surface-hover) 66%, transparent);
+}
+
+.editable-grid__row:not(.editable-grid__header):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .editable-grid__row.is-selected {
@@ -2664,7 +3085,7 @@ body.is-sidebar-resizing .app-shell {
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -2732,7 +3153,7 @@ body.is-sidebar-resizing .app-shell {
   flex: 1 1 50%;
   padding: 1px 3px;
   border: 1px solid var(--border-subtle);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -2767,7 +3188,7 @@ body.is-sidebar-resizing .app-shell {
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   box-shadow: 0 18px 40px color-mix(in srgb, #000000 28%, transparent);
 }
@@ -2814,7 +3235,7 @@ body.is-sidebar-resizing .app-shell {
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -2842,7 +3263,7 @@ body.is-sidebar-resizing .app-shell {
   padding: 10px;
   resize: vertical;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-muted);
   color: var(--text-primary);
@@ -2869,7 +3290,7 @@ body.is-sidebar-resizing .app-shell {
   min-height: 28px;
   padding: 0 11px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--surface-muted);
   color: var(--text-primary);
   cursor: pointer;
@@ -2908,10 +3329,31 @@ body.is-sidebar-resizing .app-shell {
   font-size: var(--text-xs);
 }
 
+.data-pagination > span:first-child {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
 .data-pagination__lock {
-  margin-right: auto;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-mysql) 11%, transparent);
   color: var(--accent-mysql);
   font-weight: 650;
+}
+
+/* One wrapper claims the free space so one or two badges lay out identically. */
+.data-pagination__notes {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  margin-right: auto;
+  gap: 6px;
 }
 
 .data-pagination label,
@@ -2921,11 +3363,17 @@ body.is-sidebar-resizing .app-shell {
   gap: 5px;
 }
 
+.data-pagination__controls > span {
+  min-width: 84px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .data-pagination select,
 .data-pagination button {
   height: 26px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-primary);
   font-size: var(--text-xs);
@@ -2965,10 +3413,10 @@ body.is-sidebar-resizing .app-shell {
 .schema-section {
   margin: 12px;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel);
-  box-shadow: var(--shadow-xs), var(--shadow-highlight);
+  box-shadow: var(--shadow-xs);
 }
 
 .schema-section > header {
@@ -2978,9 +3426,8 @@ body.is-sidebar-resizing .app-shell {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 88%, transparent), var(--surface-muted));
+  border-bottom: 1px solid var(--border-grid);
+  background: color-mix(in srgb, var(--surface-muted) 55%, var(--surface-panel));
 }
 
 .schema-section > header > span {
@@ -3167,6 +3614,15 @@ body:has(.structure-grid__resize-handle:active) {
 
 .structure-grid__cell:last-child {
   border-right: 0;
+}
+
+.structure-grid__empty {
+  margin: 0;
+  padding: 30px 16px 34px;
+  border-bottom: 1px solid var(--border-grid);
+  color: var(--accent-mysql);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 
 .structure-grid__row {
@@ -3525,12 +3981,41 @@ body:has(.structure-grid__resize-handle:active) {
   list-style: none;
 }
 
+.sql-preview summary:hover {
+  background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
+}
+
+.sql-preview summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .sql-preview summary::-webkit-details-marker {
   display: none;
 }
 
 .sql-preview__title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
   color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A disclosure caret that rotates on open, since the native marker is suppressed. */
+.sql-preview__title::before {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  content: "\25b8";
+  font-size: var(--text-xs);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.sql-preview[open] .sql-preview__title::before {
+  transform: rotate(90deg);
 }
 
 .sql-preview__meta {
@@ -3594,6 +4079,11 @@ body:has(.structure-grid__resize-handle:active) {
   font-size: var(--text-sm);
 }
 
+.raw-ddl__heading > svg {
+  flex: 0 0 auto;
+  color: var(--accent-mysql);
+}
+
 .raw-ddl__heading strong {
   font-weight: 720;
   letter-spacing: 0.01em;
@@ -3649,6 +4139,21 @@ body:has(.structure-grid__resize-handle:active) {
   opacity: 0.46;
 }
 
+/* One visible focus treatment across the three panels' chrome buttons and selects. */
+.table-editor-toolbar__actions button:focus-visible,
+.table-filter__actions button:focus-visible,
+.table-filter__applied button:focus-visible,
+.table-filter__toggle:focus-visible,
+.data-pagination button:focus-visible,
+.data-pagination select:focus-visible,
+.raw-ddl__actions button:focus-visible,
+.raw-ddl__comment-actions button:focus-visible,
+.structure-grid__delete:focus-visible,
+.default-editor button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 .raw-ddl__comment {
   display: grid;
   gap: 8px;
@@ -3658,6 +4163,23 @@ body:has(.structure-grid__resize-handle:active) {
   border-radius: var(--radius-md);
   background: var(--surface-panel);
   box-shadow: var(--shadow-xs), var(--shadow-highlight);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Mirrors the tab dirty dot so an uncommitted comment is obvious inside the panel too. */
+.raw-ddl__comment.is-dirty {
+  border-color: color-mix(in srgb, var(--status-warning) 52%, var(--border-subtle));
+}
+
+.raw-ddl__comment.is-dirty > header strong::after {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--status-warning);
+  content: "";
+  vertical-align: middle;
 }
 
 .raw-ddl__comment > header {
@@ -4150,7 +4672,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 27px;
   padding: 3px 7px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   outline: 0;
   background: var(--surface-panel);
   color: var(--text-secondary);
@@ -4168,7 +4690,7 @@ body:has(.structure-grid__resize-handle:active) {
   min-width: 22px;
   padding: 2px 5px;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--surface-muted);
   color: var(--text-secondary);
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -4202,7 +4724,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 8px;
   padding: 5px 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -4338,7 +4860,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 5px;
   padding: 4px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -4359,7 +4881,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 30px;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -4380,7 +4902,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin: 10px 14px;
   padding: 0 9px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--text-tertiary);
 }
 
@@ -4410,7 +4932,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin: 0 0 8px;
   padding: 7px 9px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--surface-muted);
 }
 
@@ -4425,7 +4947,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 4px;
   padding: 3px 6px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-secondary);
   cursor: pointer;
@@ -4450,7 +4972,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin: 0 0 8px;
   padding: 6px 8px;
   border: 1px solid color-mix(in srgb, var(--accent-redis) 42%, var(--border-subtle));
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-redis) 8%, var(--surface-panel));
   color: var(--text-primary);
   font-size: var(--text-xs);
@@ -4469,7 +4991,7 @@ body:has(.structure-grid__resize-handle:active) {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   list-style: none;
 }
 
@@ -4520,7 +5042,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 3px;
   padding: 3px 6px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-secondary);
   cursor: pointer;
@@ -4584,7 +5106,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 34px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent-redis) 40%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-redis) 8%, transparent);
   color: var(--accent-redis);
 }
@@ -4595,7 +5117,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 34px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent-mysql) 40%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-mysql) 8%, transparent);
   color: var(--accent-mysql);
 }
@@ -4614,7 +5136,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 36px;
   padding: 6px 9px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-muted);
   color: var(--text-primary);
@@ -4680,7 +5202,7 @@ body:has(.structure-grid__resize-handle:active) {
 .destructive-dialog > dl {
   overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .destructive-dialog > dl > div {
@@ -4861,7 +5383,7 @@ body:has(.structure-grid__resize-handle:active) {
   grid-row: 1 / 3;
   place-items: center;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
 
@@ -4910,7 +5432,7 @@ body:has(.structure-grid__resize-handle:active) {
 .connection-form-card__icon {
   width: 36px;
   height: 36px;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
 }
 
 .connection-form-card__header h2 {
@@ -4960,7 +5482,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 38px;
   padding: 7px 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-raised);
   color: var(--text-primary);
@@ -4989,7 +5511,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin-top: 16px;
   padding: 9px 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--surface-canvas);
   color: var(--text-secondary);
   font-size: var(--text-sm);
@@ -5088,7 +5610,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 22px;
   padding: 0 4px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   outline: 0;
   background: var(--surface-raised);
   color: var(--text-primary);
@@ -5106,7 +5628,7 @@ body:has(.structure-grid__resize-handle:active) {
 .redis-workspace__context .environment {
   padding: 2px 5px;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
   font-size: var(--text-2xs);
   font-weight: 740;
@@ -5132,7 +5654,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 5px;
   padding: 0 9px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -5200,7 +5722,7 @@ body:has(.structure-grid__resize-handle:active) {
   grid-template-columns: 26px minmax(0, 1fr) auto auto;
   align-items: center;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
 }
 
@@ -5224,7 +5746,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin-right: 3px;
   padding: 0 7px;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -5255,7 +5777,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 5px;
   padding: 4px 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--text-secondary);
   cursor: pointer;
@@ -5377,7 +5899,7 @@ body:has(.structure-grid__resize-handle:active) {
   max-width: 70px;
   overflow: hidden;
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--text-tertiary);
   font-size: var(--text-2xs);
@@ -5535,7 +6057,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin: 14px 18px;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
 }
 
@@ -5573,7 +6095,7 @@ body:has(.structure-grid__resize-handle:active) {
   resize: vertical;
   padding: 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   outline: 0;
   background: var(--surface-panel);
   color: var(--text-primary);
@@ -5599,7 +6121,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 5px;
   padding: 5px 9px;
   border: 1px solid color-mix(in srgb, var(--accent-redis) 65%, var(--border-strong));
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--accent-redis);
   color: var(--text-inverse);
   cursor: pointer;
@@ -5669,7 +6191,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 22px;
   margin-left: 3px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -5719,7 +6241,7 @@ body:has(.structure-grid__resize-handle:active) {
   height: 31px;
   padding: 5px 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   outline: 0;
   background: var(--surface-panel);
   color: var(--text-primary);
@@ -5796,7 +6318,7 @@ body:has(.structure-grid__resize-handle:active) {
   width: min(440px, 100%);
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
   color: var(--text-primary);
   box-shadow: 0 20px 70px color-mix(in srgb, #000000 25%, transparent);
@@ -5822,7 +6344,7 @@ body:has(.structure-grid__resize-handle:active) {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -5865,7 +6387,7 @@ body:has(.structure-grid__resize-handle:active) {
   overflow: auto;
   padding: 9px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-canvas);
   color: var(--text-primary);
   font-size: var(--text-xs);
@@ -5892,7 +6414,7 @@ body:has(.structure-grid__resize-handle:active) {
   min-height: 30px;
   padding: 5px 11px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--text-primary);
   cursor: pointer;
@@ -5929,7 +6451,7 @@ body:has(.structure-grid__resize-handle:active) {
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   box-shadow: 0 28px 80px color-mix(in srgb, #000000 34%, transparent);
 }
@@ -5949,7 +6471,7 @@ body:has(.structure-grid__resize-handle:active) {
   display: grid;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent-mysql) 38%, transparent);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-mysql) 7%, transparent);
   color: var(--accent-mysql);
 }
@@ -5970,7 +6492,7 @@ body:has(.structure-grid__resize-handle:active) {
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -6033,7 +6555,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 5px;
   padding: 4px 7px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -6070,7 +6592,7 @@ body:has(.structure-grid__resize-handle:active) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .sql-library__folder-actions {
@@ -6104,7 +6626,7 @@ body:has(.structure-grid__resize-handle:active) {
   width: 100%;
   height: 29px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-primary);
 }
@@ -6157,7 +6679,7 @@ body:has(.structure-grid__resize-handle:active) {
   gap: 4px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--text-tertiary);
 }
 
@@ -6182,7 +6704,7 @@ body:has(.structure-grid__resize-handle:active) {
   justify-content: center;
   gap: 4px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-secondary);
   cursor: pointer;
@@ -6212,7 +6734,7 @@ body:has(.structure-grid__resize-handle:active) {
   margin: 8px 12px 0;
   padding: 7px 9px;
   border: 1px solid color-mix(in srgb, var(--accent-redis) 38%, var(--border-subtle));
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-redis) 7%, var(--surface-panel));
   color: var(--text-primary);
   font-size: var(--text-xs);
@@ -6345,7 +6867,7 @@ body:has(.structure-grid__resize-handle:active) {
 .sql-library__entry-form textarea {
   width: 100%;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   outline: 0;
   background: var(--surface-muted);
   color: var(--text-primary);
@@ -6565,6 +7087,7 @@ body:has(.structure-grid__resize-handle:active) {
 
 .query-tab,
 .engine-section__toggle,
+.connection-row,
 .table-tree__item,
 .redis-database-tree__database,
 .redis-database-tree__key {

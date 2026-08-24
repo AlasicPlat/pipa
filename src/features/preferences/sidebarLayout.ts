@@ -3,7 +3,11 @@ import type { Engine } from "../../bindings/Engine";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "pipa.sidebar-collapsed.v1";
 const SIDEBAR_WIDTH_STORAGE_KEY = "pipa.sidebar-width.v1";
 const ENGINE_SECTION_COLLAPSE_STORAGE_KEY = "pipa.engine-section-collapse.v1";
+const EXPANDED_CONNECTIONS_STORAGE_KEY = "pipa.expanded-connections.v1";
 const KNOWN_ENGINES: readonly Engine[] = ["my_sql", "postgre_sql", "mongo_db", "redis"];
+
+/** Caps persisted expansion so a long-lived profile list cannot grow storage without bound. */
+const MAX_PERSISTED_EXPANDED_CONNECTIONS = 50;
 
 /** Sidebar width bounds; kept in sync with `--sidebar-width-*` in `tokens.css`. */
 export const SIDEBAR_WIDTH_DEFAULT = 316;
@@ -146,5 +150,49 @@ export function persistEngineSectionCollapseOverrides(overrides: ReadonlyMap<Eng
     window.localStorage.setItem(ENGINE_SECTION_COLLAPSE_STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
     console.warn("[sidebar] Failed to persist engine-section collapse overrides.", { error });
+  }
+}
+
+/**
+ * Loads the connection ids whose object drawers were left open.
+ * Parameters: none.
+ * @returns Saved connection ids; empty when unset or unreadable.
+ * Side effects: reads `localStorage` when available.
+ */
+export function loadExpandedConnectionIds(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const serialized = window.localStorage.getItem(EXPANDED_CONNECTIONS_STORAGE_KEY);
+    if (!serialized) {
+      return new Set();
+    }
+    const parsed = JSON.parse(serialized) as unknown;
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((id): id is string => typeof id === "string" && id !== ""));
+  } catch (error) {
+    console.warn("[sidebar] Failed to load expanded connections.", { error });
+    return new Set();
+  }
+}
+
+/**
+ * Persists which connection drawers are open so a reload restores the user's place.
+ * @param connectionIds - Currently expanded connection ids.
+ * @returns Nothing (`void`).
+ * Side effects: writes `localStorage` when available.
+ */
+export function persistExpandedConnectionIds(connectionIds: ReadonlySet<string>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const payload = [...connectionIds].slice(0, MAX_PERSISTED_EXPANDED_CONNECTIONS);
+    window.localStorage.setItem(EXPANDED_CONNECTIONS_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("[sidebar] Failed to persist expanded connections.", { error });
   }
 }

@@ -1,5 +1,5 @@
 import { Check, ChevronRight, Copy, Database, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import type { Engine } from "../../bindings/Engine";
@@ -7,7 +7,9 @@ import type { Environment } from "../../bindings/Environment";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import {
   loadEngineSectionCollapseOverrides,
+  loadExpandedConnectionIds,
   persistEngineSectionCollapseOverrides,
+  persistExpandedConnectionIds,
 } from "../preferences/sidebarLayout";
 import { executeQueryOnce } from "../query/executeQueryOnce";
 import { useQuerySession } from "../query/useQuerySession";
@@ -25,6 +27,8 @@ interface ConnectionSidebarProps {
   profiles: ConnectionProfile[];
   pinnedTableKeys?: ReadonlySet<string>;
   selectedConnectionId: string | null;
+  /** Tables, views, and Redis keys already open as workspace tabs. */
+  openObjects?: readonly { connectionId: string; objectName: string }[];
   tableCatalog?: Readonly<Record<string, readonly string[]>>;
   tableCatalogRefreshVersions?: Readonly<Record<string, number>>;
   onFocusConnectionHandled?: () => void;
@@ -62,6 +66,11 @@ interface ConnectionDrawerProps {
   selected: boolean;
   tableFilter: string;
   tableCatalogRefreshVersion: number;
+  /** Object names already open as workspace tabs for this connection. */
+  openObjectNames: ReadonlySet<string>;
+  /** Row that currently owns the navigator's single Tab stop. */
+  activeRowKey: TreeRowKey | null;
+  onActiveRowKeyChange: (rowKey: TreeRowKey) => void;
   onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
   onOpenTable?: (connectionId: string, tableName: string) => void;
   onFindTables?: (connectionId?: string) => void;
@@ -116,12 +125,69 @@ interface TableContextMenuState {
   y: number;
 }
 
+/** Shared empty set so connections without open objects keep a stable prop reference. */
+const EMPTY_NAME_SET: ReadonlySet<string> = new Set();
+
 const ENGINE_GROUPS: readonly EngineGroup[] = [
   { engine: "my_sql", label: "MySQL" },
   { engine: "postgre_sql", label: "PostgreSQL" },
   { engine: "mongo_db", label: "MongoDB" },
   { engine: "redis", label: "Redis" },
 ];
+
+/** Stable identity for one navigable sidebar row, used for roving tabindex. */
+type TreeRowKey = string;
+
+/** Builds the row key for one connection row. */
+function connectionRowKey(connectionId: string): TreeRowKey {
+  return `connection\u0000${connectionId}`;
+}
+
+/** Builds the row key for one table, view, or Redis key row. */
+function objectRowKey(connectionId: string, objectName: string): TreeRowKey {
+  return `object\u0000${connectionId}\u0000${objectName}`;
+}
+
+/** Builds the row key for one Redis database row. */
+function redisDatabaseRowKey(connectionId: string, database: string): TreeRowKey {
+  return `database\u0000${connectionId}\u0000${database}`;
+}
+
+/**
+ * Moves focus to the adjacent visible tree row across every connection and its children.
+ *
+ * The sidebar renders each drawer's children directly after its connection row, so document
+ * order already matches the visual tree order. Querying the whole navigator keeps a single
+ * traversal ring instead of the per-container rings that previously trapped arrow keys.
+ * @param origin - Row element the keyboard event started from.
+ * @param target - Offset step, or an absolute end of the ring.
+ * @returns The newly focused row element, or null when the ring has no such row.
+ * Side effects: moves DOM focus and scrolls the row into view.
+ */
+function focusAdjacentTreeRow(
+  origin: HTMLElement,
+  target: -1 | 1 | "first" | "last",
+): HTMLElement | null {
+  // Collapsed engine sections stay mounted behind `hidden`, so they must be skipped; every other
+  // collapsed level is unmounted and therefore absent from the query already.
+  const rows = Array.from(
+    origin.closest(".connection-groups")?.querySelectorAll<HTMLElement>("[data-tree-row]") ?? [],
+  ).filter((row) => row === origin || row.closest("[hidden]") === null);
+  if (rows.length === 0) {
+    return null;
+  }
+  const nextRow = target === "first"
+    ? rows[0]
+    : target === "last"
+      ? rows[rows.length - 1]
+      : rows[rows.indexOf(origin) + target];
+  if (!nextRow || nextRow === origin) {
+    return null;
+  }
+  nextRow.focus();
+  nextRow.scrollIntoView?.({ block: "nearest" });
+  return nextRow;
+}
 
 /**
  * Returns a compact, user-facing label for a profile environment.
@@ -236,6 +302,9 @@ function ConnectionDrawer({
   selected,
   tableFilter,
   tableCatalogRefreshVersion,
+  openObjectNames,
+  activeRowKey,
+  onActiveRowKeyChange,
   onOpenRedisKey,
   onOpenTable,
   onFindTables,
@@ -253,7 +322,7 @@ function ConnectionDrawer({
   const canExplore = profile.engine === "redis"
     || (profile.engine === "my_sql" && Boolean(profile.database));
   const isRedis = profile.engine === "redis";
-  const [selectedTableName, setSelectedTableName] = useState<string | null>(null);
+
   const [redisDatabases, setRedisDatabases] = useState<RedisDatabaseInfo[]>([]);
   const [expandedRedisDatabase, setExpandedRedisDatabase] = useState<string | null>(null);
   const [redisKeys, setRedisKeys] = useState<string[]>([]);
@@ -461,20 +530,27 @@ function ConnectionDrawer({
     handleToggleRequested();
   }
 
-  /** Moves focus and selection to the adjacent saved connection without wrapping. */
-  function focusAdjacentConnection(currentTarget: HTMLButtonElement, offset: -1 | 1): void {
-    const connectionButtons = Array.from(
-      currentTarget
-        .closest(".connection-groups")
-        ?.querySelectorAll<HTMLButtonElement>(".connection-row[data-connection-id]") ?? [],
-    );
-    const currentIndex = connectionButtons.indexOf(currentTarget);
-    const nextButton = connectionButtons[currentIndex + offset];
-    if (!nextButton) {
+  /**
+   * Moves focus to the adjacent row anywhere in the navigator and claims the Tab stop.
+   * @param origin - Row the keyboard event started from.
+   * @param target - Offset step, or an absolute end of the traversal ring.
+   * @returns Nothing (`void`).
+   * Side effects: moves focus and updates the roving tabindex owner.
+   */
+  function moveTreeFocus(origin: HTMLElement, target: -1 | 1 | "first" | "last"): void {
+    const nextRow = focusAdjacentTreeRow(origin, target);
+    if (!nextRow) {
       return;
     }
-    nextButton.focus();
-    const nextConnectionId = nextButton.dataset.connectionId;
+    const nextRowKey = nextRow.dataset.treeRow;
+    if (nextRowKey) {
+      onActiveRowKeyChange(nextRowKey);
+    }
+    // Landing on a connection row also makes it current, since the selected connection is what
+    // new queries and the workspace scope follow.
+    const nextConnectionId = nextRow.classList.contains("connection-row")
+      ? nextRow.dataset.connectionId
+      : undefined;
     if (nextConnectionId) {
       onSelect(nextConnectionId);
     }
@@ -519,13 +595,24 @@ function ConnectionDrawer({
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      focusAdjacentConnection(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
+      moveTreeFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
       return;
     }
 
-    if (event.key === "ArrowRight" && !expanded) {
+    if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      handleToggleRequested();
+      moveTreeFocus(event.currentTarget, event.key === "Home" ? "first" : "last");
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      // Right on an open drawer steps into its children rather than doing nothing.
+      if (expanded) {
+        moveTreeFocus(event.currentTarget, 1);
+      } else {
+        handleToggleRequested();
+      }
       return;
     }
 
@@ -535,7 +622,7 @@ function ConnectionDrawer({
       return;
     }
 
-    if (event.key === "Enter") {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       handleToggleRequested();
       return;
@@ -567,7 +654,7 @@ function ConnectionDrawer({
       event.preventDefault();
       const bounds = event.currentTarget.getBoundingClientRect();
       onSelect(profile.id);
-      setSelectedTableName(tableName);
+      onActiveRowKeyChange(objectRowKey(profile.id, tableName));
       onOpenTableContextMenu(profile.id, tableName, bounds.left + 24, bounds.bottom - 4);
       return;
     }
@@ -578,14 +665,32 @@ function ConnectionDrawer({
       return;
     }
 
-    if (event.key === "Escape" || event.key === "ArrowLeft") {
+    if (event.key === "ArrowLeft") {
+      // Left collapses back to the owning connection without discarding the drawer's contents
+      // for the rest of the tree, matching the standard tree pattern.
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect(profile.id);
+      onActiveRowKeyChange(connectionRowKey(profile.id));
+      connectionButtonRef.current?.focus();
+      return;
+    }
+
+    if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onSelect(profile.id);
       if (expanded) {
         onToggle(profile.id);
       }
+      onActiveRowKeyChange(connectionRowKey(profile.id));
       connectionButtonRef.current?.focus();
+      return;
+    }
+
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      moveTreeFocus(event.currentTarget, event.key === "Home" ? "first" : "last");
       return;
     }
 
@@ -593,16 +698,7 @@ function ConnectionDrawer({
       return;
     }
     event.preventDefault();
-    const tableButtons = Array.from(
-      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".table-tree__item") ?? [],
-    );
-    const currentIndex = tableButtons.indexOf(event.currentTarget);
-    const nextButton = tableButtons[currentIndex + (event.key === "ArrowDown" ? 1 : -1)];
-    if (!nextButton) {
-      return;
-    }
-    nextButton.focus();
-    setSelectedTableName(nextButton.dataset.tableName ?? null);
+    moveTreeFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
   }
 
   /**
@@ -618,7 +714,7 @@ function ConnectionDrawer({
   ): void {
     event.preventDefault();
     onSelect(profile.id);
-    setSelectedTableName(tableName);
+    onActiveRowKeyChange(objectRowKey(profile.id, tableName));
     onOpenTableContextMenu(profile.id, tableName, event.clientX, event.clientY);
   }
 
@@ -633,16 +729,38 @@ function ConnectionDrawer({
     event: KeyboardEvent<HTMLButtonElement>,
     database: string,
   ): void {
-    if (event.key === "Enter" || event.key === "ArrowRight") {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      if (expandedRedisDatabase !== database) {
+      void openRedisDatabase(database);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (expandedRedisDatabase === database) {
+        moveTreeFocus(event.currentTarget, 1);
+      } else {
         void openRedisDatabase(database);
       }
       return;
     }
-    if (event.key === "ArrowLeft" && expandedRedisDatabase === database) {
+    if (event.key === "ArrowLeft") {
       event.preventDefault();
-      void openRedisDatabase(database);
+      if (expandedRedisDatabase === database) {
+        void openRedisDatabase(database);
+        return;
+      }
+      onActiveRowKeyChange(connectionRowKey(profile.id));
+      connectionButtonRef.current?.focus();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveTreeFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      moveTreeFocus(event.currentTarget, event.key === "Home" ? "first" : "last");
     }
   }
 
@@ -659,11 +777,32 @@ function ConnectionDrawer({
     database: string,
     keyName: string,
   ): void {
-    if (event.key !== "Enter") {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpenRedisKey?.(profile.id, database, keyName);
       return;
     }
-    event.preventDefault();
-    onOpenRedisKey?.(profile.id, database, keyName);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveTreeFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      moveTreeFocus(event.currentTarget, event.key === "Home" ? "first" : "last");
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onActiveRowKeyChange(redisDatabaseRowKey(profile.id, database));
+      const databaseRow = event.currentTarget
+        .closest(".connection-groups")
+        ?.querySelector<HTMLElement>(
+          `[data-tree-row="${CSS.escape(redisDatabaseRowKey(profile.id, database))}"]`,
+        );
+      databaseRow?.focus();
+    }
   }
 
   return (
@@ -675,11 +814,13 @@ function ConnectionDrawer({
         aria-selected={selected}
         className={`connection-row${selected ? " is-selected" : ""}`}
         data-connection-id={profile.id}
+        data-tree-row={connectionRowKey(profile.id)}
         onClick={handleConnectionClick}
         onContextMenu={handleContextMenu}
+        onFocus={() => onActiveRowKeyChange(connectionRowKey(profile.id))}
         onKeyDown={handleConnectionKeyDown}
         ref={connectionButtonRef}
-        style={{ minHeight: "40px" }}
+        tabIndex={activeRowKey === connectionRowKey(profile.id) ? 0 : -1}
         title={supportsExplorer
           ? `单击或按 Enter ${expanded ? "收起" : "展开"}${isRedis ? "数据库" : "数据表"}`
           : undefined}
@@ -757,11 +898,18 @@ function ConnectionDrawer({
                   <div className="redis-database-tree__branch" key={databaseInfo.database}>
                     <button
                       aria-expanded={databaseExpanded}
-                      aria-selected={databaseSelected}
+                        aria-selected={databaseSelected}
                       className={`redis-database-tree__database${databaseSelected ? " is-selected" : ""}`}
+                      data-tree-row={redisDatabaseRowKey(profile.id, databaseInfo.database)}
                       onClick={() => void openRedisDatabase(databaseInfo.database)}
+                      onFocus={() => onActiveRowKeyChange(
+                        redisDatabaseRowKey(profile.id, databaseInfo.database),
+                      )}
                       onKeyDown={(event) => handleRedisDatabaseKeyDown(event, databaseInfo.database)}
                       role="treeitem"
+                      tabIndex={activeRowKey === redisDatabaseRowKey(profile.id, databaseInfo.database)
+                        ? 0
+                        : -1}
                       title={`单击切换到 DB ${databaseInfo.database} 并浏览键；${
                         databaseInfo.keys
                       } 个键，${databaseInfo.expires} 个带过期时间${
@@ -797,24 +945,27 @@ function ConnectionDrawer({
                           </p>
                         ) : visibleRedisKeys.map((keyName) => (
                           <button
-                            aria-selected={selectedTableName === keyName}
-                            className={`table-tree__item redis-database-tree__key${selectedTableName === keyName ? " is-selected" : ""}`}
+                            aria-selected={activeRowKey === objectRowKey(profile.id, keyName)}
+                            className={`table-tree__item redis-database-tree__key${openObjectNames.has(keyName) ? " is-open" : ""}`}
                             data-table-name={keyName}
+                            data-tree-row={objectRowKey(profile.id, keyName)}
                             key={keyName}
                             onClick={() => {
-                              setSelectedTableName(keyName);
+                              onActiveRowKeyChange(objectRowKey(profile.id, keyName));
                               onOpenRedisKey?.(
                                 profile.id,
                                 databaseInfo.database,
                                 keyName,
                               );
                             }}
+                            onFocus={() => onActiveRowKeyChange(objectRowKey(profile.id, keyName))}
                             onKeyDown={(event) => handleRedisKeyDown(
                               event,
                               databaseInfo.database,
                               keyName,
                             )}
                             role="treeitem"
+                            tabIndex={activeRowKey === objectRowKey(profile.id, keyName) ? 0 : -1}
                             title="单击或按 Enter 打开键工作区"
                             type="button"
                           >
@@ -883,40 +1034,47 @@ function ConnectionDrawer({
                 const isPinned = pinnedTableKeys.has(tableTargetKey(profile.id, tableName));
                 return (
                   <button
-                    aria-selected={selectedTableName === tableName}
-                    className={`table-tree__item${selectedTableName === tableName ? " is-selected" : ""}`}
+                    aria-selected={activeRowKey === objectRowKey(profile.id, tableName)}
+                    className={`table-tree__item${openObjectNames.has(tableName) ? " is-open" : ""}`}
                     data-connection-id={profile.id}
                     data-table-name={tableName}
+                    data-tree-row={objectRowKey(profile.id, tableName)}
                     key={`${tableName}-${rowIndex}`}
                     onClick={() => {
-                      setSelectedTableName(tableName);
+                      onActiveRowKeyChange(objectRowKey(profile.id, tableName));
                       onOpenTable?.(profile.id, tableName);
                     }}
                     onContextMenu={objectType === "VIEW"
                       ? undefined
                       : (event) => handleTableContextMenu(event, tableName)}
+                    onFocus={() => onActiveRowKeyChange(objectRowKey(profile.id, tableName))}
                     onKeyDown={(event) => handleTableKeyDown(
                       event,
                       tableName,
                       objectType !== "VIEW",
                     )}
                     role="treeitem"
-                    title={objectType === "VIEW"
-                      ? "单击或按 Enter 打开视图工作区"
-                      : "单击或按 Enter 打开表工作区；右键可执行表操作"}
+                    tabIndex={activeRowKey === objectRowKey(profile.id, tableName) ? 0 : -1}
+                    title={`${openObjectNames.has(tableName) ? "已在工作区打开；" : ""}${
+                      objectType === "VIEW"
+                        ? "单击或按 Enter 打开视图工作区"
+                        : "单击或按 Enter 打开表工作区；右键可执行表操作"
+                    }`}
                     type="button"
                   >
                     <Table2 size={13} strokeWidth={1.7} aria-hidden="true" />
                     <span>{tableName}</span>
-                    {isDirty ? (
-                      <span
-                        aria-label={`${tableName} 有未提交修改`}
-                        className="object-dirty-indicator"
-                        title="有未提交修改"
-                      />
-                    ) : null}
-                    {isPinned ? <small>置顶</small> : null}
-                    {objectType === "VIEW" ? <small>视图</small> : null}
+                    <span className="table-tree__badges">
+                      {isDirty ? (
+                        <span
+                          aria-label={`${tableName} 有未提交修改`}
+                          className="object-dirty-indicator"
+                          title="有未提交修改"
+                        />
+                      ) : null}
+                      {isPinned ? <small>置顶</small> : null}
+                      {objectType === "VIEW" ? <small>视图</small> : null}
+                    </span>
                   </button>
                 );
               })}
@@ -942,6 +1100,7 @@ export function ConnectionSidebar({
   pinnedTableKeys = new Set(),
   profiles,
   selectedConnectionId,
+  openObjects = [],
   tableCatalog = {},
   tableCatalogRefreshVersions = {},
   onFocusConnectionHandled,
@@ -961,11 +1120,14 @@ export function ConnectionSidebar({
   selectedRedisDatabases = {},
 }: ConnectionSidebarProps) {
   const shortcuts = useShortcutSettings();
-  const [expandedConnectionIds, setExpandedConnectionIds] = useState<Set<string>>(new Set());
+  const [expandedConnectionIds, setExpandedConnectionIds] = useState<Set<string>>(
+    loadExpandedConnectionIds,
+  );
   const [engineCollapseOverrides, setEngineCollapseOverrides] = useState<Map<Engine, boolean>>(
     loadEngineSectionCollapseOverrides,
   );
   const [navigatorFilter, setNavigatorFilter] = useState("");
+  const [activeRowKey, setActiveRowKey] = useState<TreeRowKey | null>(null);
   const [contextMenu, setContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
   const contextMenuItemRef = useRef<HTMLButtonElement>(null);
@@ -976,6 +1138,46 @@ export function ConnectionSidebar({
     ? profiles.find((profile) => profile.id === focusConnectionId) ?? null
     : null;
   const normalizedNavigatorFilter = navigatorFilter.trim().toLocaleLowerCase();
+  const openObjectNamesByConnection = useMemo(() => {
+    const grouped = new Map<string, Set<string>>();
+    for (const object of openObjects) {
+      const names = grouped.get(object.connectionId) ?? new Set<string>();
+      names.add(object.objectName);
+      grouped.set(object.connectionId, names);
+    }
+    return grouped;
+  }, [openObjects]);
+  // Exactly one row owns the Tab stop. Before the user touches the tree, that is the first
+  // visible connection, so tabbing in never lands on a row buried far down the list.
+  const firstNavigableConnectionId = useMemo(() => {
+    for (const { engine } of ENGINE_GROUPS) {
+      const candidate = profiles.find((profile) => profile.engine === engine
+        && (!normalizedNavigatorFilter || connectionIdentityMatches(profile, normalizedNavigatorFilter)));
+      if (candidate) {
+        return candidate.id;
+      }
+    }
+    return null;
+  }, [normalizedNavigatorFilter, profiles]);
+  const effectiveActiveRowKey = activeRowKey
+    ?? (firstNavigableConnectionId ? connectionRowKey(firstNavigableConnectionId) : null);
+
+  useEffect(() => {
+    // Restored expansion must not keep ids for connections the user has since deleted.
+    if (profiles.length === 0) {
+      return;
+    }
+    setExpandedConnectionIds((current) => {
+      const pruned = new Set(
+        [...current].filter((id) => profiles.some((profile) => profile.id === id)),
+      );
+      if (pruned.size === current.size) {
+        return current;
+      }
+      persistExpandedConnectionIds(pruned);
+      return pruned;
+    });
+  }, [profiles]);
 
   useEffect(() => {
     if (!focusConnectionId) {
@@ -998,6 +1200,7 @@ export function ConnectionSidebar({
       }
       const next = new Set(current);
       next.add(focusConnectionId);
+      persistExpandedConnectionIds(next);
       return next;
     });
     // Wait a frame so the panel can leave `inert` before focusing the row.
@@ -1127,7 +1330,7 @@ export function ConnectionSidebar({
    * Toggles exactly one drawer while preserving every other expanded connection.
    * @param connectionId - Drawer connection identifier.
    * @returns Nothing (`void`).
-   * Side effects: updates local expansion state.
+   * Side effects: updates expansion state and persists it for the next session.
    */
   function handleToggleConnection(connectionId: string): void {
     setExpandedConnectionIds((current) => {
@@ -1137,6 +1340,7 @@ export function ConnectionSidebar({
       } else {
         next.add(connectionId);
       }
+      persistExpandedConnectionIds(next);
       return next;
     });
   }
@@ -1346,8 +1550,11 @@ export function ConnectionSidebar({
                             .filter((table) => table.connectionId === profile.id)
                             .map((table) => table.tableName),
                         )}
+                        activeRowKey={effectiveActiveRowKey}
                         expanded={forceExpandForTableMatch || expandedConnectionIds.has(profile.id)}
                         key={profile.id}
+                        onActiveRowKeyChange={setActiveRowKey}
+                        openObjectNames={openObjectNamesByConnection.get(profile.id) ?? EMPTY_NAME_SET}
                         onOpenRedisKey={onOpenRedisKey}
                         onOpenTable={onOpenTable}
                         onFindTables={onFindTables}

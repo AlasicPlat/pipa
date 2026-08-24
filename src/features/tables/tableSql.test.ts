@@ -3,10 +3,13 @@ import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
 import {
   buildDdlStatements,
+  buildTableFilterClause,
   buildTableMutationPlan,
   columnDefaultValidationError,
   columnTypeValidationError,
   buildAlterTableCommentStatement,
+  describeTableFilter,
+  filterOperatorsForColumnType,
   formatMysqlColumnType,
   isStructureColumnEditable,
   parseCreateTableComment,
@@ -15,6 +18,7 @@ import {
   tableRowIdentity,
   type StagedExistingRow,
   type TableColumnDefinition,
+  type TableFilterCondition,
 } from "./tableSql";
 
 const ID_COLUMN: TableColumnDefinition = {
@@ -469,5 +473,155 @@ describe("table SQL generation", () => {
     expect(buildAlterTableCommentStatement("shop", "orders", "订单表'归档\\路径")).toBe(
       "ALTER TABLE `shop`.`orders` COMMENT = '订单表''归档\\\\路径';",
     );
+  });
+});
+
+/** Builds one enabled filter condition with a deterministic identifier. */
+function condition(overrides: Partial<TableFilterCondition>): TableFilterCondition {
+  return {
+    id: overrides.id ?? "condition-1",
+    columnName: "name",
+    operator: "=",
+    value: "",
+    conjunction: "AND",
+    enabled: true,
+    ...overrides,
+  };
+}
+
+const FILTER_SCHEMA = [ID_COLUMN, NAME_COLUMN];
+
+describe("table quick filter", () => {
+  it("emits bare numeric literals and quoted text literals", () => {
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: ">=", value: "18446744073709551615" }),
+    ], FILTER_SCHEMA)).toEqual({
+      where: " WHERE `id` >= 18446744073709551615",
+      errors: [],
+      activeCount: 1,
+    });
+    expect(buildTableFilterClause([
+      condition({ columnName: "name", operator: "=", value: "O'Reilly" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `name` = 'O''Reilly'");
+  });
+
+  it("keeps injected quotes and identifiers inside a literal", () => {
+    const clause = buildTableFilterClause([
+      condition({ columnName: "name", operator: "=", value: "x' OR 1=1 -- " }),
+    ], FILTER_SCHEMA);
+    expect(clause.where).toBe(" WHERE `name` = 'x'' OR 1=1 -- '");
+    expect(clause.errors).toEqual([]);
+  });
+
+  it("rejects columns outside the live schema and operators the type cannot use", () => {
+    expect(buildTableFilterClause([
+      condition({ columnName: "dropped", value: "x" }),
+    ], FILTER_SCHEMA)).toEqual({
+      where: "",
+      errors: ["字段 dropped 不在当前表结构中"],
+      activeCount: 0,
+    });
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "CONTAINS", value: "1" }),
+    ], FILTER_SCHEMA).errors).toEqual(["id（bigint unsigned）不支持该比较符"]);
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "=", value: "abc" }),
+    ], FILTER_SCHEMA).errors).toEqual(["id 需要数值"]);
+  });
+
+  it("escapes wildcards for substring operators but keeps them for explicit LIKE", () => {
+    expect(buildTableFilterClause([
+      condition({ operator: "CONTAINS", value: "50%_a" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `name` LIKE '%50\\\\%\\\\_a%' ESCAPE '\\\\'");
+    expect(buildTableFilterClause([
+      condition({ operator: "LIKE", value: "ab%" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `name` LIKE 'ab%'");
+  });
+
+  it("builds list and range predicates with escaped separators", () => {
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "IN", value: "1, 2 ,3" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `id` IN (1, 2, 3)");
+    expect(buildTableFilterClause([
+      condition({ operator: "IN", value: "a\\,b,c" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `name` IN ('a,b', 'c')");
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "BETWEEN", value: "1,10" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `id` BETWEEN 1 AND 10");
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "BETWEEN", value: "1" }),
+    ], FILTER_SCHEMA).errors).toEqual(["id 的 BETWEEN 需要用逗号分隔的两个值"]);
+  });
+
+  it("omits the operand for unary operators and skips disabled conditions", () => {
+    expect(buildTableFilterClause([
+      condition({ operator: "IS NULL", value: "ignored" }),
+    ], FILTER_SCHEMA).where).toBe(" WHERE `name` IS NULL");
+    expect(buildTableFilterClause([
+      condition({ id: "a", operator: "IS NOT NULL" }),
+      condition({ id: "b", columnName: "id", operator: "=", value: "1", enabled: false }),
+    ], FILTER_SCHEMA)).toEqual({
+      where: " WHERE `name` IS NOT NULL",
+      errors: [],
+      activeCount: 1,
+    });
+  });
+
+  it("groups mixed AND/OR left to right and leaves uniform connectors flat", () => {
+    const uniform = buildTableFilterClause([
+      condition({ id: "a", columnName: "id", operator: ">", value: "1" }),
+      condition({ id: "b", operator: "CONTAINS", value: "x", conjunction: "AND" }),
+      condition({ id: "c", operator: "IS NULL", conjunction: "AND" }),
+    ], FILTER_SCHEMA);
+    expect(uniform.where).toBe(
+      " WHERE `id` > 1 AND `name` LIKE '%x%' ESCAPE '\\\\' AND `name` IS NULL",
+    );
+    expect(uniform.activeCount).toBe(3);
+
+    const mixed = buildTableFilterClause([
+      condition({ id: "a", columnName: "id", operator: ">", value: "1" }),
+      condition({ id: "b", operator: "=", value: "x", conjunction: "OR" }),
+      condition({ id: "c", columnName: "id", operator: "<", value: "9", conjunction: "AND" }),
+    ], FILTER_SCHEMA);
+    expect(mixed.where).toBe(" WHERE (`id` > 1 OR `name` = 'x') AND `id` < 9");
+  });
+
+  it("treats a half-written condition as incomplete instead of invalid", () => {
+    expect(buildTableFilterClause([condition({ value: "" })], FILTER_SCHEMA)).toEqual({
+      where: "",
+      errors: [],
+      activeCount: 0,
+    });
+    expect(buildTableFilterClause([
+      condition({ id: "a", columnName: "id", operator: "=", value: "7" }),
+      condition({ id: "b", operator: "=", value: "  " }),
+    ], FILTER_SCHEMA)).toEqual({ where: " WHERE `id` = 7", errors: [], activeCount: 1 });
+    expect(describeTableFilter([condition({ value: "" })])).toBe("");
+  });
+
+  it("returns no clause when every condition is empty or invalid", () => {
+    expect(buildTableFilterClause([], FILTER_SCHEMA).where).toBe("");
+    expect(buildTableFilterClause([condition({ columnName: "" })], FILTER_SCHEMA).where).toBe("");
+    expect(buildTableFilterClause([
+      condition({ id: "a", operator: "=", value: "ok" }),
+      condition({ id: "b", columnName: "id", operator: "=", value: "oops" }),
+    ], FILTER_SCHEMA)).toEqual({ where: "", errors: ["id 需要数值"], activeCount: 0 });
+  });
+
+  it("offers ordered operators for numbers and pattern operators for text only", () => {
+    expect(filterOperatorsForColumnType("bigint unsigned")).toContain("BETWEEN");
+    expect(filterOperatorsForColumnType("bigint unsigned")).not.toContain("CONTAINS");
+    expect(filterOperatorsForColumnType("varchar(50)")).toContain("CONTAINS");
+    expect(filterOperatorsForColumnType("varchar(50)")).not.toContain("BETWEEN");
+    expect(filterOperatorsForColumnType("blob")).toEqual([]);
+    expect(filterOperatorsForColumnType("point")).toEqual([]);
+  });
+
+  it("summarizes enabled conditions for the collapsed filter bar", () => {
+    expect(describeTableFilter([
+      condition({ id: "a", columnName: "id", operator: ">", value: "1" }),
+      condition({ id: "b", operator: "CONTAINS", value: "x", conjunction: "OR" }),
+      condition({ id: "c", operator: "=", value: "hidden", enabled: false }),
+    ])).toBe("id 大于 1 OR name 包含 x");
   });
 });

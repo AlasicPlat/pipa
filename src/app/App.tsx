@@ -383,6 +383,11 @@ export function App() {
   const pendingTableNameActionHasDirtyWorkspace = pendingTableNameAction
     ? dirtyTableTabIds.has(`${pendingTableNameAction.connectionId}:${pendingTableNameAction.tableName}`)
     : false;
+  // Lets the navigator mark rows that are genuinely open instead of guessing from local clicks.
+  const openTableObjects = openTableTabs.map((tab) => ({
+    connectionId: tab.connectionId,
+    objectName: tab.tableName,
+  }));
   const dirtyTables = openTableTabs
     .filter((tab) => dirtyTableTabIds.has(tab.id))
     .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
@@ -2246,6 +2251,7 @@ export function App() {
           onSelectRedisDatabase={handleSelectRedisDatabase}
           onSelectConnection={handleSelectConnection}
           onTablesLoaded={handleTablesLoaded}
+          openObjects={openTableObjects}
           pinnedTableKeys={pinnedTableKeys}
           profiles={connections.profiles}
           reconnectingConnectionId={reconnectingConnectionId}

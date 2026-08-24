@@ -239,7 +239,7 @@ async function assertPaginationOutsideScrollableGrid(): Promise<void> {
   render(<TableWorkspace profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
-  const dataEditor = screen.getByRole("region", { name: "数据编辑器" });
+  const dataEditor = screen.getByRole("tabpanel", { name: "数据编辑器" });
   const dataGrid = screen.getByRole("table", { name: "orders 数据" });
   const pagination = screen.getByLabelText("数据分页");
 
@@ -303,7 +303,7 @@ async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
   fireEvent.doubleClick(screen.getByText("old"));
   fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "saved" } });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-  const dataEditor = screen.getByRole("region", { name: "数据编辑器" });
+  const dataEditor = screen.getByRole("tabpanel", { name: "数据编辑器" });
   expect(screen.getByText(/待提交 DML/)).toBeVisible();
   expect(dataEditor.lastElementChild).toBe(screen.getByLabelText("数据分页"));
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
@@ -448,6 +448,172 @@ async function assertFailedTypedCommitKeepsChanges(): Promise<void> {
   expect(screen.getByText("retry-me")).toBeVisible();
 }
 
+/** Verifies the quick filter pushes a WHERE clause into both the page read and the exact count. */
+async function assertQuickFilterAppliesWhereClause(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  expect(screen.getByText("未启用筛选，当前展示全表数据")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "展开数据筛选条件" }));
+
+  // A freshly seeded condition has no value yet, so it must not read as a validation failure.
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /提交筛选/ })).toBeDisabled();
+
+  fireEvent.change(screen.getByLabelText("第 1 个条件的字段"), { target: { value: "name" } });
+  fireEvent.change(screen.getByLabelText("第 1 个条件的比较符"), { target: { value: "CONTAINS" } });
+  fireEvent.change(screen.getByLabelText("第 1 个条件的值"), { target: { value: "O'Reilly" } });
+  fireEvent.click(screen.getByRole("button", { name: /提交筛选/ }));
+
+  const expectedWhere = "WHERE `name` LIKE '%O''Reilly%' ESCAPE '\\\\'";
+  await waitFor(() => expect(sessionMocks.sessions[1].run).toHaveBeenCalledWith(
+    `SELECT \`id\`, \`name\` FROM \`shop\`.\`orders\` ${expectedWhere} ORDER BY \`id\` LIMIT 50 OFFSET 0;`,
+  ));
+  expect(sessionMocks.sessions[4].run).toHaveBeenCalledWith(
+    `SELECT COUNT(*) AS total_rows FROM \`shop\`.\`orders\` ${expectedWhere};`,
+  );
+  expect(screen.getByText("筛选后 3 行")).toBeVisible();
+  expect(screen.getByRole("button", { name: "展开数据筛选条件" })).toHaveTextContent("1");
+
+  fireEvent.click(screen.getByRole("button", { name: "添加条件" }));
+  fireEvent.change(screen.getByLabelText("第 2 个条件的连接方式"), { target: { value: "OR" } });
+  fireEvent.change(screen.getByLabelText("第 2 个条件的字段"), { target: { value: "id" } });
+  fireEvent.change(screen.getByLabelText("第 2 个条件的比较符"), { target: { value: ">=" } });
+  fireEvent.change(screen.getByLabelText("第 2 个条件的值"), { target: { value: "abc" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("id 需要数值");
+  expect(screen.getByRole("button", { name: /提交筛选/ })).toBeDisabled();
+
+  fireEvent.change(screen.getByLabelText("第 2 个条件的值"), { target: { value: "10" } });
+  fireEvent.click(screen.getByRole("button", { name: /提交筛选/ }));
+  await waitFor(() => expect(sessionMocks.sessions[1].run).toHaveBeenCalledWith(
+    "SELECT `id`, `name` FROM `shop`.`orders` " +
+      "WHERE `name` LIKE '%O''Reilly%' ESCAPE '\\\\' OR `id` >= 10 ORDER BY `id` LIMIT 50 OFFSET 0;",
+  ));
+
+  fireEvent.click(screen.getByRole("button", { name: "清除筛选条件" }));
+  await waitFor(() => expect(sessionMocks.sessions[1].run).toHaveBeenCalledWith(
+    "SELECT `id`, `name` FROM `shop`.`orders` ORDER BY `id` LIMIT 50 OFFSET 0;",
+  ));
+  expect(screen.getByText("未启用筛选，当前展示全表数据")).toBeVisible();
+}
+
+/** Verifies the quick filter refuses to run while staged DML edits would be invalidated. */
+async function assertQuickFilterLockedWhileDirty(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "展开数据筛选条件" }));
+  fireEvent.change(screen.getByLabelText("第 1 个条件的字段"), { target: { value: "id" } });
+  fireEvent.change(screen.getByLabelText("第 1 个条件的值"), { target: { value: "2" } });
+
+  fireEvent.doubleClick(screen.getByText("old"));
+  fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "dirty" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+  const submit = screen.getByRole("button", { name: /提交筛选/ });
+  expect(submit).toBeDisabled();
+  expect(submit).toHaveAttribute("title", "请先提交或撤销当前数据变更");
+  sessionMocks.sessions[1].run.mockClear();
+  fireEvent.click(submit);
+  expect(sessionMocks.sessions[1].run).not.toHaveBeenCalled();
+}
+
+/** Verifies the view tabs follow the WAI-ARIA tabs pattern with roving focus. */
+async function assertViewTabsKeyboardNavigation(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  const dataTab = screen.getByRole("tab", { name: /数据 DML/ });
+  const structureTab = screen.getByRole("tab", { name: /表结构 DDL/ });
+  const rawTab = screen.getByRole("tab", { name: /原始 DDL/ });
+
+  // Roving tabindex: exactly one tab is reachable with Tab at any time.
+  expect(dataTab).toHaveAttribute("tabindex", "0");
+  expect(structureTab).toHaveAttribute("tabindex", "-1");
+  expect(dataTab).toHaveAttribute("aria-controls", screen.getByRole("tabpanel", { name: "数据编辑器" }).id);
+
+  dataTab.focus();
+  fireEvent.keyDown(dataTab, { key: "ArrowRight" });
+  expect(structureTab).toHaveFocus();
+  expect(structureTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel", { name: "表结构编辑器" })).toBeVisible();
+
+  fireEvent.keyDown(structureTab, { key: "End" });
+  expect(rawTab).toHaveFocus();
+  expect(screen.getByRole("tabpanel", { name: "原始 DDL" })).toBeVisible();
+
+  // Wrapping keeps the ring traversable in both directions.
+  fireEvent.keyDown(rawTab, { key: "ArrowRight" });
+  expect(dataTab).toHaveFocus();
+  fireEvent.keyDown(dataTab, { key: "ArrowLeft" });
+  expect(rawTab).toHaveFocus();
+
+  fireEvent.keyDown(rawTab, { key: "Home" });
+  expect(dataTab).toHaveFocus();
+  expect(dataTab).toHaveAttribute("aria-selected", "true");
+}
+
+/** Verifies each tab flags only the uncommitted edits made inside its own panel. */
+async function assertPerPanelDirtyMarkers(): Promise<void> {
+  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/)).toBeVisible();
+  expect(screen.queryByLabelText(/项未提交变更/)).not.toBeInTheDocument();
+
+  fireEvent.doubleClick(screen.getByText("old"));
+  fireEvent.change(screen.getByLabelText("name 第 1 行"), { target: { value: "changed" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+  // The data tab owns the staged DML edit; the structure tab must stay clean.
+  expect(screen.getByRole("tab", { name: /数据 DML/ })).toContainElement(
+    screen.getByLabelText("1 项未提交变更"),
+  );
+  expect(screen.getByRole("tab", { name: /表结构 DDL/ }).querySelector(".table-view-nav__dirty")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "撤销全部" }));
+  expect(screen.queryByLabelText(/项未提交变更/)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
+  const typeInput = screen.getByLabelText("id 类型");
+  fireEvent.change(typeInput, { target: { value: "bigint" } });
+  fireEvent.keyDown(typeInput, { key: "Enter" });
+  expect(screen.getByRole("tab", { name: /表结构 DDL/ })).toContainElement(
+    screen.getByLabelText("1 项未提交变更"),
+  );
+  expect(screen.getByRole("tab", { name: /数据 DML/ }).querySelector(".table-view-nav__dirty")).toBeNull();
+}
+
+/** Verifies a filtered result with no rows explains itself and offers a one-click reset. */
+async function assertFilteredEmptyState(): Promise<void> {
+  const dataSession = sessionMocks.sessions[1];
+  const originalRows = dataSession.state.rows;
+  dataSession.state = { ...dataSession.state, rows: [] };
+  try {
+    render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+
+    expect(await screen.findByText(/主键 id/)).toBeVisible();
+    expect(screen.getByText("当前表还没有数据")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开数据筛选条件" }));
+    fireEvent.change(screen.getByLabelText("第 1 个条件的字段"), { target: { value: "name" } });
+    fireEvent.change(screen.getByLabelText("第 1 个条件的值"), { target: { value: "missing" } });
+    fireEvent.click(screen.getByRole("button", { name: /提交筛选/ }));
+
+    const emptyState = screen.getByText("没有符合筛选条件的数据").closest<HTMLElement>("[role='row']");
+    expect(emptyState).not.toBeNull();
+    expect(emptyState).toHaveTextContent("WHERE name 等于 missing");
+
+    dataSession.run.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选条件并展示全表数据" }));
+    await waitFor(() => expect(dataSession.run).toHaveBeenCalledWith(
+      "SELECT `id`, `name` FROM `shop`.`orders` ORDER BY `id` LIMIT 50 OFFSET 0;",
+    ));
+    expect(screen.getByText("当前表还没有数据")).toBeVisible();
+  } finally {
+    dataSession.state = { ...dataSession.state, rows: originalRows };
+  }
+}
+
 describe("TableWorkspace", () => {
   beforeEach(() => {
     sessionMocks.callIndex = 0;
@@ -475,4 +641,9 @@ describe("TableWorkspace", () => {
   it("orders pages by primary key and locks refresh while dirty", assertStableOrderingAndDirtyRefreshLock);
   it("keeps DEFAULT distinct from explicit NULL on inserts", assertInsertDefaultAndNullStates);
   it("retains staged values when a typed transaction fails", assertFailedTypedCommitKeepsChanges);
+  it("filters the data page and exact count with a WHERE clause", assertQuickFilterAppliesWhereClause);
+  it("blocks filter submission while staged DML changes exist", assertQuickFilterLockedWhileDirty);
+  it("moves between view tabs with arrow, Home, and End keys", assertViewTabsKeyboardNavigation);
+  it("marks uncommitted changes on the owning panel tab only", assertPerPanelDirtyMarkers);
+  it("explains an empty filtered result and resets it in one click", assertFilteredEmptyState);
 });

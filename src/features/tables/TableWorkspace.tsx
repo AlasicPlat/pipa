@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  SearchX,
   Table2,
   Trash2,
   X,
@@ -25,13 +26,17 @@ import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../c
 import { useQuerySession } from "../query/useQuerySession";
 import { SelectableSqlBlock } from "./SelectableSqlBlock";
 import { StructureMetaSelect, StructureTypeSuggest } from "./structureEditors";
+import { TableFilterBar } from "./TableFilterBar";
 import {
   buildAlterTableCommentStatement,
   buildDdlStatements,
+  buildTableFilterClause,
   buildTableMutationPlan,
   cellValueToEditable,
   columnDefaultValidationError,
   columnTypeValidationError,
+  describeTableFilter,
+  filterOperatorsForColumnType,
   formatMysqlColumnType,
   isStructureColumnEditable,
   mysqlStringLiteral,
@@ -46,6 +51,7 @@ import {
   type ParsedMysqlColumnType,
   type StagedExistingRow,
   type TableColumnDefinition,
+  type TableFilterCondition,
 } from "./tableSql";
 
 interface TableWorkspaceProps {
@@ -84,6 +90,18 @@ interface StructureColumnDef {
   minWidth: number;
   resizable: boolean;
 }
+
+interface TableViewTabDef {
+  view: TableView;
+  label: string;
+  hint: string;
+}
+
+const TABLE_VIEW_TABS: readonly TableViewTabDef[] = [
+  { view: "data", label: "数据 DML", hint: "浏览、筛选并编辑表数据" },
+  { view: "structure", label: "表结构 DDL", hint: "可视化编辑字段与查看索引" },
+  { view: "ddl", label: "原始 DDL", hint: "只读 CREATE TABLE 与表注释" },
+];
 
 const STRUCTURE_COLUMNS: readonly StructureColumnDef[] = [
   { key: "name", label: "字段名", defaultWidth: 148, minWidth: 96, resizable: true },
@@ -229,6 +247,11 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   );
   const [draftTableComment, setDraftTableComment] = useState<string | null>(null);
   const [dataSearch, setDataSearch] = useState("");
+  const [filterConditions, setFilterConditions] = useState<TableFilterCondition[]>([]);
+  const [appliedFilterWhere, setAppliedFilterWhere] = useState("");
+  const [appliedFilterSummary, setAppliedFilterSummary] = useState("");
+  const [appliedFilterCount, setAppliedFilterCount] = useState(0);
+  const [filterExpanded, setFilterExpanded] = useState(false);
   const [page, setPage] = useState(1n);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(50);
   const [pendingProductionAction, setPendingProductionAction] = useState<MutationKind | null>(null);
@@ -239,6 +262,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const mutationKindRef = useRef<MutationKind | null>(null);
   const dataSearchInputRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const viewTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const resizeSessionRef = useRef<{
     target: "data" | "structure";
     columnIndex: number;
@@ -271,12 +295,18 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     [],
   );
 
+  /** Builds the exact-count query that shares the active quick-filter predicate. */
+  function countSql(filterWhere: string): string {
+    return `SELECT COUNT(*) AS total_rows FROM ${target}${filterWhere};`;
+  }
+
   /** Loads one page and clears selection/edit focus tied to the previous result snapshot. */
   function loadPage(
     nextPage: bigint,
     nextPageSize = pageSize,
     orderingSchema: readonly TableColumnDefinition[] = schema,
     allowDirty = false,
+    filterWhere = appliedFilterWhere,
   ): void {
     if (
       !database ||
@@ -299,7 +329,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     setFocusedRowIndex(0);
     setSelectionAnchorIndex(null);
     setEditingCell(null);
-    void dataSession.run(`SELECT ${selectList} FROM ${target}${orderBy} LIMIT ${nextPageSize} OFFSET ${offset};`);
+    void dataSession.run(`SELECT ${selectList} FROM ${target}${filterWhere}${orderBy} LIMIT ${nextPageSize} OFFSET ${offset};`);
   }
 
   /** Loads structure, indexes, count, DDL, and the current data page. */
@@ -317,12 +347,21 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       void indexSession.run(indexSql);
     }
     if (!countSession.state.running) {
-      void countSession.run(`SELECT COUNT(*) AS total_rows FROM ${target};`);
+      void countSession.run(countSql(appliedFilterWhere));
     }
     if (!charsetSession.state.running && charsetSession.state.rows.length === 0) {
       void charsetSession.run(charsetSql);
     }
   }
+
+  useEffect(() => {
+    // A different table has a different column set, so no previous condition can stay valid.
+    setFilterConditions([]);
+    setAppliedFilterWhere("");
+    setAppliedFilterSummary("");
+    setAppliedFilterCount(0);
+    setFilterExpanded(false);
+  }, [database, tableName]);
 
   useEffect(() => {
     loadTable();
@@ -350,7 +389,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       void schemaSession.run(schemaSql);
       void ddlSession.run(`SHOW CREATE TABLE ${target};`);
       void indexSession.run(indexSql);
-      void countSession.run(`SELECT COUNT(*) AS total_rows FROM ${target};`);
+      void countSession.run(countSql(appliedFilterWhere));
       if (charsetSession.state.rows.length === 0) {
         void charsetSession.run(charsetSql);
       }
@@ -433,13 +472,17 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   const editingSchemaColumn = editingCell
     ? schema.find((column) => column.name === editingCell.columnName) ?? null
     : null;
+  const columnDdlStatements = useMemo(
+    () => buildDdlStatements(database, tableName, schema, draftColumns),
+    [database, draftColumns, schema, tableName],
+  );
   const ddlStatements = useMemo(() => {
-    const statements = buildDdlStatements(database, tableName, schema, draftColumns);
+    const statements = [...columnDdlStatements];
     if (tableCommentDirty) {
       statements.push(buildAlterTableCommentStatement(database, tableName, tableComment));
     }
     return statements;
-  }, [database, draftColumns, schema, tableComment, tableCommentDirty, tableName]);
+  }, [columnDdlStatements, database, tableComment, tableCommentDirty, tableName]);
   const ddlValidationErrors = useMemo(() => draftColumns.flatMap((column) => {
     const original = column.sourceName === null
       ? null
@@ -465,6 +508,25 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   );
   const dmlStatements = dmlPlan.statements;
   const hasDirtyChanges = ddlStatements.length > 0 || ddlValidationErrors.length > 0 || hasDmlChanges;
+  const filterableColumns = useMemo(
+    () => schema.filter((column) => filterOperatorsForColumnType(column.type).length > 0),
+    [schema],
+  );
+  const draftFilterClause = useMemo(
+    () => buildTableFilterClause(filterConditions, schema),
+    [filterConditions, schema],
+  );
+  const draftFilterSummary = useMemo(() => describeTableFilter(filterConditions), [filterConditions]);
+  const filterDirty = draftFilterClause.where !== appliedFilterWhere;
+  const filterActive = appliedFilterWhere !== "";
+  const tabPanelIdPrefix = `table-view-${database}-${tableName}`;
+  // Each tab counts only the edits made in its own panel: the table comment belongs to the raw DDL
+  // view even though it is executed together with the column statements.
+  const viewDirtyCounts: Record<TableView, number> = {
+    data: dmlChangeCount,
+    structure: columnDdlStatements.length,
+    ddl: tableCommentDirty ? 1 : 0,
+  };
   const normalizedDataSearch = dataSearch.trim().toLocaleLowerCase();
   const dataSearchMatchCount = normalizedDataSearch
     ? dataSession.state.rows.reduce((matchCount, row, rowIndex) => (
@@ -765,6 +827,32 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     };
   }
 
+  /** Applies the draft quick filter, resetting to the first page of the filtered result. */
+  function applyQuickFilter(): void {
+    // Bailing while a page is in flight keeps the applied clause consistent with the visible rows.
+    if (hasDmlChanges || dataSession.state.running || draftFilterClause.errors.length > 0) {
+      return;
+    }
+    setAppliedFilterWhere(draftFilterClause.where);
+    setAppliedFilterSummary(draftFilterSummary);
+    setAppliedFilterCount(draftFilterClause.activeCount);
+    void countSession.run(countSql(draftFilterClause.where));
+    loadPage(1n, pageSize, schema, false, draftFilterClause.where);
+  }
+
+  /** Clears every condition and reloads the unfiltered first page. */
+  function clearQuickFilter(): void {
+    if (hasDmlChanges || dataSession.state.running) {
+      return;
+    }
+    setFilterConditions([]);
+    setAppliedFilterWhere("");
+    setAppliedFilterSummary("");
+    setAppliedFilterCount(0);
+    void countSession.run(countSql(""));
+    loadPage(1n, pageSize, schema, false, "");
+  }
+
   /** Returns the staged value when present, otherwise the database snapshot value. */
   function currentCellValue(rowIndex: number, columnName: string, cell: CellValue | undefined): EditableCellValue {
     const row = dataSession.state.rows[rowIndex];
@@ -973,7 +1061,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
       setInsertedRows([]);
       setSelectedRows(new Set());
       setSelectionAnchorIndex(null);
-      void countSession.run(`SELECT COUNT(*) AS total_rows FROM ${target};`);
+      void countSession.run(countSql(appliedFilterWhere));
       loadPage(page, pageSize, schema, true);
     }).catch((error: unknown) => {
       setDmlMutationError(toAppError(error));
@@ -987,6 +1075,28 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
     setDraftColumns(schema.map((column) => ({ ...column })));
     setDraftTableComment(null);
     setPendingProductionAction(null);
+  }
+
+  /** Moves focus and selection between view tabs per the WAI-ARIA tabs pattern. */
+  function handleViewTabKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
+    const offsets: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    const offset = offsets[event.key];
+    const currentIndex = TABLE_VIEW_TABS.findIndex((tab) => tab.view === activeView);
+    let nextIndex = -1;
+    if (offset !== undefined) {
+      nextIndex = (currentIndex + offset + TABLE_VIEW_TABS.length) % TABLE_VIEW_TABS.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = TABLE_VIEW_TABS.length - 1;
+    }
+    if (nextIndex < 0) {
+      return;
+    }
+    event.preventDefault();
+    // Roving tabindex keeps exactly one tab tabbable, so focus must follow selection.
+    setActiveView(TABLE_VIEW_TABS[nextIndex].view);
+    viewTabRefs.current[nextIndex]?.focus();
   }
 
   /** Discards all staged DML changes and row selection. */
@@ -1011,13 +1121,38 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
           {{ production: "生产", development: "开发", unspecified: "未指定" }[profile.environment]}
         </span>
       </header>
-      <div className="table-view-nav" role="tablist" aria-label="表视图">
-        <span className="table-view-nav__tabs">
-          <button aria-selected={activeView === "data"} onClick={() => setActiveView("data")} role="tab" type="button"><Table2 size={13} aria-hidden="true" />数据 DML</button>
-          <button aria-selected={activeView === "structure"} onClick={() => setActiveView("structure")} role="tab" type="button"><Columns3 size={13} aria-hidden="true" />表结构 DDL</button>
-          <button aria-selected={activeView === "ddl"} onClick={() => setActiveView("ddl")} role="tab" type="button"><Braces size={13} aria-hidden="true" />原始 DDL</button>
+      <div className="table-view-nav">
+        <span className="table-view-nav__tabs" role="tablist" aria-label="表视图" aria-orientation="horizontal">
+          {TABLE_VIEW_TABS.map((tab, index) => {
+            const selected = activeView === tab.view;
+            const dirtyCount = viewDirtyCounts[tab.view];
+            const Icon = { data: Table2, structure: Columns3, ddl: Braces }[tab.view];
+            return (
+              <button
+                aria-controls={`${tabPanelIdPrefix}-${tab.view}`}
+                aria-selected={selected}
+                id={`${tabPanelIdPrefix}-tab-${tab.view}`}
+                key={tab.view}
+                onClick={() => setActiveView(tab.view)}
+                onKeyDown={handleViewTabKeyDown}
+                ref={(element) => {
+                  viewTabRefs.current[index] = element;
+                }}
+                role="tab"
+                tabIndex={selected ? 0 : -1}
+                title={dirtyCount > 0 ? `${tab.hint} · ${dirtyCount} 项未提交变更` : tab.hint}
+                type="button"
+              >
+                <Icon size={13} aria-hidden="true" />
+                {tab.label}
+                {dirtyCount > 0 ? (
+                  <i className="table-view-nav__dirty" aria-label={`${dirtyCount} 项未提交变更`} role="img" />
+                ) : null}
+              </button>
+            );
+          })}
         </span>
-        <button className="table-refresh" disabled={hasDirtyChanges || schemaSession.state.running || dataSession.state.running || ddlSession.state.running || dmlMutationRunning} onClick={loadTable} title={hasDirtyChanges ? "请先提交或撤销当前变更" : undefined} type="button"><RefreshCw size={13} aria-hidden="true" />刷新</button>
+        <button className="table-refresh" disabled={hasDirtyChanges || schemaSession.state.running || dataSession.state.running || ddlSession.state.running || dmlMutationRunning} onClick={loadTable} title={hasDirtyChanges ? "请先提交或撤销当前变更" : "重新读取结构、索引、行数与当前页数据"} type="button"><RefreshCw size={13} aria-hidden="true" />刷新</button>
       </div>
 
       <div className="table-workspace__content">
@@ -1026,7 +1161,13 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
         {dmlMutationError ? <p className="table-state table-state--error" role="alert">提交失败：{dmlMutationError.message}。变更集已保留。</p> : null}
 
         {database && activeView === "data" ? (
-          <section className="data-editor" aria-label="数据编辑器">
+          <section
+            aria-label="数据编辑器"
+            className="data-editor"
+            id={`${tabPanelIdPrefix}-data`}
+            role="tabpanel"
+            tabIndex={-1}
+          >
             <header className="table-editor-toolbar">
               <span>{`已选择 ${selectedRows.size} / 当前页 ${dataSession.state.rows.length} 行 · 双击单元格弹窗编辑`}{primaryColumns.length > 0 ? ` · 主键 ${primaryColumns.join(", ")}` : " · 无主键，仅允许新增"}</span>
               <label className="table-data-search">
@@ -1049,13 +1190,32 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                 <button className="table-commit" disabled={dmlStatements.length === 0 || dmlPlan.errors.length > 0 || ddlStatements.length > 0 || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("dml")} title={ddlStatements.length > 0 ? "请先提交或撤销表结构变更" : `提交当前数据变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`} type="button"><Save size={13} aria-hidden="true" />{dmlMutationRunning ? "提交中…" : pendingProductionAction === "dml" ? "确认在生产环境提交" : `提交 ${dmlChangeCount} 项`}</button>
               </span>
             </header>
+            <TableFilterBar
+              active={filterActive}
+              appliedCount={appliedFilterCount}
+              appliedSummary={appliedFilterSummary}
+              columns={filterableColumns}
+              conditions={filterConditions}
+              dirty={filterDirty}
+              disabled={hasDmlChanges || dataSession.state.running}
+              disabledReason={hasDmlChanges ? "请先提交或撤销当前数据变更" : "正在读取数据…"}
+              errors={draftFilterClause.errors}
+              expanded={filterExpanded}
+              onApply={applyQuickFilter}
+              onClear={clearQuickFilter}
+              onConditionsChange={setFilterConditions}
+              onExpandedChange={setFilterExpanded}
+            />
             {dataSession.state.running && dataSession.state.rows.length === 0 ? <p className="table-state">正在读取表数据…</p> : dataSession.state.error ? <p className="table-state table-state--error">无法读取表数据：{dataSession.state.error.message}</p> : (
               <div className="editable-grid" role="table" aria-label={`${tableName} 数据`} onKeyDown={handleGridKeyDown} tabIndex={0}>
                 <div className="editable-grid__row editable-grid__header" role="row" style={{ gridTemplateColumns: dataGridTemplate, minWidth: dataGridMinimumWidth }}>
                   <span role="columnheader"><input aria-label="选择当前页全部行" checked={allRowsSelected} onChange={toggleSelectAllRows} type="checkbox" /></span>
                   {dataSession.state.columns.map((column, columnIndex) => (
-                    <span className="editable-grid__column" key={column.name} role="columnheader" title="拖拽右缘调整列宽">
-                      {column.name}
+                    <span className="editable-grid__column" key={column.name} role="columnheader" title={`${column.name} · ${column.databaseType}${primaryColumns.includes(column.name) ? " · 主键" : ""} · 拖拽右缘调整列宽`}>
+                      <span className="editable-grid__column-name">
+                        {primaryColumns.includes(column.name) ? <KeyRound size={10} aria-hidden="true" /> : null}
+                        {column.name}
+                      </span>
                       <small>{column.databaseType}</small>
                       <span
                         aria-label={`调整 ${column.name} 列宽`}
@@ -1131,14 +1291,36 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                     })}
                   </div>
                 ))}
+                {dataSession.state.rows.length === 0 && insertedRows.length === 0 ? (
+                  <div className="editable-grid__empty" role="row">
+                    <span role="cell">
+                      {filterActive ? (
+                        <>
+                          <SearchX size={22} aria-hidden="true" />
+                          <strong>没有符合筛选条件的数据</strong>
+                          <small>WHERE {appliedFilterSummary}</small>
+                          <button aria-label="清除筛选条件并展示全表数据" onClick={clearQuickFilter} type="button">清除筛选条件</button>
+                        </>
+                      ) : (
+                        <>
+                          <Table2 size={22} aria-hidden="true" />
+                          <strong>当前表还没有数据</strong>
+                          <small>使用上方“新增行”插入第一条记录</small>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             )}
             {dmlPlan.errors.length > 0 ? <p className="table-state table-state--error" role="alert">{`变更中有 ${dmlPlan.errors.length} 个类型错误：${dmlPlan.errors.join("；")}`}</p> : null}
             {dmlStatements.length > 0 ? <SqlPreview title="待提交 DML（实际执行使用参数绑定）" sql={`START TRANSACTION;\n${dmlStatements.join("\n")}\nCOMMIT;`} /> : null}
             <footer className="data-pagination" aria-label="数据分页">
-              <span>共 {totalRows.toLocaleString()} 行</span>
-              {primaryColumns.length === 0 ? <span className="data-pagination__lock">无主键，数据库无法保证跨页顺序</span> : null}
-              {hasDmlChanges ? <span className="data-pagination__lock">提交或撤销变更后可翻页</span> : null}
+              <span>{filterActive ? `筛选后 ${totalRows.toLocaleString()} 行` : `共 ${totalRows.toLocaleString()} 行`}</span>
+              <span className="data-pagination__notes">
+                {primaryColumns.length === 0 ? <span className="data-pagination__lock">无主键，数据库无法保证跨页顺序</span> : null}
+                {hasDmlChanges ? <span className="data-pagination__lock">提交或撤销变更后可翻页</span> : null}
+              </span>
               <label>每页 <select disabled={hasDmlChanges || dataSession.state.running} onChange={(event) => {
                 const nextSize = Number(event.target.value) as (typeof PAGE_SIZES)[number];
                 setPageSize(nextSize);
@@ -1202,9 +1384,15 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
         ) : null}
 
         {database && activeView === "structure" ? (
-          <section className="structure-editor" aria-label="表结构编辑器">
+          <section
+            aria-label="表结构编辑器"
+            className="structure-editor"
+            id={`${tabPanelIdPrefix}-structure`}
+            role="tabpanel"
+            tabIndex={-1}
+          >
             <header className="table-editor-toolbar">
-              <span>{draftColumns.length} 个字段 · {indexes.length} 个索引</span>
+              <span>{`${draftColumns.length} 个字段 · ${indexes.length} 个索引`}{primaryColumns.length > 0 ? ` · 主键 ${primaryColumns.join(", ")}` : " · 无主键"}{columnDdlStatements.length > 0 ? ` · ${columnDdlStatements.length} 项待执行` : ""}</span>
               <span className="table-editor-toolbar__actions">
                 <button onClick={addDraftColumn} type="button"><Plus size={13} aria-hidden="true" />新增字段</button>
                 <button disabled={ddlStatements.length === 0} onClick={discardDdlChanges} type="button">撤销全部</button>
@@ -1387,6 +1575,9 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                         </div>
                       );
                     })}
+                    {draftColumns.length === 0 ? (
+                      <p className="structure-grid__empty">所有字段都已被移除，提交后表将不再可用；请新增字段或撤销变更。</p>
+                    ) : null}
                   </div>
                 </section>
               )}
@@ -1506,6 +1697,7 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
               setDraftTableComment(null);
               setPendingProductionAction(null);
             }}
+            panelId={`${tabPanelIdPrefix}-ddl`}
             sql={rawDdl || "数据库未返回 CREATE TABLE 语句。"}
             tableName={tableName}
           />
@@ -1535,6 +1727,8 @@ function SqlPreview({ title, sql }: SqlPreviewProps) {
 
 interface RawDdlViewProps {
   tableName: string;
+  /** DOM id linking this panel to its owning tab. */
+  panelId: string;
   sql: string;
   loading: boolean;
   error: string | null;
@@ -1551,6 +1745,7 @@ interface RawDdlViewProps {
 /** SHOW CREATE TABLE surface with an editable table-comment draft. */
 function RawDdlView({
   tableName,
+  panelId,
   sql,
   loading,
   error,
@@ -1583,7 +1778,7 @@ function RawDdlView({
   }
 
   return (
-    <section className="raw-ddl" aria-label="原始 DDL">
+    <section aria-label="原始 DDL" className="raw-ddl" id={panelId} role="tabpanel" tabIndex={-1}>
       <header className="raw-ddl__toolbar">
         <span className="raw-ddl__heading">
           <Braces size={14} aria-hidden="true" />
@@ -1604,7 +1799,7 @@ function RawDdlView({
         <p className="table-state table-state--error">无法读取 DDL：{error}</p>
       ) : (
         <>
-          <section className="raw-ddl__comment" aria-label="表注释编辑">
+          <section aria-label="表注释编辑" className={`raw-ddl__comment${commentDirty ? " is-dirty" : ""}`}>
             <header>
               <span>
                 <strong>表注释</strong>

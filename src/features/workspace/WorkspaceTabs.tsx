@@ -106,6 +106,9 @@ export function WorkspaceTabs({
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null);
   const firstMenuItemRef = useRef<HTMLButtonElement>(null);
+  // `dragend` always fires after a successful `drop`, so the drop records that it already handled
+  // the gesture. Without this, an in-strip reorder would also be read as a detach request.
+  const reorderHandledRef = useRef(false);
   const closeShortcut = getShortcutKeyLabels(shortcuts.bindings.closeWorkspace).join(" + ");
   const newQueryShortcut = getShortcutKeyLabels(shortcuts.bindings.newQuery).join(" + ");
   const newQueryKind = newQueryEngine === "redis" ? "Redis 工作区" : "SQL 查询";
@@ -151,6 +154,7 @@ export function WorkspaceTabs({
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", tabId);
     event.currentTarget.parentElement?.classList.add("is-dragging");
+    reorderHandledRef.current = false;
     setDragState({ kind, tabId });
   }
 
@@ -196,6 +200,7 @@ export function WorkspaceTabs({
     }
     event.preventDefault();
     event.stopPropagation();
+    reorderHandledRef.current = true;
     if (kind === "query") {
       onReorderQuery?.(dragState.tabId, index);
     } else if (kind === "table") {
@@ -220,11 +225,22 @@ export function WorkspaceTabs({
   ): void {
     event.currentTarget.parentElement?.classList.remove("is-dragging");
     const point = { x: event.screenX, y: event.screenY };
-    if (onDetach && isScreenPointOutsideWindow(point)) {
-      onDetach({ kind, point, tabId });
-    }
+    const reordered = reorderHandledRef.current;
+    reorderHandledRef.current = false;
     setDragState(null);
     setDropTarget(null);
+    if (!onDetach || reordered) {
+      // An in-strip reorder already consumed this gesture.
+      return;
+    }
+    // A cancelled drag (Escape, or a release the platform reports no position for) lands at the
+    // origin. Treating that as "outside the window" would detach on almost any aborted drag.
+    if (point.x === 0 && point.y === 0) {
+      return;
+    }
+    if (isScreenPointOutsideWindow(point)) {
+      onDetach({ kind, point, tabId });
+    }
   }
 
   /**
@@ -254,6 +270,61 @@ export function WorkspaceTabs({
     if (kind === "query") return queryTabs.map((tab) => tab.id);
     if (kind === "table") return tableTabs.map((tab) => tab.id);
     return utilityTabs.map((tab) => tab.id);
+  }
+
+  /**
+   * 让标签栏空白区域继续接收拖动，以便释放时仍可完成排序。
+   * @param event - 标签栏背景触发的原生拖动事件。
+   * @returns 无返回值。
+   * Side effects: 将拖动标记为移动操作，不改变当前候选落点。
+   */
+  function handleStripDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (!dragState) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  /**
+   * 将标签栏背景上的释放位置解析为最近的排序槽位。
+   * @param event - 标签栏背景触发的原生释放事件。
+   * @returns 无返回值。
+   * Side effects: 将拖动标签移动到横向距离最近的槽位。
+   */
+  function handleStripDrop(event: DragEvent<HTMLDivElement>): void {
+    if (!dragState) {
+      return;
+    }
+    event.preventDefault();
+    const { kind, tabId } = dragState;
+    const slots = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>("[data-tab-kind][data-tab-index]"),
+    ).filter((slot) => slot.dataset.tabKind === kind);
+    if (slots.length === 0) {
+      setDragState(null);
+      setDropTarget(null);
+      return;
+    }
+    // 空白处没有直接落点，因此按释放位置与各槽位中心的距离选择目标。
+    let nearestIndex = Number(slots[0].dataset.tabIndex);
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const slot of slots) {
+      const bounds = slot.getBoundingClientRect();
+      const distance = Math.abs(event.clientX - (bounds.left + bounds.width / 2));
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = Number(slot.dataset.tabIndex);
+      }
+    }
+    reorderHandledRef.current = true;
+    if (kind === "query") {
+      onReorderQuery?.(tabId, nearestIndex);
+    } else if (kind === "table") {
+      onReorderTable?.(tabId, nearestIndex);
+    }
+    setDragState(null);
+    setDropTarget(null);
   }
 
   /**
@@ -382,7 +453,7 @@ export function WorkspaceTabs({
   );
 
   return (
-    <div className="query-tabs-bar">
+    <div className="query-tabs-bar" onDragOver={handleStripDragOver} onDrop={handleStripDrop}>
       <div className="query-tabs" role="tablist" aria-label="工作区标签">
         {queryTabs.map((tab, index) => {
           const isActive = activeUtilityTabId === null
@@ -393,6 +464,8 @@ export function WorkspaceTabs({
               className={`query-tab${isActive ? " is-active" : ""}${
                 isDropSlot("query", index) ? " is-drop-target" : ""
               }${isDropAfter("query", index) ? " is-drop-target-after" : ""}`}
+              data-tab-index={index}
+              data-tab-kind="query"
               key={tab.id}
               onContextMenu={(event) => handleTabContextMenu(event, "query", tab.id)}
               onDragOver={(event) => handleWorkspaceDragOver(event, "query", index)}
@@ -438,6 +511,8 @@ export function WorkspaceTabs({
               }${isDropSlot("table", index) ? " is-drop-target" : ""}${
                 isDropAfter("table", index) ? " is-drop-target-after" : ""
               }`}
+              data-tab-index={index}
+              data-tab-kind="table"
               key={tab.id}
               onContextMenu={(event) => handleTabContextMenu(event, "table", tab.id)}
               onDragOver={(event) => handleWorkspaceDragOver(event, "table", index)}

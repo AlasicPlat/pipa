@@ -196,6 +196,7 @@ function renderReorderableTabs(overrides: {
       onCloseTable={vi.fn()}
       onCloseUtility={vi.fn()}
       onCreateQuery={vi.fn()}
+      onDetach={overrides.onDetach}
       onReorderQuery={overrides.onReorderQuery}
       onSelectQuery={vi.fn()}
       onSelectTable={vi.fn()}
@@ -242,6 +243,78 @@ function assertLeftwardDropUsesLeadingIndicator(): void {
 
   fireEvent.drop(firstSlot, { dataTransfer: { dropEffect: "move" } });
   expect(onReorderQuery).toHaveBeenCalledWith(SECOND_QUERY_TAB.id, 0);
+}
+
+/** Verifies an in-strip reorder never also detaches the tab into a window. */
+function assertReorderDoesNotDetach(): void {
+  const onReorderQuery = vi.fn();
+  const onDetach = vi.fn();
+  renderReorderableTabs({ onDetach, onReorderQuery });
+
+  const firstTab = screen.getByRole("tab", { name: "查询 1" });
+  const secondSlot = screen.getByRole("tab", { name: "查询 2" }).parentElement;
+  if (!secondSlot) throw new Error("expected the second tab to have a slot wrapper");
+
+  fireEvent.dragStart(firstTab, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
+  fireEvent.dragOver(secondSlot, { dataTransfer: { dropEffect: "none" } });
+  fireEvent.drop(secondSlot, { dataTransfer: { dropEffect: "move" } });
+  expect(onReorderQuery).toHaveBeenCalledWith(QUERY_TAB.id, 1);
+
+  // `dragend` always follows a completed drop; releasing over a sibling is a reorder, not a detach.
+  const dragEnd = createEvent.dragEnd(firstTab);
+  Object.defineProperties(dragEnd, {
+    screenX: { value: window.screenX + window.outerWidth + 120 },
+    screenY: { value: 200 },
+  });
+  fireEvent(firstTab, dragEnd);
+  expect(onDetach).not.toHaveBeenCalled();
+}
+
+/** Verifies a cancelled drag reporting no release position neither reorders nor detaches. */
+function assertCancelledDragIsInert(): void {
+  const onReorderQuery = vi.fn();
+  const onDetach = vi.fn();
+  renderReorderableTabs({ onDetach, onReorderQuery });
+
+  const firstTab = screen.getByRole("tab", { name: "查询 1" });
+  fireEvent.dragStart(firstTab, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
+  const dragEnd = createEvent.dragEnd(firstTab);
+  Object.defineProperties(dragEnd, { screenX: { value: 0 }, screenY: { value: 0 } });
+  fireEvent(firstTab, dragEnd);
+
+  expect(onDetach).not.toHaveBeenCalled();
+  expect(onReorderQuery).not.toHaveBeenCalled();
+}
+
+/** Verifies releasing over the strip's empty space still reorders to the nearest slot. */
+function assertDropOnStripGapReorders(): void {
+  const onReorderQuery = vi.fn();
+  const onDetach = vi.fn();
+  renderReorderableTabs({ onDetach, onReorderQuery });
+
+  const firstTab = screen.getByRole("tab", { name: "查询 1" });
+  const secondSlot = screen.getByRole("tab", { name: "查询 2" }).parentElement;
+  if (!secondSlot) throw new Error("expected the second tab to have a slot wrapper");
+  const firstSlot = firstTab.parentElement;
+  if (!firstSlot) throw new Error("expected the first tab to have a slot wrapper");
+  const strip = firstTab.closest(".query-tabs-bar");
+  if (!strip) throw new Error("expected the tabs to live inside a strip");
+  // jsdom reports every rect as zero, so the nearest-slot maths needs real geometry on both slots.
+  const rectAt = (left: number): DOMRect => ({
+    left, width: 80, top: 0, height: 30, right: left + 80, bottom: 30, x: left, y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+  vi.spyOn(firstSlot, "getBoundingClientRect").mockReturnValue(rectAt(10));
+  vi.spyOn(secondSlot, "getBoundingClientRect").mockReturnValue(rectAt(100));
+
+  fireEvent.dragStart(firstTab, { dataTransfer: { effectAllowed: "none", setData: vi.fn() } });
+  // jsdom's DragEvent init drops clientX, so it has to be defined on the event instance.
+  const drop = createEvent.drop(strip, { dataTransfer: { dropEffect: "move" } });
+  Object.defineProperty(drop, "clientX", { value: 140 });
+  fireEvent(strip, drop);
+
+  expect(onReorderQuery).toHaveBeenCalledWith(QUERY_TAB.id, 1);
+  expect(onDetach).not.toHaveBeenCalled();
 }
 
 /** Verifies the context menu closes every sibling tab but the invoking one. */
@@ -320,6 +393,9 @@ describe("WorkspaceTabs", () => {
   it("requests detachment when a safe tab is dragged outside", assertDraggingOutsideRequestsDetach);
   it("reorders a tab dropped onto a sibling slot", assertDroppingOnSiblingReorders);
   it("uses a leading indicator for leftward drops", assertLeftwardDropUsesLeadingIndicator);
+  it("reorders without also detaching the tab", assertReorderDoesNotDetach);
+  it("ignores a cancelled drag with no release position", assertCancelledDragIsInert);
+  it("reorders a tab released over the strip's empty space", assertDropOnStripGapReorders);
   it("closes sibling tabs from the context menu", assertContextMenuClosesOtherTabs);
   it("preserves a busy query during context-menu close actions", assertContextMenuPreservesBusyQuery);
   it("detaches a workspace from the context menu", assertContextMenuDetaches);
