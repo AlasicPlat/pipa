@@ -5,7 +5,7 @@
 
   # Pipa
 
-  **Beyond SQL: controlled database access for AI and readable transaction forensics from Binlog.**
+  **A local-first MySQL and Redis workbench for data editing, controlled AI access, and offline Binlog forensics.**
 
   A local-first database workbench for macOS, created and maintained by [Alasic333](https://github.com/AlasicPlat).
 
@@ -25,17 +25,30 @@
 
 ## What is Pipa?
 
-Pipa is a local-first database workbench for macOS. It covers everyday MySQL and Redis tasks, controlled local MCP access, and offline MySQL Binlog analysis.
+Pipa is a local-first database workbench for macOS. It covers everyday MySQL and Redis tasks, MySQL data and schema editing, controlled local Model Context Protocol (MCP) access, and offline Binlog analysis.
 
 Pipa does not depend on a Pipa-operated cloud service. It only connects to databases explicitly configured by the user, the MCP service on the local loopback interface, and GitHub Releases for update checks and downloads. Runtime code such as the Monaco editor is bundled locally with the app.
 
+## What you can do with Pipa
+
+Pipa puts database browsing, editing, automation access, and transaction forensics in one desktop workspace:
+
+| Task | Capabilities |
+| --- | --- |
+| SQL queries | Monaco editor, selection or cursor execution, cancellation, timing and result status, reusable SQL library |
+| Data and schema | Paginated browsing, staged batch edits, atomic commits, visual schema editing, indexes, and table actions |
+| Redis | Database and key browsing, common data-type creation and editing, TTL, renaming, and native command workspaces |
+| AI access | Loopback-only MCP service, connection scopes, direct read-only queries, and write approval |
+| Binlog | Offline multi-file parsing, transaction and row images, integrity diagnostics, and reset SQL previews |
+
 ## MCP: AI can read; writes require approval
 
-Pipa includes a Streamable HTTP MCP server that listens only on `127.0.0.1`. Local AI tools can use it to inspect MySQL connections, schemas, and data, or analyze Binlog files directly.
+Pipa includes a Streamable HTTP MCP server that listens only on `127.0.0.1`. Local AI tools can inspect authorized MySQL connections, schemas, and data, or analyze Binlog files directly.
 
-- Read-only SQL runs after passing the safety policy and returns at most 200 rows. Writes and DDL are only added to a confirmation queue.
-- Bearer tokens, connection scopes, and loopback-only listening jointly restrict access.
-- Open the MCP console to copy the URL, token, or Cursor configuration.
+- Read-only SQL runs after passing the safety policy and returns at most 200 rows. Writes and schema-changing statements are only added to a confirmation queue.
+- Bearer tokens, multi-select connection scopes, and loopback-only listening jointly restrict access.
+- The MCP console prioritizes pending SQL and shows service status, activity details, and unrestricted-scope warnings.
+- Open the MCP console to copy the URL, token, or Cursor configuration. Tokens are masked by default and can be rotated.
 
 See the [MCP integration guide](docs/MCP_CONNECTION_GUIDE.md) for complete setup instructions, tool parameters, and security policies.
 
@@ -47,24 +60,30 @@ Import one or more MySQL Binlog files and analyze them locally without connectin
 - Validate CRC32 checksums and diagnose truncation or compatibility issues. MCP also accepts local paths or Base64-encoded files.
 - Generate review-first reset SQL for safely reversible committed transactions. Pipa never executes it automatically and explicitly skips changes that cannot be reliably reversed.
 
-## Everyday database features
+## Workspace and shortcuts
 
 - Frequently used statements are saved by database type instead of connection. Organize them into folders and reuse them across test and production connections of the same type.
-- Quick Search can filter by connection details, making identically named tables easy to locate in the intended environment.
-- Drag query or table workspace tabs outside the current window to create independent work windows.
+- Quick Search filters by connection details. Open MySQL tables, Redis databases, and keys with one click in the connection tree.
+- Drag the sidebar width or the SQL editor and result split. Pipa persists both sizes locally.
+- Reorder tabs by dragging, use context-menu batch actions, or move tabs into independent windows. `Cmd/Ctrl+1–9` jumps by position, with 9 reserved for the last tab.
+- Active SQL tabs remain protected from closing while you switch to another workspace.
 
 ### MySQL and SQL workspaces
 
 - Create, test, rename, and organize connections, then write and run SQL in independent tabs.
-- Run selected SQL or the statement under the cursor, and cancel active queries.
-- Stream query results while preserving the original semantics of large integers and exact decimals.
-- Select ranges, search, sort, resize columns, and export results as CSV, TSV, JSON, Markdown, SQL INSERT statements, or IN lists.
+- Run selected SQL or the statement under the cursor. The status band shows wait time, elapsed time, returned or affected rows, and cancellation controls.
+- Stream results while preserving JSON, large integers, exact decimals, binary values, and temporal values. Database text and SQL previews remain readable strings.
+- Select contiguous ranges or non-contiguous rows, search, sort, resize columns, and export as CSV, TSV, JSON, Markdown, SQL INSERT statements, or IN lists.
+- Stage inserts, updates, and deletes in table data. Pipa validates types and commits parameterized statements in one transaction, rolling back the batch on conflicts or failures.
+- Edit column types, lengths, unsigned attributes, character sets, collations, comments, and indexes, then inspect the generated schema SQL before execution.
+- Use the table action menu to copy names, rename or duplicate tables, truncate or drop them, pin them, open new windows, export data, or inspect `CREATE TABLE`.
 - Preserve editor and query-result state while switching workspaces during the current run. After restart, unsaved SQL and tab context are restored, but query results are not stored permanently.
 
 ### Redis workspaces
 
-- Create, test, and organize Redis connections, switch databases, and browse keys.
-- Inspect String, Hash, List, Set, Sorted Set, Stream, RedisJSON, and other key types.
+- Create, test, and organize Redis connections. Click to switch databases or open keys.
+- Inspect and create or edit String, Hash, List, Set, Sorted Set, Stream, RedisJSON, and other key types.
+- Set or remove TTL values, rename keys, and delete keys. Pipa previews write commands and adds another confirmation for production connections.
 - Run native Redis commands in command workspaces.
 
 Pipa can follow the system appearance or use a manually selected light or dark theme.
@@ -73,8 +92,8 @@ Pipa can follow the system appearance or use a manually selected light or dark t
 
 | Database | Current support |
 | --- | --- |
-| MySQL | Connection management and testing, SQL queries, offline Binlog analysis, and MCP read-only access |
-| Redis | Connection management, database switching, key browsing, key details, and native command execution |
+| MySQL | Connection management, SQL queries, data and schema editing, table actions, offline Binlog analysis, and MCP access |
+| Redis | Connection management, database switching, key browsing and editing, TTL, renaming, and native command execution |
 | PostgreSQL | UI placeholder available; connections and queries are not yet enabled |
 | MongoDB | UI placeholder available; connections and queries are not yet enabled |
 
