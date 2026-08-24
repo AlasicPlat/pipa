@@ -562,6 +562,435 @@ export function buildDmlStatements(input: DmlSqlInput): string[] {
   return buildTableMutationPlan(input).statements;
 }
 
+/** Closed allowlist of comparison operators the quick filter can emit. */
+export const TABLE_FILTER_OPERATORS = [
+  "=",
+  "!=",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "LIKE",
+  "NOT LIKE",
+  "CONTAINS",
+  "STARTS_WITH",
+  "ENDS_WITH",
+  "IN",
+  "NOT IN",
+  "BETWEEN",
+  "IS NULL",
+  "IS NOT NULL",
+] as const;
+
+export type TableFilterOperator = (typeof TABLE_FILTER_OPERATORS)[number];
+
+/** Boolean connector applied between the previous condition and this one. */
+export type TableFilterConjunction = "AND" | "OR";
+
+export interface TableFilterCondition {
+  /** Stable local identifier used as the React key for the condition row. */
+  id: string;
+  /** Column name that must exist in the current table schema. */
+  columnName: string;
+  /** Allowlisted comparison operator. */
+  operator: TableFilterOperator;
+  /** Untrusted user text; ignored for unary operators. */
+  value: string;
+  /** Connector joining this condition to the preceding one. */
+  conjunction: TableFilterConjunction;
+  /** Whether this condition participates in the applied WHERE clause. */
+  enabled: boolean;
+}
+
+/** Human-readable labels for the operator select. */
+export const TABLE_FILTER_OPERATOR_LABELS: Readonly<Record<TableFilterOperator, string>> = {
+  "=": "等于 (=)",
+  "!=": "不等于 (!=)",
+  ">": "大于 (>)",
+  ">=": "大于等于 (>=)",
+  "<": "小于 (<)",
+  "<=": "小于等于 (<=)",
+  LIKE: "匹配 (LIKE)",
+  "NOT LIKE": "不匹配 (NOT LIKE)",
+  CONTAINS: "包含",
+  STARTS_WITH: "开头是",
+  ENDS_WITH: "结尾是",
+  IN: "属于 (IN)",
+  "NOT IN": "不属于 (NOT IN)",
+  BETWEEN: "区间 (BETWEEN)",
+  "IS NULL": "为空 (IS NULL)",
+  "IS NOT NULL": "不为空 (IS NOT NULL)",
+};
+
+const UNARY_FILTER_OPERATORS: ReadonlySet<TableFilterOperator> = new Set<TableFilterOperator>([
+  "IS NULL",
+  "IS NOT NULL",
+]);
+
+const NUMERIC_FILTER_BASE_TYPES: ReadonlySet<string> = new Set([
+  "tinyint",
+  "smallint",
+  "mediumint",
+  "int",
+  "integer",
+  "bigint",
+  "decimal",
+  "numeric",
+  "float",
+  "double",
+  "real",
+  "year",
+  "bit",
+]);
+
+const TEMPORAL_FILTER_BASE_TYPES: ReadonlySet<string> = new Set([
+  "date",
+  "time",
+  "datetime",
+  "timestamp",
+]);
+
+const UNFILTERABLE_BASE_TYPES: ReadonlySet<string> = new Set([
+  "geometry",
+  "point",
+  "linestring",
+  "polygon",
+  "multipoint",
+  "multilinestring",
+  "multipolygon",
+  "geometrycollection",
+  "tinyblob",
+  "blob",
+  "mediumblob",
+  "longblob",
+  "binary",
+  "varbinary",
+]);
+
+const ORDERED_FILTER_OPERATORS: readonly TableFilterOperator[] = [
+  "=",
+  "!=",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "BETWEEN",
+  "IN",
+  "NOT IN",
+  "IS NULL",
+  "IS NOT NULL",
+];
+
+const TEXT_FILTER_OPERATORS: readonly TableFilterOperator[] = [
+  "=",
+  "!=",
+  "CONTAINS",
+  "STARTS_WITH",
+  "ENDS_WITH",
+  "LIKE",
+  "NOT LIKE",
+  "IN",
+  "NOT IN",
+  "IS NULL",
+  "IS NOT NULL",
+];
+
+const EQUALITY_FILTER_OPERATORS: readonly TableFilterOperator[] = [
+  "=",
+  "!=",
+  "IN",
+  "NOT IN",
+  "IS NULL",
+  "IS NOT NULL",
+];
+
+/** Extracts the bare MySQL base type used to classify filter behaviour. */
+function filterBaseType(databaseType: string): string {
+  return databaseType.trim().toLowerCase().match(/^[a-z]+/u)?.[0] ?? "";
+}
+
+/**
+ * Returns whether an operator needs no value operand.
+ * @param operator - Allowlisted filter operator.
+ * @returns True for `IS NULL` and `IS NOT NULL`.
+ * Side effects: none.
+ */
+export function isUnaryFilterOperator(operator: TableFilterOperator): boolean {
+  return UNARY_FILTER_OPERATORS.has(operator);
+}
+
+/**
+ * Returns whether the quick filter can build a predicate for this column type.
+ * @param databaseType - Full MySQL COLUMN_TYPE declaration.
+ * @returns False for binary and spatial types that need explicit SQL functions.
+ * Side effects: none.
+ */
+export function isFilterableColumnType(databaseType: string): boolean {
+  return !UNFILTERABLE_BASE_TYPES.has(filterBaseType(databaseType));
+}
+
+/**
+ * Chooses the operators that are meaningful for one MySQL column type.
+ * @param databaseType - Full MySQL COLUMN_TYPE declaration such as `varchar(50)`.
+ * @returns An ordered operator allowlist for the column's select control.
+ * Side effects: none.
+ */
+export function filterOperatorsForColumnType(databaseType: string): readonly TableFilterOperator[] {
+  const baseType = filterBaseType(databaseType);
+  if (!isFilterableColumnType(databaseType)) {
+    return [];
+  }
+  if (NUMERIC_FILTER_BASE_TYPES.has(baseType) || TEMPORAL_FILTER_BASE_TYPES.has(baseType)) {
+    return ORDERED_FILTER_OPERATORS;
+  }
+  if (baseType === "json" || baseType === "enum" || baseType === "set") {
+    return baseType === "json" ? EQUALITY_FILTER_OPERATORS : TEXT_FILTER_OPERATORS;
+  }
+  return TEXT_FILTER_OPERATORS;
+}
+
+/**
+ * Returns the placeholder that explains the expected value format for an operator.
+ * @param operator - Allowlisted filter operator.
+ * @returns Localized hint text, or an empty string for unary operators.
+ * Side effects: none.
+ */
+export function filterValuePlaceholder(operator: TableFilterOperator): string {
+  switch (operator) {
+    case "IS NULL":
+    case "IS NOT NULL":
+      return "";
+    case "IN":
+    case "NOT IN":
+      return "多个值用英文逗号分隔";
+    case "BETWEEN":
+      return "起始值,结束值";
+    case "LIKE":
+    case "NOT LIKE":
+      return "支持 % 与 _ 通配符";
+    default:
+      return "筛选值";
+  }
+}
+
+/** Splits a comma-separated list while allowing `\,` to escape a literal comma. */
+function splitFilterList(value: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let escaped = false;
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === ",") {
+      items.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  items.push(current);
+  return items;
+}
+
+/** Escapes LIKE wildcards so substring operators match user text literally. */
+function escapeLikeWildcards(value: string): string {
+  return value.replace(/([%_\\])/gu, "\\$1");
+}
+
+/**
+ * Encodes one filter operand as a MySQL literal that matches its column type.
+ * @param value - Untrusted user text.
+ * @param column - Column definition selected from the live table schema.
+ * @returns A safe literal, or a localized validation error message.
+ * Side effects: none.
+ */
+function filterValueLiteral(value: string, column: TableColumnDefinition): string | { error: string } {
+  const baseType = filterBaseType(column.type);
+  const trimmed = value.trim();
+  if (NUMERIC_FILTER_BASE_TYPES.has(baseType)) {
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu.test(trimmed)) {
+      return { error: `${column.name} 需要数值` };
+    }
+    return trimmed;
+  }
+  if (TEMPORAL_FILTER_BASE_TYPES.has(baseType)) {
+    if (trimmed === "") {
+      return { error: `${column.name} 需要时间值` };
+    }
+    return mysqlStringLiteral(trimmed);
+  }
+  return mysqlStringLiteral(value);
+}
+
+/**
+ * Builds one AND/OR-joined predicate for a single enabled condition.
+ * @param condition - Draft condition supplied by the filter bar.
+ * @param column - Matching column definition from the live table schema.
+ * @returns SQL predicate text, or a localized validation error.
+ * Side effects: none.
+ */
+function filterPredicate(
+  condition: TableFilterCondition,
+  column: TableColumnDefinition,
+): string | { error: string } {
+  const identifier = quoteIdentifier(column.name);
+  if (isUnaryFilterOperator(condition.operator)) {
+    return `${identifier} ${condition.operator}`;
+  }
+  if (condition.operator === "IN" || condition.operator === "NOT IN") {
+    const items = splitFilterList(condition.value)
+      .map((item) => item.trim())
+      .filter((item) => item !== "");
+    if (items.length === 0) {
+      return { error: `${column.name} 的 ${condition.operator} 需要至少一个值` };
+    }
+    const literals: string[] = [];
+    for (const item of items) {
+      const literal = filterValueLiteral(item, column);
+      if (typeof literal !== "string") {
+        return literal;
+      }
+      literals.push(literal);
+    }
+    return `${identifier} ${condition.operator} (${literals.join(", ")})`;
+  }
+  if (condition.operator === "BETWEEN") {
+    const bounds = splitFilterList(condition.value);
+    if (bounds.length !== 2 || bounds.some((bound) => bound.trim() === "")) {
+      return { error: `${column.name} 的 BETWEEN 需要用逗号分隔的两个值` };
+    }
+    const lower = filterValueLiteral(bounds[0], column);
+    const upper = filterValueLiteral(bounds[1], column);
+    if (typeof lower !== "string") {
+      return lower;
+    }
+    if (typeof upper !== "string") {
+      return upper;
+    }
+    return `${identifier} BETWEEN ${lower} AND ${upper}`;
+  }
+  if (
+    condition.operator === "CONTAINS" ||
+    condition.operator === "STARTS_WITH" ||
+    condition.operator === "ENDS_WITH"
+  ) {
+    if (condition.value === "") {
+      return { error: `${column.name} 需要筛选值` };
+    }
+    const escaped = escapeLikeWildcards(condition.value);
+    const pattern = condition.operator === "CONTAINS"
+      ? `%${escaped}%`
+      : condition.operator === "STARTS_WITH"
+        ? `${escaped}%`
+        : `%${escaped}`;
+    return `${identifier} LIKE ${mysqlStringLiteral(pattern)} ESCAPE '\\\\'`;
+  }
+  if (condition.operator === "LIKE" || condition.operator === "NOT LIKE") {
+    if (condition.value === "") {
+      return { error: `${column.name} 需要筛选值` };
+    }
+    return `${identifier} ${condition.operator} ${mysqlStringLiteral(condition.value)}`;
+  }
+  const literal = filterValueLiteral(condition.value, column);
+  if (typeof literal !== "string") {
+    return literal;
+  }
+  return `${identifier} ${condition.operator} ${literal}`;
+}
+
+export interface TableFilterClause {
+  /** Complete clause beginning with ` WHERE`, or an empty string when inactive. */
+  where: string;
+  /** Localized validation errors that block submission. */
+  errors: string[];
+  /** Number of conditions contributing to the clause. */
+  activeCount: number;
+}
+
+/**
+ * Compiles quick-filter conditions into one MySQL WHERE clause.
+ * @param conditions - Ordered conditions from the filter bar.
+ * @param schema - Live table schema that authorizes every referenced column.
+ * @returns The clause, its validation errors, and the applied condition count.
+ * Side effects: none. Column names are matched against the schema and quoted, operators come from a
+ * closed allowlist, and every operand is encoded as a literal, so user text can never alter structure.
+ */
+export function buildTableFilterClause(
+  conditions: readonly TableFilterCondition[],
+  schema: readonly TableColumnDefinition[],
+): TableFilterClause {
+  const columnsByName = new Map(schema.map((column) => [column.name, column]));
+  const errors: string[] = [];
+  const parts: { predicate: string; conjunction: TableFilterConjunction }[] = [];
+  for (const condition of conditions) {
+    // A half-written row is incomplete rather than wrong, so it is ignored without an error.
+    const incomplete = !isUnaryFilterOperator(condition.operator) && condition.value.trim() === "";
+    if (!condition.enabled || condition.columnName === "" || incomplete) {
+      continue;
+    }
+    const column = columnsByName.get(condition.columnName);
+    if (!column) {
+      errors.push(`字段 ${condition.columnName} 不在当前表结构中`);
+      continue;
+    }
+    if (!TABLE_FILTER_OPERATORS.includes(condition.operator)) {
+      errors.push(`字段 ${column.name} 使用了不支持的比较符`);
+      continue;
+    }
+    if (!filterOperatorsForColumnType(column.type).includes(condition.operator)) {
+      errors.push(`${column.name}（${column.type}）不支持该比较符`);
+      continue;
+    }
+    const predicate = filterPredicate(condition, column);
+    if (typeof predicate !== "string") {
+      errors.push(predicate.error);
+      continue;
+    }
+    parts.push({ predicate, conjunction: condition.conjunction });
+  }
+  if (errors.length > 0 || parts.length === 0) {
+    return { where: "", errors: [...new Set(errors)], activeCount: 0 };
+  }
+  // Mixed AND/OR is grouped strictly left to right so the executed clause matches the visual order
+  // instead of silently following MySQL's AND-before-OR precedence.
+  const mixed = new Set(parts.slice(1).map((part) => part.conjunction)).size > 1;
+  let clause = parts[0].predicate;
+  for (const [index, part] of parts.slice(1).entries()) {
+    const grouped = mixed && index > 0;
+    clause = grouped
+      ? `(${clause}) ${part.conjunction} ${part.predicate}`
+      : `${clause} ${part.conjunction} ${part.predicate}`;
+  }
+  return { where: ` WHERE ${clause}`, errors: [], activeCount: parts.length };
+}
+
+/**
+ * Produces the human-readable summary shown on the collapsed filter bar.
+ * @param conditions - Ordered conditions from the filter bar.
+ * @returns A compact description of enabled conditions, or an empty string.
+ * Side effects: none.
+ */
+export function describeTableFilter(conditions: readonly TableFilterCondition[]): string {
+  const active = conditions.filter((condition) => condition.enabled &&
+    condition.columnName !== "" &&
+    (isUnaryFilterOperator(condition.operator) || condition.value.trim() !== ""));
+  return active
+    .map((condition, index) => {
+      const label = isUnaryFilterOperator(condition.operator)
+        ? `${condition.columnName} ${condition.operator}`
+        : `${condition.columnName} ${TABLE_FILTER_OPERATOR_LABELS[condition.operator].replace(/\s*\(.*\)$/u, "")} ${condition.value}`;
+      return index === 0 ? label : `${condition.conjunction} ${label}`;
+    })
+    .join(" ");
+}
+
 /**
  * Formats one complete MySQL column definition for ADD or CHANGE.
  * @param column - Visual column definition.

@@ -88,9 +88,8 @@ async function assertGroupedConnectionSelection(): Promise<void> {
   expect(within(postgresqlGroup).getByRole("button", { name: "展开 PostgreSQL 连接分组" })).toHaveAttribute("aria-expanded", "false");
   expect(within(mongodbGroup).getByRole("button", { name: "展开 MongoDB 连接分组" })).toHaveAttribute("aria-expanded", "false");
   expect(within(redisGroup).getByRole("button", { name: "展开 Redis 连接分组" })).toHaveAttribute("aria-expanded", "false");
-  expect(within(mysqlGroup).getByRole("button", { name: /订单主库/ })).toHaveStyle({
-    minHeight: "40px",
-  });
+  // Row density is owned by the stylesheet; the inline 40px override used to fight the 42px rule.
+  expect(within(mysqlGroup).getByRole("button", { name: /订单主库/ })).toHaveClass("connection-row");
   expect(within(mysqlGroup).getByRole("button", { name: /本地开发/ })).toBeVisible();
   expect(within(postgresqlGroup).queryByText("订单主库")).not.toBeInTheDocument();
 
@@ -490,6 +489,134 @@ function assertTableKeyboardNavigation(): void {
   expect(selectConnection).toHaveBeenLastCalledWith(MYSQL_CONNECTIONS[0].id);
 }
 
+/** Verifies an open drawer is remembered and restored on the next mount. */
+function assertExpansionSurvivesRemount(): void {
+  render(
+    <ConnectionSidebar
+      profiles={MYSQL_CONNECTIONS}
+      selectedConnectionId={null}
+      onSelectConnection={vi.fn()}
+      onAddConnection={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
+  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).toContain(
+    MYSQL_CONNECTIONS[0].id,
+  );
+  cleanup();
+
+  render(
+    <ConnectionSidebar
+      profiles={MYSQL_CONNECTIONS}
+      selectedConnectionId={null}
+      onSelectConnection={vi.fn()}
+      onAddConnection={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+  expect(screen.queryByLabelText("本地开发 数据表")).not.toBeInTheDocument();
+
+  // Collapsing must be remembered too, otherwise the drawer would reopen on every launch.
+  // The name is anchored because the open drawer's find/refresh buttons also mention the profile.
+  fireEvent.click(screen.getByRole("button", { name: /^订单主库/ }));
+  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).not.toContain(
+    MYSQL_CONNECTIONS[0].id,
+  );
+}
+
+/** Verifies restored expansion drops connections the user has since deleted. */
+function assertRestoredExpansionPrunesDeletedConnections(): void {
+  window.localStorage.setItem(
+    "pipa.expanded-connections.v1",
+    JSON.stringify([MYSQL_CONNECTIONS[0].id, "deleted-connection"]),
+  );
+  render(
+    <ConnectionSidebar
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={null}
+      onSelectConnection={vi.fn()}
+      onAddConnection={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).not.toContain(
+    "deleted-connection",
+  );
+}
+
+/** Verifies the navigator is one traversal ring with a single Tab stop. */
+function assertSingleTabStopTreeTraversal(): void {
+  tableSession.state.rows = [
+    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
+    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
+  ];
+  render(
+    <ConnectionSidebar
+      profiles={MYSQL_CONNECTIONS}
+      selectedConnectionId={null}
+      onSelectConnection={vi.fn()}
+      onAddConnection={vi.fn()}
+    />,
+  );
+
+  const firstConnection = screen.getByRole("button", { name: /订单主库/ });
+  const secondConnection = screen.getByRole("button", { name: /本地开发/ });
+  // Before any interaction the first connection owns the only Tab stop.
+  expect(firstConnection).toHaveAttribute("tabindex", "0");
+  expect(secondConnection).toHaveAttribute("tabindex", "-1");
+
+  fireEvent.keyDown(firstConnection, { key: "Enter" });
+  const orders = screen.getByRole("treeitem", { name: "orders" });
+  const customers = screen.getByRole("treeitem", { name: "customers" });
+  expect(orders).toHaveAttribute("tabindex", "-1");
+
+  // ArrowRight on an already open drawer steps into its children instead of doing nothing.
+  fireEvent.keyDown(firstConnection, { key: "ArrowRight" });
+  expect(orders).toHaveFocus();
+  expect(orders).toHaveAttribute("tabindex", "0");
+  expect(firstConnection).toHaveAttribute("tabindex", "-1");
+
+  // Arrows cross the boundary from the last child into the next connection.
+  fireEvent.keyDown(orders, { key: "ArrowDown" });
+  expect(customers).toHaveFocus();
+  fireEvent.keyDown(customers, { key: "ArrowDown" });
+  expect(secondConnection).toHaveFocus();
+  fireEvent.keyDown(secondConnection, { key: "ArrowUp" });
+  expect(customers).toHaveFocus();
+
+  // Home and End reach the ends of the whole tree, not just one container.
+  fireEvent.keyDown(customers, { key: "End" });
+  expect(secondConnection).toHaveFocus();
+  fireEvent.keyDown(secondConnection, { key: "Home" });
+  expect(firstConnection).toHaveFocus();
+}
+
+/** Verifies rows already open as workspace tabs are marked from real tab state. */
+function assertOpenObjectsAreMarked(): void {
+  tableSession.state.rows = [
+    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
+    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
+  ];
+  render(
+    <ConnectionSidebar
+      profiles={[MYSQL_CONNECTIONS[0]]}
+      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
+      onAddConnection={vi.fn()}
+      onSelectConnection={vi.fn()}
+      openObjects={[{ connectionId: MYSQL_CONNECTIONS[0].id, objectName: "orders" }]}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
+  const orders = screen.getByRole("treeitem", { name: "orders" });
+  expect(orders).toHaveClass("is-open");
+  expect(orders).toHaveAttribute("title", expect.stringContaining("已在工作区打开"));
+  expect(screen.getByRole("treeitem", { name: "customers" })).not.toHaveClass("is-open");
+}
+
 /** Verifies scoped find focuses the sidebar-wide navigator search. */
 function assertScopedTableSearchShortcut(): void {
   expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
@@ -631,6 +758,10 @@ function registerConnectionSidebarTests(): void {
   it("requests connection deletion from its context menu", assertContextMenuRequestsDeletion);
   it("navigates and expands connections from the keyboard", assertConnectionKeyboardNavigation);
   it("navigates and opens tables from the keyboard", assertTableKeyboardNavigation);
+  it("restores open drawers after a remount", assertExpansionSurvivesRemount);
+  it("prunes restored expansion for deleted connections", assertRestoredExpansionPrunesDeletedConnections);
+  it("traverses the whole tree from one Tab stop", assertSingleTabStopTreeTraversal);
+  it("marks objects already open as workspace tabs", assertOpenObjectsAreMarked);
   it("focuses the unified navigator search with scoped find", assertScopedTableSearchShortcut);
   it("marks dirty tables and their owning connections", assertDirtyObjectIndicators);
   it("reports loaded tables for global discovery", assertLoadedTablesAreReported);
