@@ -337,6 +337,80 @@ mod tests {
         );
     }
 
+    /// Verifies editing non-secret fields, including the default database, keeps the credential.
+    #[test]
+    fn updating_connection_profile_preserves_credential() {
+        let (_directory, store) = test_store("update-profile-key");
+        let mut profile = mysql_profile();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("update-password"))
+            .unwrap();
+
+        profile.name = "Edited MySQL".into();
+        profile.host = "db.internal".into();
+        profile.port = 3307;
+        profile.username = "editor".into();
+        profile.database = Some("analytics".into());
+        profile.environment = Environment::Production;
+        profile.tls_mode = TlsMode::Required;
+        let updated = store.update_connection_profile(&profile).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(updated).unwrap(),
+            serde_json::to_value(&profile).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(store.list_connections().unwrap()).unwrap(),
+            serde_json::to_value([&profile]).unwrap()
+        );
+        assert_eq!(
+            store
+                .get_connection_credential(profile.id)
+                .unwrap()
+                .expose_secret(),
+            "update-password"
+        );
+    }
+
+    /// Verifies the default database can be cleared back to "unset" by an edit.
+    #[test]
+    fn updating_connection_profile_can_clear_default_database() {
+        let (_directory, store) = test_store("clear-database-key");
+        let mut profile = mysql_profile();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("clear-password"))
+            .unwrap();
+
+        profile.database = None;
+        let updated = store.update_connection_profile(&profile).unwrap();
+
+        assert_eq!(updated.database, None);
+        assert_eq!(store.get_connection(profile.id).unwrap().database, None);
+    }
+
+    /// Verifies an in-place engine change is refused rather than silently rewriting the profile.
+    #[test]
+    fn updating_connection_profile_refuses_engine_change() {
+        let (_directory, store) = test_store("engine-change-key");
+        let profile = mysql_profile();
+        store
+            .save_connection_with_credential(&profile, &SecretString::from("engine-password"))
+            .unwrap();
+
+        let error = store
+            .update_connection_profile(&ConnectionProfile {
+                engine: Engine::Redis,
+                ..profile.clone()
+            })
+            .unwrap_err();
+
+        assert!(matches!(error.code, pipa_core::AppErrorCode::NotFound));
+        assert_eq!(
+            serde_json::to_value(store.get_connection(profile.id).unwrap()).unwrap(),
+            serde_json::to_value(&profile).unwrap()
+        );
+    }
+
     /// Verifies reading or renaming an unknown connection returns the stable not-found category.
     #[test]
     fn unknown_connection_profile_returns_not_found() {
@@ -347,14 +421,25 @@ mod tests {
         let rename_error = store
             .rename_connection(connection_id, "Missing")
             .unwrap_err();
+        let update_error = store
+            .update_connection_profile(&ConnectionProfile {
+                id: connection_id,
+                ..mysql_profile()
+            })
+            .unwrap_err();
 
         assert!(matches!(read_error.code, pipa_core::AppErrorCode::NotFound));
         assert!(matches!(
             rename_error.code,
             pipa_core::AppErrorCode::NotFound
         ));
+        assert!(matches!(
+            update_error.code,
+            pipa_core::AppErrorCode::NotFound
+        ));
         assert_eq!(read_error.message, "Database connection was not found");
         assert_eq!(rename_error.message, "Database connection was not found");
+        assert_eq!(update_error.message, "Database connection was not found");
     }
 
     /// Verifies deletion is atomic, removes related local data, and is safe to retry.

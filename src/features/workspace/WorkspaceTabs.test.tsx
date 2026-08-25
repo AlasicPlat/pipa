@@ -10,10 +10,11 @@ const QUERY_TAB = {
   position: 0,
 };
 const TABLE_TAB = {
-  id: "connection-1:orders",
+  id: "connection-1\u0000shop\u0000orders",
   connectionId: "connection-1",
+  database: "shop",
   tableName: "orders",
-  title: "本地开发 · orders",
+  title: "本地开发 · shop.orders",
 };
 const UTILITY_TAB = {
   id: "binlog-analysis",

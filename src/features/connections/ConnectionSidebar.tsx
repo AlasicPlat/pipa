@@ -1,16 +1,8 @@
-import { Check, ChevronRight, Copy, Database, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { Check, ChevronRight, Database, DatabasePlus, KeyRound, LoaderCircle, Plus, RefreshCw, Search, Settings2, Table2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
-import type { Engine } from "../../bindings/Engine";
-import type { Environment } from "../../bindings/Environment";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
-import {
-  loadEngineSectionCollapseOverrides,
-  loadExpandedConnectionIds,
-  persistEngineSectionCollapseOverrides,
-  persistExpandedConnectionIds,
-} from "../preferences/sidebarLayout";
 import { executeQueryOnce } from "../query/executeQueryOnce";
 import { useQuerySession } from "../query/useQuerySession";
 import {
@@ -18,6 +10,11 @@ import {
   tableTargetKey,
   type TableQuickAction,
 } from "../tables/TableActionMenu";
+import {
+  buildShowTablesStatement,
+  listMySqlDatabases,
+  type MySqlDatabaseInfo,
+} from "./mysqlDatabases";
 
 interface ConnectionSidebarProps {
   discoverTables?: boolean;
@@ -29,41 +26,39 @@ interface ConnectionSidebarProps {
   selectedConnectionId: string | null;
   /** Tables, views, and Redis keys already open as workspace tabs. */
   openObjects?: readonly { connectionId: string; objectName: string }[];
-  tableCatalog?: Readonly<Record<string, readonly string[]>>;
+  /** Loaded table names per connection, then per schema. */
+  tableCatalog?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>;
   tableCatalogRefreshVersions?: Readonly<Record<string, number>>;
   onFocusConnectionHandled?: () => void;
   onFindTables?: (connectionId?: string) => void;
-  onSelectConnection: (id: string) => void;
   onAddConnection: () => void;
-  onCopyConfig?: (profile: ConnectionProfile) => void;
+  /** Opens the connection manager, optionally landing on one connection's databases. */
+  onOpenConnectionManager?: (connectionId?: string, view?: "profile" | "databases") => void;
   onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
-  onOpenTable?: (connectionId: string, tableName: string) => void;
-  onReconnect?: (profile: ConnectionProfile) => void;
-  onRequestRename?: (profile: ConnectionProfile) => void;
-  onRequestDelete?: (profile: ConnectionProfile) => void;
+  onOpenTable?: (connectionId: string, database: string, tableName: string) => void;
+  onRequestCreateDatabase?: (profile: ConnectionProfile) => void;
   onSelectRedisDatabase?: (connectionId: string, database: string) => void;
+  /** Records the schema the navigator is browsing for one MySQL connection. */
+  onSelectDatabase?: (connectionId: string, database: string) => void;
   onRequestTableAction?: (
     connectionId: string,
+    database: string,
     tableName: string,
     action: TableQuickAction,
   ) => void;
-  onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
-  reconnectingConnectionId?: string | null;
+  onTablesLoaded?: (connectionId: string, database: string, tableNames: string[]) => void;
   selectedRedisDatabases?: Readonly<Record<string, string>>;
+  /** Schema currently browsed per MySQL connection; falls back to each profile default. */
+  selectedDatabases?: Readonly<Record<string, string>>;
 }
 
-interface EngineGroup {
-  engine: Engine;
-  label: string;
-}
+
 
 interface ConnectionDrawerProps {
   discoverTables: boolean;
   dirtyTableNames: ReadonlySet<string>;
-  expanded: boolean;
   profile: ConnectionProfile;
   pinnedTableKeys: ReadonlySet<string>;
-  selected: boolean;
   tableFilter: string;
   tableCatalogRefreshVersion: number;
   /** Object names already open as workspace tabs for this connection. */
@@ -72,20 +67,24 @@ interface ConnectionDrawerProps {
   activeRowKey: TreeRowKey | null;
   onActiveRowKeyChange: (rowKey: TreeRowKey) => void;
   onOpenRedisKey?: (connectionId: string, database: string, keyName: string) => void;
-  onOpenTable?: (connectionId: string, tableName: string) => void;
+  onOpenTable?: (connectionId: string, database: string, tableName: string) => void;
   onFindTables?: (connectionId?: string) => void;
-  onOpenContextMenu: (profile: ConnectionProfile, x: number, y: number) => void;
+  onRequestCreateDatabase?: (profile: ConnectionProfile) => void;
   onOpenTableContextMenu: (
     connectionId: string,
+    database: string,
     tableName: string,
     x: number,
     y: number,
   ) => void;
-  onSelect: (connectionId: string) => void;
   onSelectRedisDatabase?: (connectionId: string, database: string) => void;
-  onTablesLoaded?: (connectionId: string, tableNames: string[]) => void;
-  onToggle: (connectionId: string) => void;
+  onSelectDatabase?: (connectionId: string, database: string) => void;
+  onTablesLoaded?: (connectionId: string, database: string, tableNames: string[]) => void;
+  /** Returns focus to the navigator's search box when the user steps out of the object list. */
+  onLeaveObjectList: () => void;
   selectedRedisDatabase?: string;
+  /** Schema this drawer is browsing, when it differs from the profile default. */
+  selectedDatabase?: string;
 }
 
 interface RedisDatabaseInfo {
@@ -95,53 +94,19 @@ interface RedisDatabaseInfo {
   averageTtlMs: number;
 }
 
-/**
- * Returns whether a connection's identity fields match a normalized navigator query.
- * @param profile - Saved connection profile.
- * @param normalizedQuery - Lowercased trimmed search text.
- * @returns `true` when name, host, port, or database contains the query.
- * Side effects: none.
- */
-function connectionIdentityMatches(profile: ConnectionProfile, normalizedQuery: string): boolean {
-  if (!normalizedQuery) {
-    return true;
-  }
-  return [profile.name, profile.host, String(profile.port), profile.database ?? ""]
-    .join(" ")
-    .toLocaleLowerCase()
-    .includes(normalizedQuery);
-}
-
-interface ConnectionContextMenuState {
-  profileId: string;
-  x: number;
-  y: number;
-}
-
 interface TableContextMenuState {
   connectionId: string;
+  database: string;
   tableName: string;
   x: number;
   y: number;
 }
 
-/** Shared empty set so connections without open objects keep a stable prop reference. */
-const EMPTY_NAME_SET: ReadonlySet<string> = new Set();
 
-const ENGINE_GROUPS: readonly EngineGroup[] = [
-  { engine: "my_sql", label: "MySQL" },
-  { engine: "postgre_sql", label: "PostgreSQL" },
-  { engine: "mongo_db", label: "MongoDB" },
-  { engine: "redis", label: "Redis" },
-];
+
 
 /** Stable identity for one navigable sidebar row, used for roving tabindex. */
 type TreeRowKey = string;
-
-/** Builds the row key for one connection row. */
-function connectionRowKey(connectionId: string): TreeRowKey {
-  return `connection\u0000${connectionId}`;
-}
 
 /** Builds the row key for one table, view, or Redis key row. */
 function objectRowKey(connectionId: string, objectName: string): TreeRowKey {
@@ -190,21 +155,6 @@ function focusAdjacentTreeRow(
 }
 
 /**
- * Returns a compact, user-facing label for a profile environment.
- * @param environment - Stored connection environment.
- * @returns The corresponding Chinese badge label.
- * Side effects: none.
- */
-function getEnvironmentLabel(environment: Environment): string {
-  const labels: Record<Environment, string> = {
-    production: "生产",
-    development: "开发",
-    unspecified: "未指定",
-  };
-  return labels[environment];
-}
-
-/**
  * Converts a streamed metadata cell into text without losing exact numeric values.
  * @param cell - Optional transport-safe database cell.
  * @returns Compact table-tree text.
@@ -226,15 +176,7 @@ function cellText(cell: CellValue | undefined): string {
   return String(cell.value);
 }
 
-/**
- * Returns the metadata command used to populate one MySQL connection drawer.
- * Parameters: none.
- * @returns Native MySQL table metadata command.
- * Side effects: none.
- */
-function metadataCommand(): string {
-  return "SHOW FULL TABLES;";
-}
+
 
 /**
  * Extracts the table identity from one MySQL metadata result row.
@@ -287,6 +229,209 @@ function parseRedisDatabases(
   );
 }
 
+interface DatabaseSwitcherProps {
+  activeDatabase: string;
+  defaultDatabase: string | null;
+  profile: ConnectionProfile;
+  onSelectDatabase: (database: string) => void;
+  onRequestCreateDatabase?: (profile: ConnectionProfile) => void;
+}
+
+/**
+ * Renders the current schema as a switcher that swaps the table list in place.
+ *
+ * A switcher rather than a tree level: only one schema is browsed at a time, so listing every
+ * schema as a permanently collapsed node would add depth without adding reachable content.
+ * @param props - Current and default schema, owning profile, and selection callbacks.
+ * @returns One collapsed control that expands into the connection's visible schema list.
+ * Side effects: loads the schema list from the server the first time it is opened.
+ */
+function DatabaseSwitcher({
+  activeDatabase,
+  defaultDatabase,
+  profile,
+  onSelectDatabase,
+  onRequestCreateDatabase,
+}: DatabaseSwitcherProps) {
+  const [open, setOpen] = useState(false);
+  const [databases, setDatabases] = useState<MySqlDatabaseInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showSystem, setShowSystem] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+  const userDatabases = databases.filter((database) => !database.system);
+  const systemDatabases = databases.filter((database) => database.system);
+
+  /** Loads the connection's visible schema list on demand. */
+  const loadDatabases = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      setDatabases(await listMySqlDatabases(profile.id));
+    } catch (loadError: unknown) {
+      setError(
+        typeof loadError === "object"
+        && loadError !== null
+        && "message" in loadError
+        && typeof loadError.message === "string"
+          ? loadError.message
+          : "无法读取数据库列表。",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [profile.id]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (databases.length === 0 && !loading) {
+      void loadDatabases();
+    }
+    firstItemRef.current?.focus();
+  }, [databases.length, loadDatabases, loading, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    /** Closes the list after a pointer action outside it. */
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".database-switcher")) {
+        setOpen(false);
+      }
+    }
+    /** Closes the list with Escape and restores focus to its trigger. */
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  /** Applies one schema choice and collapses the list. */
+  function handleSelect(database: string): void {
+    setOpen(false);
+    triggerRef.current?.focus();
+    if (database !== activeDatabase) {
+      onSelectDatabase(database);
+    }
+  }
+
+  return (
+    <div className="database-switcher">
+      <button
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={`数据库：${activeDatabase || "未选择"}（${profile.name}）；点击切换`}
+        className="database-switcher__trigger"
+        onClick={() => setOpen((current) => !current)}
+        ref={triggerRef}
+        title="切换此连接浏览的数据库"
+        type="button"
+      >
+        <Database size={13} strokeWidth={1.7} aria-hidden="true" />
+        <span>{activeDatabase || "选择数据库"}</span>
+        {activeDatabase && activeDatabase === defaultDatabase ? <small>默认</small> : null}
+        <ChevronRight className="database-switcher__chevron" size={13} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="database-switcher__panel" role="listbox" aria-label={`${profile.name} 数据库`}>
+          {loading && databases.length === 0 ? (
+            <p className="database-switcher__status">正在读取数据库…</p>
+          ) : error ? (
+            <p className="database-switcher__status database-switcher__status--error" role="alert">
+              {error}
+            </p>
+          ) : (
+            <>
+              {userDatabases.length === 0 ? (
+                <p className="database-switcher__status">此连接没有可浏览的数据库。</p>
+              ) : userDatabases.map((database, index) => (
+                <button
+                  aria-selected={database.name === activeDatabase}
+                  className="database-switcher__item"
+                  key={database.name}
+                  onClick={() => handleSelect(database.name)}
+                  ref={index === 0 ? firstItemRef : undefined}
+                  role="option"
+                  title={`${database.charset} · ${database.collation}`}
+                  type="button"
+                >
+                  {database.name === activeDatabase
+                    ? <Check size={12} aria-hidden="true" />
+                    : <span className="database-switcher__item-spacer" aria-hidden="true" />}
+                  <span>{database.name}</span>
+                  {database.name === defaultDatabase ? <small>默认</small> : null}
+                </button>
+              ))}
+              {systemDatabases.length > 0 ? (
+                <>
+                  <span className="database-switcher__separator" role="separator" />
+                  <button
+                    aria-expanded={showSystem}
+                    className="database-switcher__system-toggle"
+                    onClick={() => setShowSystem((current) => !current)}
+                    type="button"
+                  >
+                    <ChevronRight
+                      className={showSystem ? "is-expanded" : undefined}
+                      size={12}
+                      aria-hidden="true"
+                    />
+                    系统库 <small>{systemDatabases.length}</small>
+                  </button>
+                  {showSystem ? systemDatabases.map((database) => (
+                    <button
+                      aria-selected={database.name === activeDatabase}
+                      className="database-switcher__item"
+                      key={database.name}
+                      onClick={() => handleSelect(database.name)}
+                      role="option"
+                      type="button"
+                    >
+                      {database.name === activeDatabase
+                        ? <Check size={12} aria-hidden="true" />
+                        : <span className="database-switcher__item-spacer" aria-hidden="true" />}
+                      <span>{database.name}</span>
+                    </button>
+                  )) : null}
+                </>
+              ) : null}
+              {onRequestCreateDatabase ? (
+                <>
+                  <span className="database-switcher__separator" role="separator" />
+                  <button
+                    className="database-switcher__create"
+                    onClick={() => {
+                      setOpen(false);
+                      onRequestCreateDatabase(profile);
+                    }}
+                    type="button"
+                  >
+                    <DatabasePlus size={12} aria-hidden="true" />
+                    新建数据库…
+                  </button>
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Renders one independently expandable connection and its lazily loaded object list.
  * @param props - Connection identity, drawer state, and navigation callbacks.
@@ -296,10 +441,8 @@ function parseRedisDatabases(
 function ConnectionDrawer({
   discoverTables,
   dirtyTableNames,
-  expanded,
   profile,
   pinnedTableKeys,
-  selected,
   tableFilter,
   tableCatalogRefreshVersion,
   openObjectNames,
@@ -308,20 +451,24 @@ function ConnectionDrawer({
   onOpenRedisKey,
   onOpenTable,
   onFindTables,
-  onOpenContextMenu,
+  onRequestCreateDatabase,
   onOpenTableContextMenu,
-  onSelect,
   onSelectRedisDatabase,
+  onSelectDatabase,
   onTablesLoaded,
-  onToggle,
+  onLeaveObjectList,
   selectedRedisDatabase,
+  selectedDatabase,
 }: ConnectionDrawerProps) {
   const tables = useQuerySession(profile.id, { recordHistory: false });
-  const connectionButtonRef = useRef<HTMLButtonElement>(null);
   const supportsExplorer = profile.engine === "my_sql" || profile.engine === "redis";
-  const canExplore = profile.engine === "redis"
-    || (profile.engine === "my_sql" && Boolean(profile.database));
   const isRedis = profile.engine === "redis";
+  // The switcher's choice wins over the profile default, so a connection saved without one can
+  // still browse as soon as a database is picked.
+  const activeDatabase = isRedis
+    ? null
+    : selectedDatabase ?? profile.database ?? null;
+  const canExplore = isRedis || Boolean(activeDatabase);
 
   const [redisDatabases, setRedisDatabases] = useState<RedisDatabaseInfo[]>([]);
   const [expandedRedisDatabase, setExpandedRedisDatabase] = useState<string | null>(null);
@@ -332,13 +479,14 @@ function ConnectionDrawer({
   const redisDatabaseRequestIdRef = useRef(0);
   const redisKeyRequestIdRef = useRef(0);
   const tableCatalogRefreshVersionRef = useRef(0);
+  const loadedDatabaseRef = useRef<string | null>(null);
   const normalizedTableFilter = tableFilter.trim().toLocaleLowerCase();
   const objectRows = tables.state.rows.filter((row) => Boolean(objectName(row)));
   const visibleTableRows = objectRows
     .filter((row) => objectName(row).toLocaleLowerCase().includes(normalizedTableFilter))
     .sort((left, right) => (
-      Number(pinnedTableKeys.has(tableTargetKey(profile.id, objectName(right))))
-      - Number(pinnedTableKeys.has(tableTargetKey(profile.id, objectName(left))))
+      Number(pinnedTableKeys.has(tableTargetKey(profile.id, activeDatabase ?? "", objectName(right))))
+      - Number(pinnedTableKeys.has(tableTargetKey(profile.id, activeDatabase ?? "", objectName(left))))
     ));
   const visibleRedisKeys = redisKeys.filter((key) =>
     key.toLocaleLowerCase().includes(normalizedTableFilter),
@@ -367,11 +515,15 @@ function ConnectionDrawer({
     ) {
       return;
     }
+    if (!activeDatabase) {
+      return;
+    }
     onTablesLoaded?.(
       profile.id,
+      activeDatabase,
       tables.state.rows.map((row) => cellText(row[0])).filter(Boolean),
     );
-  }, [onTablesLoaded, profile.engine, profile.id, tables.state.error, tables.state.queryId, tables.state.rows, tables.state.running]);
+  }, [activeDatabase, onTablesLoaded, profile.engine, profile.id, tables.state.error, tables.state.queryId, tables.state.rows, tables.state.running]);
 
   useEffect(() => {
     if (
@@ -380,10 +532,11 @@ function ConnectionDrawer({
       && canExplore
       && tables.state.queryId === null
       && !tables.state.running
+      && activeDatabase
     ) {
-      void tables.run(metadataCommand());
+      void tables.run(buildShowTablesStatement(activeDatabase));
     }
-  }, [canExplore, discoverTables, profile, tables.run, tables.state.queryId, tables.state.running]);
+  }, [activeDatabase, canExplore, discoverTables, profile, tables.run, tables.state.queryId, tables.state.running]);
 
   useEffect(() => {
     if (
@@ -392,12 +545,25 @@ function ConnectionDrawer({
       || profile.engine !== "my_sql"
       || !canExplore
       || tables.state.running
+      || !activeDatabase
     ) {
       return;
     }
     tableCatalogRefreshVersionRef.current = tableCatalogRefreshVersion;
-    void tables.run(metadataCommand());
-  }, [canExplore, profile.engine, tableCatalogRefreshVersion, tables.run, tables.state.running]);
+    void tables.run(buildShowTablesStatement(activeDatabase));
+  }, [activeDatabase, canExplore, profile.engine, tableCatalogRefreshVersion, tables.run, tables.state.running]);
+
+  // Switching databases replaces the visible tables in place, without collapsing the navigator.
+  useEffect(() => {
+    if (profile.engine !== "my_sql" || !activeDatabase || tables.state.running) {
+      return;
+    }
+    if (loadedDatabaseRef.current === activeDatabase) {
+      return;
+    }
+    loadedDatabaseRef.current = activeDatabase;
+    void tables.run(buildShowTablesStatement(activeDatabase));
+  }, [activeDatabase, profile.engine, tables.run, tables.state.running]);
 
   /**
    * Loads the Redis database summaries without scanning any database keys.
@@ -449,13 +615,21 @@ function ConnectionDrawer({
     database: string,
     forceRefresh = false,
   ): Promise<void> {
-    onSelect(profile.id);
     onSelectRedisDatabase?.(profile.id, database);
     if (expandedRedisDatabase === database && !forceRefresh) {
       setExpandedRedisDatabase(null);
       return;
     }
+    await scanRedisKeys(database);
+  }
 
+  /**
+   * Lists one Redis database's keys with a bounded SCAN and shows them under that database.
+   * @param database - Redis logical database number to scan.
+   * @returns A promise settled after the latest SCAN request updates the tree.
+   * Side effects: replaces the expanded database and its key list.
+   */
+  async function scanRedisKeys(database: string): Promise<void> {
     const requestId = redisKeyRequestIdRef.current + 1;
     redisKeyRequestIdRef.current = requestId;
     setExpandedRedisDatabase(database);
@@ -493,42 +667,26 @@ function ConnectionDrawer({
     }
   }
 
-  /**
-   * Selects and toggles the drawer, loading table metadata only when it first opens.
-   * Parameters: none.
-   * @returns Nothing (`void`).
-   * Side effects: updates parent state and may start an engine-native metadata query.
-   */
-  function handleToggleRequested(): void {
-    onSelect(profile.id);
-    if (profile.engine !== "my_sql" && profile.engine !== "redis") {
+  // Redis summaries load as soon as the focused connection is a Redis one, because the navigator
+  // no longer has an expand step to trigger them.
+  useEffect(() => {
+    if (!isRedis || redisDatabases.length > 0 || redisDatabasesLoading) {
       return;
     }
-    onToggle(profile.id);
-    if (expanded || !canExplore) {
-      return;
-    }
-    if (isRedis) {
-      if (redisDatabases.length === 0 && !redisDatabasesLoading) {
-        void loadRedisDatabases();
-      }
-    } else if (tables.state.queryId === null) {
-      void tables.run(metadataCommand());
-    }
-  }
+    void loadRedisDatabases();
+    // Mounting per focused connection means this runs once for that connection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRedis]);
 
-  /**
-   * Selects and toggles one connection on the first click of a click sequence.
-   * @param event - Pointer click raised by the connection row.
-   * @returns Nothing (`void`).
-   * Side effects: may select the connection, toggle its drawer, and load object metadata.
-   */
-  function handleConnectionClick(event: MouseEvent<HTMLButtonElement>): void {
-    if (event.detail > 1) {
+  // A workspace can switch the logical database on its own, so the key list follows that choice
+  // instead of showing keys from whichever database was last clicked here.
+  useEffect(() => {
+    if (!isRedis || !selectedRedisDatabase || selectedRedisDatabase === expandedRedisDatabase) {
       return;
     }
-    handleToggleRequested();
-  }
+    void scanRedisKeys(selectedRedisDatabase);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRedis, selectedRedisDatabase]);
 
   /**
    * Moves focus to the adjacent row anywhere in the navigator and claims the Tab stop.
@@ -545,14 +703,6 @@ function ConnectionDrawer({
     const nextRowKey = nextRow.dataset.treeRow;
     if (nextRowKey) {
       onActiveRowKeyChange(nextRowKey);
-    }
-    // Landing on a connection row also makes it current, since the selected connection is what
-    // new queries and the workspace scope follow.
-    const nextConnectionId = nextRow.classList.contains("connection-row")
-      ? nextRow.dataset.connectionId
-      : undefined;
-    if (nextConnectionId) {
-      onSelect(nextConnectionId);
     }
   }
 
@@ -571,66 +721,8 @@ function ConnectionDrawer({
       if (expandedRedisDatabase) {
         void openRedisDatabase(expandedRedisDatabase, true);
       }
-    } else if (!tables.state.running) {
-      void tables.run(metadataCommand());
-    }
-  }
-
-  /** Opens the connection action menu at the pointer location. */
-  function handleContextMenu(event: MouseEvent<HTMLButtonElement>): void {
-    event.preventDefault();
-    onSelect(profile.id);
-    onOpenContextMenu(profile, event.clientX, event.clientY);
-  }
-
-  /** Opens the same action menu from the platform context-menu keyboard shortcut. */
-  function handleConnectionKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
-    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-      event.preventDefault();
-      const bounds = event.currentTarget.getBoundingClientRect();
-      onSelect(profile.id);
-      onOpenContextMenu(profile, bounds.left + 24, bounds.bottom - 4);
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      moveTreeFocus(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
-      return;
-    }
-
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      moveTreeFocus(event.currentTarget, event.key === "Home" ? "first" : "last");
-      return;
-    }
-
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      // Right on an open drawer steps into its children rather than doing nothing.
-      if (expanded) {
-        moveTreeFocus(event.currentTarget, 1);
-      } else {
-        handleToggleRequested();
-      }
-      return;
-    }
-
-    if (event.key === "ArrowLeft" && expanded) {
-      event.preventDefault();
-      onToggle(profile.id);
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      handleToggleRequested();
-      return;
-    }
-
-    if (event.key === "Escape" && expanded) {
-      event.preventDefault();
-      onToggle(profile.id);
+    } else if (!tables.state.running && activeDatabase) {
+      void tables.run(buildShowTablesStatement(activeDatabase));
     }
   }
 
@@ -653,38 +745,32 @@ function ConnectionDrawer({
     ) {
       event.preventDefault();
       const bounds = event.currentTarget.getBoundingClientRect();
-      onSelect(profile.id);
       onActiveRowKeyChange(objectRowKey(profile.id, tableName));
-      onOpenTableContextMenu(profile.id, tableName, bounds.left + 24, bounds.bottom - 4);
+      if (activeDatabase) {
+        onOpenTableContextMenu(
+          profile.id,
+          activeDatabase,
+          tableName,
+          bounds.left + 24,
+          bounds.bottom - 4,
+        );
+      }
       return;
     }
 
     if (event.key === "Enter") {
       event.preventDefault();
-      onOpenTable?.(profile.id, tableName);
-      return;
-    }
-
-    if (event.key === "ArrowLeft") {
-      // Left collapses back to the owning connection without discarding the drawer's contents
-      // for the rest of the tree, matching the standard tree pattern.
-      event.preventDefault();
-      event.stopPropagation();
-      onSelect(profile.id);
-      onActiveRowKeyChange(connectionRowKey(profile.id));
-      connectionButtonRef.current?.focus();
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      onSelect(profile.id);
-      if (expanded) {
-        onToggle(profile.id);
+      if (activeDatabase) {
+        onOpenTable?.(profile.id, activeDatabase, tableName);
       }
-      onActiveRowKeyChange(connectionRowKey(profile.id));
-      connectionButtonRef.current?.focus();
+      return;
+    }
+
+    if (event.key === "ArrowLeft" || event.key === "Escape") {
+      // The navigator's root is now the search box, so leaving the list returns focus there.
+      event.preventDefault();
+      event.stopPropagation();
+      onLeaveObjectList();
       return;
     }
 
@@ -713,9 +799,10 @@ function ConnectionDrawer({
     tableName: string,
   ): void {
     event.preventDefault();
-    onSelect(profile.id);
     onActiveRowKeyChange(objectRowKey(profile.id, tableName));
-    onOpenTableContextMenu(profile.id, tableName, event.clientX, event.clientY);
+    if (activeDatabase) {
+      onOpenTableContextMenu(profile.id, activeDatabase, tableName, event.clientX, event.clientY);
+    }
   }
 
   /**
@@ -749,8 +836,7 @@ function ConnectionDrawer({
         void openRedisDatabase(database);
         return;
       }
-      onActiveRowKeyChange(connectionRowKey(profile.id));
-      connectionButtonRef.current?.focus();
+      onLeaveObjectList();
       return;
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -805,64 +891,17 @@ function ConnectionDrawer({
     }
   }
 
-  return (
-    <div className={`connection-drawer${expanded ? " is-expanded" : ""}`}>
-      <button
-        aria-controls={supportsExplorer ? `connection-objects-${profile.id}` : undefined}
-        aria-expanded={supportsExplorer ? expanded : undefined}
-        aria-pressed={selected}
-        aria-selected={selected}
-        className={`connection-row${selected ? " is-selected" : ""}`}
-        data-connection-id={profile.id}
-        data-tree-row={connectionRowKey(profile.id)}
-        onClick={handleConnectionClick}
-        onContextMenu={handleContextMenu}
-        onFocus={() => onActiveRowKeyChange(connectionRowKey(profile.id))}
-        onKeyDown={handleConnectionKeyDown}
-        ref={connectionButtonRef}
-        tabIndex={activeRowKey === connectionRowKey(profile.id) ? 0 : -1}
-        title={supportsExplorer
-          ? `单击或按 Enter ${expanded ? "收起" : "展开"}${isRedis ? "数据库" : "数据表"}`
-          : undefined}
-        type="button"
-      >
-        <span className="connection-row__content">
-          <span className="connection-row__title-line">
-            <span className="connection-row__name">{profile.name}</span>
-            <span className={`environment-badge environment-badge--${profile.environment}`}>
-              {getEnvironmentLabel(profile.environment)}
-            </span>
-            {dirtyTableNames.size > 0 ? (
-              <span
-                aria-label={`${profile.name} 下有未提交修改`}
-                className="object-dirty-indicator"
-                title="此连接下有未提交的表修改"
-              />
-            ) : null}
-          </span>
-          <span
-            className="connection-row__meta"
-            title={isRedis
-              ? `DB ${effectiveRedisDatabase} · ${profile.host}:${profile.port}`
-              : `${profile.database ?? "未指定数据库"} · ${profile.host}:${profile.port}`}
-          >
-            {isRedis
-              ? `DB ${effectiveRedisDatabase}${
-                  selectedRedisDatabase === undefined && !profile.database ? "（默认）" : ""
-                }`
-              : profile.database ?? "未指定数据库"}
-            <span aria-hidden="true"> · </span>
-            {profile.host}:{profile.port}
-          </span>
-        </span>
-        {supportsExplorer ? (
-          <ChevronRight className="connection-row__chevron" size={14} aria-hidden="true" />
-        ) : (
-          <Check className="connection-row__check" size={15} aria-hidden="true" />
-        )}
-      </button>
+  if (!supportsExplorer) {
+    return (
+      <p className="connection-drawer__status">
+        {`${profile.name} 使用的引擎暂不支持对象浏览。`}
+      </p>
+    );
+  }
 
-      {expanded && supportsExplorer && isRedis ? (
+  return (
+    <div className="connection-drawer is-expanded">
+      {isRedis ? (
         <div
           className="connection-drawer__body"
           aria-label={`${profile.name} 数据库`}
@@ -981,15 +1020,23 @@ function ConnectionDrawer({
             </div>
           )}
         </div>
-      ) : expanded && supportsExplorer ? (
+      ) : (
         <div
           className="connection-drawer__body"
           aria-label={`${profile.name} 数据表`}
           id={`connection-objects-${profile.id}`}
         >
+          <DatabaseSwitcher
+            activeDatabase={activeDatabase ?? ""}
+            defaultDatabase={profile.database}
+            onRequestCreateDatabase={onRequestCreateDatabase}
+            onSelectDatabase={(database) => onSelectDatabase?.(profile.id, database)}
+            profile={profile}
+          />
           <header className="connection-drawer__header">
             <span>数据表 <small>{objectRows.length}</small></span>
             <span className="connection-drawer__actions">
+              {/* Creating a schema belongs to the database switcher above, not this table header. */}
               <button
                 aria-label={`在 ${profile.name} 中查找数据表`}
                 disabled={!canExplore}
@@ -1013,8 +1060,8 @@ function ConnectionDrawer({
               </button>
             </span>
           </header>
-          {!profile.database ? (
-            <p className="connection-drawer__status">请先在连接中指定数据库。</p>
+          {!activeDatabase ? (
+            <p className="connection-drawer__status">请先选择一个数据库。</p>
           ) : tables.state.error ? (
             <p className="connection-drawer__status connection-drawer__status--error">
               无法读取数据表：{tables.state.error.message}
@@ -1031,7 +1078,9 @@ function ConnectionDrawer({
                 const tableName = objectName(row);
                 const objectType = cellText(row[1]);
                 const isDirty = dirtyTableNames.has(tableName);
-                const isPinned = pinnedTableKeys.has(tableTargetKey(profile.id, tableName));
+                const isPinned = pinnedTableKeys.has(
+                  tableTargetKey(profile.id, activeDatabase ?? "", tableName),
+                );
                 return (
                   <button
                     aria-selected={activeRowKey === objectRowKey(profile.id, tableName)}
@@ -1042,7 +1091,9 @@ function ConnectionDrawer({
                     key={`${tableName}-${rowIndex}`}
                     onClick={() => {
                       onActiveRowKeyChange(objectRowKey(profile.id, tableName));
-                      onOpenTable?.(profile.id, tableName);
+                      if (activeDatabase) {
+                        onOpenTable?.(profile.id, activeDatabase, tableName);
+                      }
                     }}
                     onContextMenu={objectType === "VIEW"
                       ? undefined
@@ -1081,16 +1132,19 @@ function ConnectionDrawer({
             </div>
           )}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
 
 /**
- * Renders engine groups with independently open connection drawers.
- * @param props - Saved profiles, selection, and connection/table actions.
- * @returns The engine-grouped connection navigator.
- * Side effects: owns only local drawer expansion state.
+ * Renders the object explorer for the one connection currently in focus.
+ *
+ * Only the focused connection appears: switching connections is the picker's job, so the navigator
+ * stays a single list of the objects the user is actually working with.
+ * @param props - The focused profile, its browsed schema, and object actions.
+ * @returns The focused connection's object navigator.
+ * Side effects: owns only local search, focus-row, and menu state.
  */
 export function ConnectionSidebar({
   discoverTables = false,
@@ -1105,162 +1159,73 @@ export function ConnectionSidebar({
   tableCatalogRefreshVersions = {},
   onFocusConnectionHandled,
   onFindTables,
-  onSelectConnection,
   onAddConnection,
-  onCopyConfig,
+  onOpenConnectionManager,
   onOpenRedisKey,
   onOpenTable,
-  onReconnect,
-  onRequestRename,
-  onRequestDelete,
+  onRequestCreateDatabase,
   onRequestTableAction,
   onSelectRedisDatabase,
+  onSelectDatabase,
   onTablesLoaded,
-  reconnectingConnectionId = null,
   selectedRedisDatabases = {},
+  selectedDatabases = {},
 }: ConnectionSidebarProps) {
   const shortcuts = useShortcutSettings();
-  const [expandedConnectionIds, setExpandedConnectionIds] = useState<Set<string>>(
-    loadExpandedConnectionIds,
-  );
-  const [engineCollapseOverrides, setEngineCollapseOverrides] = useState<Map<Engine, boolean>>(
-    loadEngineSectionCollapseOverrides,
-  );
   const [navigatorFilter, setNavigatorFilter] = useState("");
   const [activeRowKey, setActiveRowKey] = useState<TreeRowKey | null>(null);
-  const [contextMenu, setContextMenu] = useState<ConnectionContextMenuState | null>(null);
   const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState | null>(null);
-  const contextMenuItemRef = useRef<HTMLButtonElement>(null);
   const tableContextMenuItemRef = useRef<HTMLButtonElement>(null);
   const navigatorSearchRef = useRef<HTMLInputElement>(null);
-  const contextProfile = profiles.find((profile) => profile.id === contextMenu?.profileId) ?? null;
-  const focusProfile = focusConnectionId
-    ? profiles.find((profile) => profile.id === focusConnectionId) ?? null
-    : null;
   const normalizedNavigatorFilter = navigatorFilter.trim().toLocaleLowerCase();
-  const openObjectNamesByConnection = useMemo(() => {
-    const grouped = new Map<string, Set<string>>();
-    for (const object of openObjects) {
-      const names = grouped.get(object.connectionId) ?? new Set<string>();
-      names.add(object.objectName);
-      grouped.set(object.connectionId, names);
+  const activeProfile = profiles.find((profile) => profile.id === selectedConnectionId) ?? null;
+  const openObjectNames = useMemo(() => new Set(
+    openObjects
+      .filter((object) => object.connectionId === selectedConnectionId)
+      .map((object) => object.objectName),
+  ), [openObjects, selectedConnectionId]);
+  const dirtyTableNames = useMemo(() => new Set(
+    dirtyTables
+      .filter((table) => table.connectionId === selectedConnectionId)
+      .map((table) => table.tableName),
+  ), [dirtyTables, selectedConnectionId]);
+  // Tables already loaded from schemas other than the focused one. The navigator only lists the
+  // focused schema, so these are surfaced separately rather than silently dropped from search.
+  const otherSchemaMatches = useMemo(() => {
+    if (!normalizedNavigatorFilter || !selectedConnectionId) {
+      return [];
     }
-    return grouped;
-  }, [openObjects]);
-  // Exactly one row owns the Tab stop. Before the user touches the tree, that is the first
-  // visible connection, so tabbing in never lands on a row buried far down the list.
-  const firstNavigableConnectionId = useMemo(() => {
-    for (const { engine } of ENGINE_GROUPS) {
-      const candidate = profiles.find((profile) => profile.engine === engine
-        && (!normalizedNavigatorFilter || connectionIdentityMatches(profile, normalizedNavigatorFilter)));
-      if (candidate) {
-        return candidate.id;
-      }
-    }
-    return null;
-  }, [normalizedNavigatorFilter, profiles]);
-  const effectiveActiveRowKey = activeRowKey
-    ?? (firstNavigableConnectionId ? connectionRowKey(firstNavigableConnectionId) : null);
-
-  useEffect(() => {
-    // Restored expansion must not keep ids for connections the user has since deleted.
-    if (profiles.length === 0) {
-      return;
-    }
-    setExpandedConnectionIds((current) => {
-      const pruned = new Set(
-        [...current].filter((id) => profiles.some((profile) => profile.id === id)),
-      );
-      if (pruned.size === current.size) {
-        return current;
-      }
-      persistExpandedConnectionIds(pruned);
-      return pruned;
-    });
-  }, [profiles]);
+    const browsedDatabase = selectedDatabases[selectedConnectionId]
+      ?? activeProfile?.database
+      ?? null;
+    return Object.entries(tableCatalog[selectedConnectionId] ?? {})
+      .filter(([database]) => database !== browsedDatabase)
+      .flatMap(([database, tableNames]) => tableNames
+        .filter((tableName) => tableName.toLocaleLowerCase().includes(normalizedNavigatorFilter))
+        .map((tableName) => ({ database, tableName })))
+      .slice(0, 50);
+  }, [
+    activeProfile,
+    normalizedNavigatorFilter,
+    selectedConnectionId,
+    selectedDatabases,
+    tableCatalog,
+  ]);
 
   useEffect(() => {
     if (!focusConnectionId) {
       return;
     }
-    if (focusProfile) {
-      setEngineCollapseOverrides((current) => {
-        if (current.get(focusProfile.engine) === false) {
-          return current;
-        }
-        const next = new Map(current);
-        next.set(focusProfile.engine, false);
-        persistEngineSectionCollapseOverrides(next);
-        return next;
-      });
-    }
-    setExpandedConnectionIds((current) => {
-      if (current.has(focusConnectionId)) {
-        return current;
-      }
-      const next = new Set(current);
-      next.add(focusConnectionId);
-      persistExpandedConnectionIds(next);
-      return next;
-    });
-    // Wait a frame so the panel can leave `inert` before focusing the row.
+    // Focus now means "reveal the already-current connection's objects", because switching is
+    // handled by the picker. One frame lets the panel leave `inert` before focusing.
     const frame = window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        const trigger = document.querySelector<HTMLButtonElement>(
-          `.connection-row[data-connection-id="${focusConnectionId}"]`,
-        );
-        trigger?.focus();
-        trigger?.scrollIntoView?.({ block: "nearest" });
+        navigatorSearchRef.current?.focus();
         onFocusConnectionHandled?.();
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusConnectionId, focusProfile, onFocusConnectionHandled]);
-
-  useEffect(() => {
-    if (!contextMenu) {
-      return;
-    }
-    const contextProfileId = contextMenu.profileId;
-    contextMenuItemRef.current?.focus();
-
-    /** Closes the menu after an outside pointer action. */
-    function handlePointerDown(event: PointerEvent): void {
-      const target = event.target;
-      if (!(target instanceof Element) || !target.closest(".connection-context-menu")) {
-        setContextMenu(null);
-      }
-    }
-
-    /** Closes the menu with Escape while leaving destructive action explicit. */
-    function handleKeyDown(event: globalThis.KeyboardEvent): void {
-      if (event.key === "Escape") {
-        const trigger = document.querySelector<HTMLButtonElement>(
-          `[data-connection-id="${contextProfileId}"]`,
-        );
-        setContextMenu(null);
-        window.requestAnimationFrame(() => trigger?.focus());
-      }
-    }
-
-    /** Closes the position-bound menu when its viewport geometry changes. */
-    function handleViewportChange(): void {
-      setContextMenu(null);
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("scroll", handleViewportChange, true);
-    window.addEventListener("blur", handleViewportChange);
-    window.addEventListener("resize", handleViewportChange);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("scroll", handleViewportChange, true);
-      window.removeEventListener("blur", handleViewportChange);
-      window.removeEventListener("resize", handleViewportChange);
-    };
-  }, [contextMenu]);
+  }, [focusConnectionId, onFocusConnectionHandled]);
 
   useEffect(() => {
     if (!tableContextMenu) {
@@ -1327,80 +1292,6 @@ export function ConnectionSidebar({
   }, [tableContextMenu]);
 
   /**
-   * Toggles exactly one drawer while preserving every other expanded connection.
-   * @param connectionId - Drawer connection identifier.
-   * @returns Nothing (`void`).
-   * Side effects: updates expansion state and persists it for the next session.
-   */
-  function handleToggleConnection(connectionId: string): void {
-    setExpandedConnectionIds((current) => {
-      const next = new Set(current);
-      if (next.has(connectionId)) {
-        next.delete(connectionId);
-      } else {
-        next.add(connectionId);
-      }
-      persistExpandedConnectionIds(next);
-      return next;
-    });
-  }
-
-  /**
-   * Returns whether an engine section should render collapsed.
-   * Empty groups collapse by default; search hits and locate-focus force open.
-   * @param engine - Engine group identifier.
-   * @param totalCount - Saved connections for that engine.
-   * @param visibleCount - Connections still visible under the navigator filter.
-   * @returns `true` when the section body should be hidden.
-   * Side effects: none.
-   */
-  function isEngineSectionCollapsed(
-    engine: Engine,
-    totalCount: number,
-    visibleCount: number,
-  ): boolean {
-    if (normalizedNavigatorFilter && visibleCount > 0) {
-      return false;
-    }
-    if (focusProfile?.engine === engine) {
-      return false;
-    }
-    const override = engineCollapseOverrides.get(engine);
-    if (override !== undefined) {
-      return override;
-    }
-    return totalCount === 0;
-  }
-
-  /**
-   * Toggles one engine section and remembers the choice across sessions.
-   * @param engine - Engine group to collapse or expand.
-   * @param currentlyCollapsed - Current effective collapsed state before the click.
-   * @returns Nothing (`void`).
-   * Side effects: updates React state and persists the override map.
-   */
-  function handleToggleEngineSection(engine: Engine, currentlyCollapsed: boolean): void {
-    setEngineCollapseOverrides((current) => {
-      const next = new Map(current);
-      next.set(engine, !currentlyCollapsed);
-      persistEngineSectionCollapseOverrides(next);
-      return next;
-    });
-  }
-
-  /** Opens the compact action menu within the visible application viewport. */
-  function handleOpenContextMenu(profile: ConnectionProfile, x: number, y: number): void {
-    const menuWidth = 190;
-    const menuHeight = 154;
-    setTableContextMenu(null);
-    setContextMenu({
-      profileId: profile.id,
-      x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
-    });
-  }
-
-  /**
    * Opens the compact destructive-action menu for one exact table.
    * @param connectionId - Connection that owns the table.
    * @param tableName - Database-reported table name.
@@ -1411,48 +1302,20 @@ export function ConnectionSidebar({
    */
   function handleOpenTableContextMenu(
     connectionId: string,
+    database: string,
     tableName: string,
     x: number,
     y: number,
   ): void {
     const menuWidth = 220;
     const menuHeight = 390;
-    setContextMenu(null);
     setTableContextMenu({
       connectionId,
+      database,
       tableName,
       x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
     });
-  }
-
-  /**
-   * Returns catalog table names under one connection that match the navigator query.
-   * @param connectionId - Saved connection identifier.
-   * @returns Matching table names from the already-loaded catalog.
-   * Side effects: none.
-   */
-  function matchingCatalogTables(connectionId: string): readonly string[] {
-    if (!normalizedNavigatorFilter) {
-      return [];
-    }
-    return (tableCatalog[connectionId] ?? []).filter((tableName) => (
-      tableName.toLocaleLowerCase().includes(normalizedNavigatorFilter)
-    ));
-  }
-
-  /**
-   * Returns whether one connection should remain visible under the current navigator filter.
-   * @param profile - Candidate connection.
-   * @returns `true` when identity or loaded table names match.
-   * Side effects: none.
-   */
-  function profileVisibleInNavigator(profile: ConnectionProfile): boolean {
-    if (!normalizedNavigatorFilter) {
-      return true;
-    }
-    return connectionIdentityMatches(profile, normalizedNavigatorFilter)
-      || matchingCatalogTables(profile.id).length > 0;
   }
 
   /** Focuses the sidebar-wide navigator search from the contextual find shortcut. */
@@ -1479,6 +1342,7 @@ export function ConnectionSidebar({
           value={navigatorFilter}
         />
       </label>
+      {/* Adding a connection lives in the picker; the navigator stays about objects. */}
       <div className="connection-primary-actions">
         <button
           className="connection-find-global"
@@ -1489,155 +1353,71 @@ export function ConnectionSidebar({
           <Search size={14} aria-hidden="true" />
           查找表
         </button>
-        <button className="connection-add-global" onClick={onAddConnection} type="button">
-          <Plus size={14} aria-hidden="true" />
-          添加连接
+        {/* A permanent entry point, so managing connections is never more than one click away. */}
+        <button
+          className="connection-manage-global"
+          onClick={() => onOpenConnectionManager?.()}
+          title="管理连接配置与数据库"
+          type="button"
+        >
+          <Settings2 size={14} aria-hidden="true" />
+          管理连接
         </button>
       </div>
-      {ENGINE_GROUPS.map(({ engine, label }) => {
-        const engineProfiles = profiles.filter((profile) => profile.engine === engine);
-        const visibleProfiles = engineProfiles.filter(profileVisibleInNavigator);
-        const sectionCollapsed = isEngineSectionCollapsed(
-          engine,
-          engineProfiles.length,
-          visibleProfiles.length,
-        );
-
-        return (
-          <section
-            className={`engine-section engine-section--${engine}${sectionCollapsed ? " is-collapsed" : ""}`}
-            aria-label={`${label} 连接`}
-            key={engine}
-          >
-            <h2 className="engine-section__heading">
-              <button
-                aria-controls={`engine-section-body-${engine}`}
-                aria-expanded={!sectionCollapsed}
-                aria-label={`${sectionCollapsed ? "展开" : "收起"} ${label} 连接分组`}
-                className="engine-section__toggle"
-                onClick={() => handleToggleEngineSection(engine, sectionCollapsed)}
-                type="button"
-              >
-                <span className="engine-section__identity">
-                  <span className="engine-section__indicator" aria-hidden="true" />
-                  <span className="engine-section__label">{label}</span>
-                  <span className="engine-section__count" aria-label={`${engineProfiles.length} 个连接`}>
-                    {engineProfiles.length}
-                  </span>
-                </span>
-                <ChevronRight className="engine-section__chevron" size={14} aria-hidden="true" />
-              </button>
-            </h2>
-
-            <div className="engine-section__body" id={`engine-section-body-${engine}`} hidden={sectionCollapsed}>
-              {engineProfiles.length === 0 ? (
-                <p className="engine-section__empty">暂无连接</p>
-              ) : visibleProfiles.length === 0 ? (
-                <p className="engine-section__empty">无匹配连接或表</p>
-              ) : (
-                <div className="connection-list" aria-label={`${label} 已保存连接`}>
-                  {visibleProfiles.map((profile) => {
-                    const catalogTableMatches = matchingCatalogTables(profile.id);
-                    const forceExpandForTableMatch = catalogTableMatches.length > 0;
-                    return (
-                      <ConnectionDrawer
-                        discoverTables={discoverTables && (
-                          discoverTablesForConnectionId === null
-                          || discoverTablesForConnectionId === profile.id
-                        )}
-                        dirtyTableNames={new Set(
-                          dirtyTables
-                            .filter((table) => table.connectionId === profile.id)
-                            .map((table) => table.tableName),
-                        )}
-                        activeRowKey={effectiveActiveRowKey}
-                        expanded={forceExpandForTableMatch || expandedConnectionIds.has(profile.id)}
-                        key={profile.id}
-                        onActiveRowKeyChange={setActiveRowKey}
-                        openObjectNames={openObjectNamesByConnection.get(profile.id) ?? EMPTY_NAME_SET}
-                        onOpenRedisKey={onOpenRedisKey}
-                        onOpenTable={onOpenTable}
-                        onFindTables={onFindTables}
-                        onOpenContextMenu={handleOpenContextMenu}
-                        onOpenTableContextMenu={handleOpenTableContextMenu}
-                        onSelect={onSelectConnection}
-                        onSelectRedisDatabase={onSelectRedisDatabase}
-                        onTablesLoaded={onTablesLoaded}
-                        onToggle={handleToggleConnection}
-                        profile={profile}
-                        pinnedTableKeys={pinnedTableKeys}
-                        selected={selectedConnectionId === profile.id}
-                        selectedRedisDatabase={selectedRedisDatabases[profile.id]}
-                        tableFilter={normalizedNavigatorFilter}
-                        tableCatalogRefreshVersion={tableCatalogRefreshVersions[profile.id] ?? 0}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
-        );
-      })}
-      {contextMenu && contextProfile ? (
-        <div
-          aria-label={`${contextProfile.name} 操作`}
-          className="connection-context-menu"
-          role="menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            disabled={!onRequestRename}
-            onClick={() => {
-              setContextMenu(null);
-              onRequestRename?.(contextProfile);
-            }}
-            ref={contextMenuItemRef}
-            role="menuitem"
-            type="button"
-          >
-            <Pencil size={13} aria-hidden="true" />
-            重命名…
-          </button>
-          <button
-            disabled={!onCopyConfig}
-            onClick={() => {
-              setContextMenu(null);
-              onCopyConfig?.(contextProfile);
-            }}
-            role="menuitem"
-            type="button"
-          >
-            <Copy size={13} aria-hidden="true" />
-            复制连接配置
-          </button>
-          <button
-            disabled={!onReconnect || reconnectingConnectionId === contextProfile.id}
-            onClick={() => {
-              setContextMenu(null);
-              onReconnect?.(contextProfile);
-            }}
-            role="menuitem"
-            type="button"
-          >
-            <RefreshCw className={reconnectingConnectionId === contextProfile.id ? "spin" : undefined} size={13} aria-hidden="true" />
-            {reconnectingConnectionId === contextProfile.id ? "正在重新连接…" : "重新连接"}
-          </button>
-          <span className="connection-context-menu__separator" role="separator" />
-          <button
-            className="connection-context-menu__danger"
-            disabled={!onRequestDelete}
-            onClick={() => {
-              setContextMenu(null);
-              onRequestDelete?.(contextProfile);
-            }}
-            role="menuitem"
-            type="button"
-          >
-            <Trash2 size={13} aria-hidden="true" />
-            删除连接…
-          </button>
+      {activeProfile ? (
+        <ConnectionDrawer
+          activeRowKey={activeRowKey}
+          dirtyTableNames={dirtyTableNames}
+          discoverTables={discoverTables && (
+            discoverTablesForConnectionId === null
+            || discoverTablesForConnectionId === activeProfile.id
+          )}
+          key={activeProfile.id}
+          onActiveRowKeyChange={setActiveRowKey}
+          onFindTables={onFindTables}
+          onOpenRedisKey={onOpenRedisKey}
+          onOpenTable={onOpenTable}
+          onOpenTableContextMenu={handleOpenTableContextMenu}
+          onRequestCreateDatabase={onRequestCreateDatabase}
+          onLeaveObjectList={() => navigatorSearchRef.current?.focus()}
+          onSelectDatabase={onSelectDatabase}
+          onSelectRedisDatabase={onSelectRedisDatabase}
+          onTablesLoaded={onTablesLoaded}
+          openObjectNames={openObjectNames}
+          pinnedTableKeys={pinnedTableKeys}
+          profile={activeProfile}
+          selectedDatabase={selectedDatabases[activeProfile.id]}
+          selectedRedisDatabase={selectedRedisDatabases[activeProfile.id]}
+          tableCatalogRefreshVersion={tableCatalogRefreshVersions[activeProfile.id] ?? 0}
+          tableFilter={normalizedNavigatorFilter}
+        />
+      ) : (
+        <div className="connection-navigator__empty">
+          <p>{profiles.length === 0 ? "还没有保存任何连接。" : "请先在顶部选择一个连接。"}</p>
+          {profiles.length === 0 ? (
+            <button className="connection-add-global" onClick={onAddConnection} type="button">
+              <Plus size={14} aria-hidden="true" />
+              添加连接
+            </button>
+          ) : null}
         </div>
+      )}
+      {otherSchemaMatches.length > 0 && activeProfile ? (
+        <section className="navigator-other-matches" aria-label="其他数据库中的匹配表">
+          <h2>其他数据库 <small>{otherSchemaMatches.length}</small></h2>
+          {otherSchemaMatches.map(({ database, tableName }) => (
+            <button
+              key={`${database}\u0000${tableName}`}
+              onClick={() => onOpenTable?.(activeProfile.id, database, tableName)}
+              title={`打开 ${database}.${tableName}`}
+              type="button"
+            >
+              <Table2 size={12} aria-hidden="true" />
+              <span>{tableName}</span>
+              <small>{database}</small>
+            </button>
+          ))}
+        </section>
       ) : null}
       {tableContextMenu ? (
         <TableActionMenu
@@ -1646,10 +1426,16 @@ export function ConnectionSidebar({
           onAction={(action) => {
             const target = tableContextMenu;
             setTableContextMenu(null);
-            onRequestTableAction?.(target.connectionId, target.tableName, action);
+            onRequestTableAction?.(
+              target.connectionId,
+              target.database,
+              target.tableName,
+              action,
+            );
           }}
           pinned={pinnedTableKeys.has(tableTargetKey(
             tableContextMenu.connectionId,
+            tableContextMenu.database,
             tableContextMenu.tableName,
           ))}
           style={{ left: tableContextMenu.x, top: tableContextMenu.y }}

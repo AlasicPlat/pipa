@@ -62,711 +62,326 @@ const REDIS_CONNECTION: ConnectionProfile = {
   database: "0",
 };
 
-/**
- * Verifies strict engine grouping, empty states, and the selected-row interaction.
- * Parameters: none.
- * @returns A promise that resolves after the selection state is asserted.
- * Side effects: renders the sidebar and dispatches one click event.
- */
-async function assertGroupedConnectionSelection(): Promise<void> {
-  const selectConnection = vi.fn();
-  const { container, rerender } = render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={selectConnection}
-      onAddConnection={vi.fn()}
-    />,
-  );
+/** Table rows returned by `SHOW FULL TABLES` for the focused schema. */
+const TABLE_ROWS = [
+  [{ kind: "text" as const, value: "orders" }, { kind: "text" as const, value: "BASE TABLE" }],
+  [{ kind: "text" as const, value: "customers" }, { kind: "text" as const, value: "BASE TABLE" }],
+];
 
-  const mysqlGroup = screen.getByRole("region", { name: "MySQL 连接" });
-  const postgresqlGroup = screen.getByRole("region", { name: "PostgreSQL 连接" });
-  const mongodbGroup = screen.getByRole("region", { name: "MongoDB 连接" });
-  const redisGroup = screen.getByRole("region", { name: "Redis 连接" });
-
-  expect(within(mysqlGroup).getByRole("button", { name: "收起 MySQL 连接分组" })).toHaveAttribute("aria-expanded", "true");
-  expect(within(postgresqlGroup).getByRole("button", { name: "展开 PostgreSQL 连接分组" })).toHaveAttribute("aria-expanded", "false");
-  expect(within(mongodbGroup).getByRole("button", { name: "展开 MongoDB 连接分组" })).toHaveAttribute("aria-expanded", "false");
-  expect(within(redisGroup).getByRole("button", { name: "展开 Redis 连接分组" })).toHaveAttribute("aria-expanded", "false");
-  // Row density is owned by the stylesheet; the inline 40px override used to fight the 42px rule.
-  expect(within(mysqlGroup).getByRole("button", { name: /订单主库/ })).toHaveClass("connection-row");
-  expect(within(mysqlGroup).getByRole("button", { name: /本地开发/ })).toBeVisible();
-  expect(within(postgresqlGroup).queryByText("订单主库")).not.toBeInTheDocument();
-
-  fireEvent.click(within(mongodbGroup).getByRole("button", { name: "展开 MongoDB 连接分组" }));
-  expect(within(mongodbGroup).getByRole("button", { name: "收起 MongoDB 连接分组" })).toHaveAttribute("aria-expanded", "true");
-  expect(within(mongodbGroup).getByText("暂无连接")).toBeVisible();
-
-  const orderConnection = container.querySelector<HTMLButtonElement>(
-    `[data-connection-id="${MYSQL_CONNECTIONS[0].id}"]`,
-  );
-  expect(orderConnection).not.toBeNull();
-  if (!orderConnection) return;
-  fireEvent.click(orderConnection);
-  expect(selectConnection).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id);
-
-  rerender(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onSelectConnection={selectConnection}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const selectedOrderConnection = container.querySelector<HTMLButtonElement>(
-    `[data-connection-id="${MYSQL_CONNECTIONS[0].id}"]`,
-  );
-  expect(selectedOrderConnection).toHaveAttribute("aria-selected", "true");
-  expect(selectedOrderConnection).toHaveClass("is-selected");
+/** Renders the navigator with overridable props. */
+function renderSidebar(overrides: Partial<Parameters<typeof ConnectionSidebar>[0]> = {}) {
+  const props = {
+    profiles: MYSQL_CONNECTIONS,
+    selectedConnectionId: MYSQL_CONNECTIONS[0].id,
+    onAddConnection: vi.fn(),
+    ...overrides,
+  };
+  return { ...render(<ConnectionSidebar {...props} />), props };
 }
 
 /**
- * Verifies multiple connections retain independent table drawers after single click.
+ * Verifies the navigator lists only the focused connection's tables, with no connection rows.
+ *
+ * This is the point of the single-focus navigator: the user's attention stays on the objects they
+ * are working with, and choosing a connection happens elsewhere.
  * Parameters: none.
  * @returns Nothing (`void`).
- * Side effects: renders the navigator and dispatches two click events.
+ * Side effects: renders the sidebar.
  */
-function assertIndependentConnectionDrawers(): void {
-  render(
+function assertFocusedConnectionObjectsOnly(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  renderSidebar();
+
+  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES FROM `orders`;");
+  expect(screen.getAllByRole("treeitem").map((row) => row.getAttribute("data-table-name")))
+    .toEqual(["orders", "customers"]);
+  // The other saved connection must not appear: it is not what the user is looking at.
+  expect(screen.queryByText("本地开发")).not.toBeInTheDocument();
+  expect(document.querySelector(".connection-row")).toBeNull();
+  expect(document.querySelector(".engine-section")).toBeNull();
+}
+
+/** Verifies switching the focused connection replaces the listed objects. */
+function assertFocusFollowsSelectedConnection(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  const { rerender, props } = renderSidebar();
+
+  expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+
+  tableSession.run.mockClear();
+  rerender(
     <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
+      {...props}
+      selectedConnectionId={MYSQL_CONNECTIONS[1].id}
+      selectedDatabases={{ [MYSQL_CONNECTIONS[1].id]: "scratch" }}
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
-  fireEvent.click(screen.getByRole("button", { name: /本地开发/ }));
-
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(screen.getByLabelText("本地开发 数据表")).toBeVisible();
-  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
+  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES FROM `scratch`;");
 }
 
-/** Verifies a connection click toggles once while table rows still own double-click opening. */
-function assertSingleClickConnectionToggle(): void {
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onSelectConnection={vi.fn()}
-    />,
-  );
+/** Verifies a connection without any schema selected asks for one instead of failing. */
+function assertPromptsForDatabaseWhenNoneSelected(): void {
+  tableSession.state.rows = [];
+  renderSidebar({ selectedConnectionId: MYSQL_CONNECTIONS[1].id });
 
-  const connection = screen.getByRole("button", { name: /订单主库/u });
-  expect(connection).toHaveAttribute("title", "单击或按 Enter 展开数据表");
-  fireEvent.click(connection, { detail: 1 });
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(connection).toHaveAttribute("title", "单击或按 Enter 收起数据表");
-
-  fireEvent.click(connection, { detail: 2 });
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  fireEvent.click(connection, { detail: 1 });
-  expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
+  expect(screen.getByText("请先选择一个数据库。")).toBeVisible();
+  expect(screen.getByRole("button", { name: /数据库：未选择/u })).toBeVisible();
 }
 
-/** Verifies table discovery is available globally and beside an expanded SQL connection. */
-function assertTableFinderEntryPoints(): void {
-  const onFindTables = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onFindTables={onFindTables}
-      onSelectConnection={vi.fn()}
-    />,
-  );
+/** Verifies the navigator explains itself when no connection is in focus. */
+function assertEmptyStates(): void {
+  const { rerender, props } = renderSidebar({ profiles: [], selectedConnectionId: null });
+  expect(screen.getByText("还没有保存任何连接。")).toBeVisible();
+  expect(screen.getByRole("button", { name: /添加连接/u })).toBeVisible();
 
-  fireEvent.click(screen.getByRole("button", { name: "查找表" }));
-  expect(onFindTables).toHaveBeenLastCalledWith();
-
-  const connection = screen.getByRole("button", { name: /订单主库/u });
-  expect(connection).toHaveTextContent("orders · mysql.internal:3306");
-  fireEvent.click(connection);
-  fireEvent.click(screen.getByRole("button", { name: "在 订单主库 中查找数据表" }));
-  expect(onFindTables).toHaveBeenLastCalledWith(MYSQL_CONNECTIONS[0].id);
+  rerender(<ConnectionSidebar {...props} profiles={MYSQL_CONNECTIONS} selectedConnectionId={null} />);
+  expect(screen.getByText("请先在顶部选择一个连接。")).toBeVisible();
 }
 
-/** Verifies Redis connections reveal databases before a database-scoped key scan. */
-async function assertRedisKeyBrowser(): Promise<void> {
-  const openRedisKey = vi.fn();
-  const selectRedisDatabase = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[REDIS_CONNECTION]}
-      selectedConnectionId={REDIS_CONNECTION.id}
-      onAddConnection={vi.fn()}
-      onOpenRedisKey={openRedisKey}
-      onSelectRedisDatabase={selectRedisDatabase}
-      onSelectConnection={vi.fn()}
-    />,
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: /本地缓存/ }));
-  await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
-    REDIS_CONNECTION.id,
-    "INFO keyspace",
-  ));
-  expect(executeQueryOnce).not.toHaveBeenCalledWith(
-    REDIS_CONNECTION.id,
-    'SCAN 0 MATCH "*" COUNT 500',
-    expect.anything(),
-  );
-
-  const database = await screen.findByRole("treeitem", { name: /DB 2/u });
-  fireEvent.click(database);
-  await vi.waitFor(() => expect(executeQueryOnce).toHaveBeenCalledWith(
-    REDIS_CONNECTION.id,
-    'SCAN 0 MATCH "*" COUNT 500',
-    "2",
-  ));
-  expect(selectRedisDatabase).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2");
-
-  fireEvent.click(await screen.findByRole("treeitem", { name: "user:1" }));
-  expect(openRedisKey).toHaveBeenCalledWith(REDIS_CONNECTION.id, "2", "user:1");
-}
-
-/** Verifies unified navigator filtering and single-click workspace opening. */
-function assertTableSearchAndSingleClickOpen(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
-  ];
+/** Verifies clicking one table opens it against the focused schema. */
+function assertOpensTableWithItsSchema(): void {
+  tableSession.state.rows = TABLE_ROWS;
   const openTable = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onSelectConnection={vi.fn()}
-      onOpenTable={openTable}
-      onAddConnection={vi.fn()}
-      tableCatalog={{ [MYSQL_CONNECTIONS[0].id]: ["orders", "customers"] }}
-    />,
-  );
+  renderSidebar({ onOpenTable: openTable });
 
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
-  fireEvent.change(screen.getByRole("searchbox", { name: "搜索连接或已加载的数据表" }), {
-    target: { value: "order" },
-  });
-  expect(screen.getByRole("treeitem", { name: "orders" })).toBeVisible();
-  expect(screen.queryByRole("treeitem", { name: "customers" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("treeitem", { name: /customers/u }));
 
-  fireEvent.click(screen.getByRole("treeitem", { name: "orders" }));
-  expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "orders");
+  expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "orders", "customers");
 }
 
-/** Verifies table rows expose reviewed TRUNCATE and DROP shortcuts by pointer or keyboard. */
-function assertTableDestructiveContextMenu(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "order_summary" }, { kind: "text", value: "VIEW" }],
-  ];
-  const onRequestTableAction = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onRequestTableAction={onRequestTableAction}
-      onSelectConnection={vi.fn()}
-    />,
-  );
+/** Verifies table quick actions remain reachable from the row context menu. */
+function assertTableContextMenu(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  const requestTableAction = vi.fn();
+  renderSidebar({ onRequestTableAction: requestTableAction });
 
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/u }));
-  const table = screen.getByRole("treeitem", { name: "orders" });
-  fireEvent.contextMenu(table, { clientX: 120, clientY: 160 });
-  expect(screen.getByRole("menu", { name: "orders 表操作" })).toBeVisible();
+  const row = screen.getByRole("treeitem", { name: /orders/u });
+  fireEvent.contextMenu(row, { clientX: 90, clientY: 120 });
   fireEvent.click(screen.getByRole("menuitem", { name: "清空表…" }));
-  expect(onRequestTableAction).toHaveBeenLastCalledWith(
+
+  expect(requestTableAction).toHaveBeenLastCalledWith(
     MYSQL_CONNECTIONS[0].id,
+    "orders",
     "orders",
     "truncate",
   );
-
-  table.focus();
-  fireEvent.keyDown(table, { key: "F10", shiftKey: true });
-  fireEvent.click(screen.getByRole("menuitem", { name: "删除表…" }));
-  expect(onRequestTableAction).toHaveBeenLastCalledWith(
-    MYSQL_CONNECTIONS[0].id,
-    "orders",
-    "drop",
-  );
-
-  fireEvent.contextMenu(screen.getByRole("treeitem", { name: /order_summary/u }));
-  expect(screen.queryByRole("menu", { name: "order_summary 表操作" })).not.toBeInTheDocument();
 }
 
-/** Verifies persisted pin identities reorder only their owning connection's table list. */
+/** Verifies pinned tables sort ahead of the rest within the focused schema. */
 function assertPinnedTableOrdering(): void {
   tableSession.state.rows = [
     [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
     [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
   ];
-  render(
-    <ConnectionSidebar
-      pinnedTableKeys={new Set([`${MYSQL_CONNECTIONS[0].id}\u0000orders`])}
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onRequestTableAction={vi.fn()}
-      onSelectConnection={vi.fn()}
-    />,
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/u }));
-  const tables = screen.getAllByRole("treeitem");
-  expect(tables.map((table) => table.getAttribute("data-table-name"))).toEqual(["orders", "customers"]);
-  expect(tables[0]).toHaveTextContent("置顶");
-  fireEvent.contextMenu(tables[0]!);
-  expect(screen.getByRole("menuitem", { name: "取消置顶" })).toBeVisible();
-}
-
-/** Verifies right click exposes an explicit delete action for the exact connection. */
-function assertContextMenuRequestsDeletion(): void {
-  const selectConnection = vi.fn();
-  const requestRename = vi.fn();
-  const copyConfig = vi.fn();
-  const reconnect = vi.fn();
-  const requestDelete = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={null}
-      onCopyConfig={copyConfig}
-      onReconnect={reconnect}
-      onSelectConnection={selectConnection}
-      onRequestRename={requestRename}
-      onRequestDelete={requestDelete}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const connection = screen.getByRole("button", { name: /订单主库/ });
-  fireEvent.contextMenu(connection, { clientX: 120, clientY: 160 });
-
-  expect(selectConnection).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id);
-  expect(screen.getByRole("menu", { name: "订单主库 操作" })).toBeVisible();
-  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-    "重命名…",
-    "复制连接配置",
-    "重新连接",
-    "删除连接…",
-  ]);
-  expect(screen.getByRole("separator")).toBeVisible();
-  fireEvent.click(screen.getByRole("menuitem", { name: "删除连接…" }));
-  expect(requestDelete).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0]);
-
-  fireEvent.keyDown(connection, { key: "F10", shiftKey: true });
-  expect(screen.getByRole("menu", { name: "订单主库 操作" })).toBeVisible();
-}
-
-/** Verifies completed table metadata is reported for command-palette discovery. */
-async function assertLoadedTablesAreReported(): Promise<void> {
-  tableSession.state.queryId = "tables-query";
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
-  ];
-  const onTablesLoaded = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onSelectConnection={vi.fn()}
-      onTablesLoaded={onTablesLoaded}
-    />,
-  );
-
-  await vi.waitFor(() => expect(onTablesLoaded).toHaveBeenCalledWith(
-    MYSQL_CONNECTIONS[0].id,
-    ["orders", "customers"],
-  ));
-}
-
-/** Verifies opening global discovery loads table names without visually expanding drawers. */
-function assertGlobalDiscoveryLoadsTables(): void {
-  render(
-    <ConnectionSidebar
-      discoverTables
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onSelectConnection={vi.fn()}
-    />,
-  );
-
-  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
-  expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
-}
-
-/** Verifies a connection-scoped finder does not load metadata from unrelated connections. */
-function assertScopedDiscoveryLoadsOneConnection(): void {
-  render(
-    <ConnectionSidebar
-      discoverTables
-      discoverTablesForConnectionId={MYSQL_CONNECTIONS[0].id}
-      profiles={[
-        MYSQL_CONNECTIONS[0],
-        { ...MYSQL_CONNECTIONS[1], database: "local_development" },
-      ]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onSelectConnection={vi.fn()}
-    />,
-  );
-
-  expect(tableSession.run).toHaveBeenCalledTimes(1);
-  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
-}
-
-/** Verifies arrow navigation and Enter/Escape expansion keep connection focus predictable. */
-function assertConnectionKeyboardNavigation(): void {
-  const selectConnection = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={selectConnection}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const firstConnection = screen.getByRole("button", { name: /订单主库/ });
-  const secondConnection = screen.getByRole("button", { name: /本地开发/ });
-  firstConnection.focus();
-  fireEvent.keyDown(firstConnection, { key: "ArrowDown" });
-  expect(secondConnection).toHaveFocus();
-  expect(selectConnection).toHaveBeenLastCalledWith(MYSQL_CONNECTIONS[1].id);
-
-  fireEvent.keyDown(secondConnection, { key: "ArrowUp" });
-  expect(firstConnection).toHaveFocus();
-  fireEvent.keyDown(firstConnection, { key: "ArrowRight" });
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(tableSession.run).toHaveBeenCalledWith("SHOW FULL TABLES;");
-
-  fireEvent.keyDown(firstConnection, { key: "ArrowLeft" });
-  expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
-  expect(firstConnection).toHaveFocus();
-}
-
-/** Verifies table arrows, Enter opening, and Escape return focus to the owning connection. */
-function assertTableKeyboardNavigation(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
-  ];
-  const openTable = vi.fn();
-  const selectConnection = vi.fn();
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onSelectConnection={selectConnection}
-      onOpenTable={openTable}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const connection = screen.getByRole("button", { name: /订单主库/ });
-  fireEvent.keyDown(connection, { key: "Enter" });
-  const orders = screen.getByRole("treeitem", { name: "orders" });
-  const customers = screen.getByRole("treeitem", { name: "customers" });
-  orders.focus();
-  fireEvent.keyDown(orders, { key: "ArrowDown" });
-  expect(customers).toHaveFocus();
-  expect(customers).toHaveAttribute("aria-selected", "true");
-
-  fireEvent.keyDown(customers, { key: "Enter" });
-  expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "customers");
-  fireEvent.keyDown(customers, { key: "Escape" });
-  expect(screen.queryByLabelText("订单主库 数据表")).not.toBeInTheDocument();
-  expect(connection).toHaveFocus();
-  expect(selectConnection).toHaveBeenLastCalledWith(MYSQL_CONNECTIONS[0].id);
-}
-
-/** Verifies an open drawer is remembered and restored on the next mount. */
-function assertExpansionSurvivesRemount(): void {
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).toContain(
-    MYSQL_CONNECTIONS[0].id,
-  );
-  cleanup();
-
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(screen.queryByLabelText("本地开发 数据表")).not.toBeInTheDocument();
-
-  // Collapsing must be remembered too, otherwise the drawer would reopen on every launch.
-  // The name is anchored because the open drawer's find/refresh buttons also mention the profile.
-  fireEvent.click(screen.getByRole("button", { name: /^订单主库/ }));
-  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).not.toContain(
-    MYSQL_CONNECTIONS[0].id,
-  );
-}
-
-/** Verifies restored expansion drops connections the user has since deleted. */
-function assertRestoredExpansionPrunesDeletedConnections(): void {
-  window.localStorage.setItem(
-    "pipa.expanded-connections.v1",
-    JSON.stringify([MYSQL_CONNECTIONS[0].id, "deleted-connection"]),
-  );
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
-  expect(window.localStorage.getItem("pipa.expanded-connections.v1")).not.toContain(
-    "deleted-connection",
-  );
-}
-
-/** Verifies the navigator is one traversal ring with a single Tab stop. */
-function assertSingleTabStopTreeTraversal(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
-  ];
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const firstConnection = screen.getByRole("button", { name: /订单主库/ });
-  const secondConnection = screen.getByRole("button", { name: /本地开发/ });
-  // Before any interaction the first connection owns the only Tab stop.
-  expect(firstConnection).toHaveAttribute("tabindex", "0");
-  expect(secondConnection).toHaveAttribute("tabindex", "-1");
-
-  fireEvent.keyDown(firstConnection, { key: "Enter" });
-  const orders = screen.getByRole("treeitem", { name: "orders" });
-  const customers = screen.getByRole("treeitem", { name: "customers" });
-  expect(orders).toHaveAttribute("tabindex", "-1");
-
-  // ArrowRight on an already open drawer steps into its children instead of doing nothing.
-  fireEvent.keyDown(firstConnection, { key: "ArrowRight" });
-  expect(orders).toHaveFocus();
-  expect(orders).toHaveAttribute("tabindex", "0");
-  expect(firstConnection).toHaveAttribute("tabindex", "-1");
-
-  // Arrows cross the boundary from the last child into the next connection.
-  fireEvent.keyDown(orders, { key: "ArrowDown" });
-  expect(customers).toHaveFocus();
-  fireEvent.keyDown(customers, { key: "ArrowDown" });
-  expect(secondConnection).toHaveFocus();
-  fireEvent.keyDown(secondConnection, { key: "ArrowUp" });
-  expect(customers).toHaveFocus();
-
-  // Home and End reach the ends of the whole tree, not just one container.
-  fireEvent.keyDown(customers, { key: "End" });
-  expect(secondConnection).toHaveFocus();
-  fireEvent.keyDown(secondConnection, { key: "Home" });
-  expect(firstConnection).toHaveFocus();
-}
-
-/** Verifies rows already open as workspace tabs are marked from real tab state. */
-function assertOpenObjectsAreMarked(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-    [{ kind: "text", value: "customers" }, { kind: "text", value: "BASE TABLE" }],
-  ];
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onAddConnection={vi.fn()}
-      onSelectConnection={vi.fn()}
-      openObjects={[{ connectionId: MYSQL_CONNECTIONS[0].id, objectName: "orders" }]}
-    />,
-  );
-
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
-  const orders = screen.getByRole("treeitem", { name: "orders" });
-  expect(orders).toHaveClass("is-open");
-  expect(orders).toHaveAttribute("title", expect.stringContaining("已在工作区打开"));
-  expect(screen.getByRole("treeitem", { name: "customers" })).not.toHaveClass("is-open");
-}
-
-/** Verifies scoped find focuses the sidebar-wide navigator search. */
-function assertScopedTableSearchShortcut(): void {
-  expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
-  render(
-    <ConnectionSidebar
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const connection = screen.getByRole("button", { name: /订单主库/ });
-  const search = screen.getByRole("searchbox", { name: "搜索连接或已加载的数据表" });
-  connection.focus();
-  expect(fireEvent.keyDown(connection, { key: "k", altKey: true })).toBe(false);
-  expect(search).toHaveFocus();
-}
-
-/** Verifies engine sections can be collapsed and remember the override. */
-function assertEngineSectionCollapseToggle(): void {
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
-
-  const mysqlToggle = screen.getByRole("button", { name: "收起 MySQL 连接分组" });
-  expect(mysqlToggle).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByRole("button", { name: /订单主库/ })).toBeVisible();
-
-  fireEvent.click(mysqlToggle);
-  expect(screen.getByRole("button", { name: "展开 MySQL 连接分组" })).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("button", { name: /订单主库/ })).not.toBeInTheDocument();
-  expect(window.localStorage.getItem("pipa.engine-section-collapse.v1")).toContain("\"my_sql\":true");
-
-  fireEvent.click(screen.getByRole("button", { name: "展开 MySQL 连接分组" }));
-  expect(screen.getByRole("button", { name: "收起 MySQL 连接分组" })).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByRole("button", { name: /订单主库/ })).toBeVisible();
-}
-
-/** Verifies navigator search matches loaded catalog tables and auto-expands that connection. */
-function assertUnifiedSearchMatchesCatalogTables(): void {
-  render(
-    <ConnectionSidebar
-      profiles={MYSQL_CONNECTIONS}
-      selectedConnectionId={null}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-      tableCatalog={{ [MYSQL_CONNECTIONS[0].id]: ["orders", "customers"] }}
-    />,
-  );
-
-  fireEvent.change(screen.getByRole("searchbox", { name: "搜索连接或已加载的数据表" }), {
-    target: { value: "customers" },
+  renderSidebar({
+    pinnedTableKeys: new Set([`${MYSQL_CONNECTIONS[0].id}\u0000orders\u0000orders`]),
   });
-  expect(document.querySelector(
-    `[data-connection-id="${MYSQL_CONNECTIONS[0].id}"]`,
-  )).toBeVisible();
-  expect(document.querySelector(
-    `[data-connection-id="${MYSQL_CONNECTIONS[1].id}"]`,
-  )).not.toBeInTheDocument();
-  expect(screen.getByLabelText("订单主库 数据表")).toBeVisible();
+
+  const rows = screen.getAllByRole("treeitem");
+  expect(rows.map((row) => row.getAttribute("data-table-name"))).toEqual(["orders", "customers"]);
+  expect(rows[0]).toHaveTextContent("置顶");
 }
 
-/** Verifies staged table changes remain visible on both their table and owning connection. */
-function assertDirtyObjectIndicators(): void {
-  tableSession.state.rows = [
-    [{ kind: "text", value: "orders" }, { kind: "text", value: "BASE TABLE" }],
-  ];
-  render(
-    <ConnectionSidebar
-      dirtyTables={[{ connectionId: MYSQL_CONNECTIONS[0].id, tableName: "orders" }]}
-      profiles={[MYSQL_CONNECTIONS[0]]}
-      selectedConnectionId={MYSQL_CONNECTIONS[0].id}
-      onSelectConnection={vi.fn()}
-      onAddConnection={vi.fn()}
-    />,
-  );
+/** Verifies dirty tables are marked so unsaved work is visible without opening the tab. */
+function assertDirtyTableMarkers(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  renderSidebar({
+    dirtyTables: [{ connectionId: MYSQL_CONNECTIONS[0].id, tableName: "orders" }],
+  });
 
-  expect(screen.getByLabelText("订单主库 下有未提交修改")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: /订单主库/ }));
-  expect(screen.getByLabelText("orders 有未提交修改")).toBeVisible();
+  const row = screen.getByRole("treeitem", { name: /orders/u });
+  expect(within(row).getByLabelText("orders 有未提交修改")).toBeInTheDocument();
+}
+
+/** Verifies objects already open as workspace tabs are marked in the list. */
+function assertOpenObjectMarkers(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  renderSidebar({
+    openObjects: [{ connectionId: MYSQL_CONNECTIONS[0].id, objectName: "orders" }],
+  });
+
+  expect(screen.getByRole("treeitem", { name: /orders/u }).className).toContain("is-open");
+  expect(screen.getByRole("treeitem", { name: /customers/u }).className).not.toContain("is-open");
 }
 
 /**
- * Registers the connection-sidebar behavior tests.
+ * Verifies tables loaded from other schemas stay findable through search.
+ *
+ * The navigator lists one schema, so cross-schema hits are surfaced in their own section instead
+ * of disappearing from search entirely.
  * Parameters: none.
  * @returns Nothing (`void`).
- * Side effects: registers one Vitest case.
+ * Side effects: renders the sidebar and types into its search box.
  */
-function registerConnectionSidebarTests(): void {
-  beforeEach(() => {
-    window.localStorage.clear();
-    tableSession.state.rows = [];
-    tableSession.state.queryId = null;
-    tableSession.state.affectedRows = null;
-    vi.clearAllMocks();
-    executeQueryOnce.mockImplementation(async (_connectionId: string, command: string) => (
-      command === "INFO keyspace"
-        ? {
-            columns: [{ name: "value", databaseType: "REDIS VALUE", nullable: null }],
-            rows: [[{
-              kind: "text",
-              value: "# Keyspace\r\ndb0:keys=1,expires=0,avg_ttl=0\r\ndb2:keys=2,expires=1,avg_ttl=3200\r\n",
-            }]],
-            affectedRows: 0,
-          }
-        : {
-            columns: [
-              { name: "cursor", databaseType: "REDIS CURSOR", nullable: null },
-              { name: "key", databaseType: "REDIS VALUE", nullable: null },
-            ],
-            rows: [
-              [{ kind: "text", value: "0" }, { kind: "text", value: "user:1" }],
-              [{ kind: "text", value: "0" }, { kind: "text", value: "jobs:ready" }],
-            ],
-            affectedRows: 0,
-          }
-    ));
+function assertOtherSchemaSearchResults(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  const openTable = vi.fn();
+  renderSidebar({
+    onOpenTable: openTable,
+    tableCatalog: {
+      [MYSQL_CONNECTIONS[0].id]: {
+        orders: ["orders", "customers"],
+        analytics: ["events_archive"],
+      },
+    },
   });
-  afterEach(() => {
-    cleanup();
-    resetAllShortcutBindings();
-  });
-  it("keeps engines separate and exposes a strong selected state", assertGroupedConnectionSelection);
-  it("collapses engine sections and persists the choice", assertEngineSectionCollapseToggle);
-  it("keeps multiple connection drawers open independently", assertIndependentConnectionDrawers);
-  it("toggles connection drawers on a single click", assertSingleClickConnectionToggle);
-  it("opens global or connection-scoped table discovery", assertTableFinderEntryPoints);
-  it("browses Redis keys and opens native key commands", assertRedisKeyBrowser);
-  it("filters tables and opens them on a single click", assertTableSearchAndSingleClickOpen);
-  it("requests reviewed destructive table actions from its context menu", assertTableDestructiveContextMenu);
-  it("keeps pinned tables at the top of their connection", assertPinnedTableOrdering);
-  it("matches loaded catalog tables from the unified navigator search", assertUnifiedSearchMatchesCatalogTables);
-  it("requests connection deletion from its context menu", assertContextMenuRequestsDeletion);
-  it("navigates and expands connections from the keyboard", assertConnectionKeyboardNavigation);
-  it("navigates and opens tables from the keyboard", assertTableKeyboardNavigation);
-  it("restores open drawers after a remount", assertExpansionSurvivesRemount);
-  it("prunes restored expansion for deleted connections", assertRestoredExpansionPrunesDeletedConnections);
-  it("traverses the whole tree from one Tab stop", assertSingleTabStopTreeTraversal);
-  it("marks objects already open as workspace tabs", assertOpenObjectsAreMarked);
-  it("focuses the unified navigator search with scoped find", assertScopedTableSearchShortcut);
-  it("marks dirty tables and their owning connections", assertDirtyObjectIndicators);
-  it("reports loaded tables for global discovery", assertLoadedTablesAreReported);
-  it("loads table names for global discovery without expanding drawers", assertGlobalDiscoveryLoadsTables);
-  it("limits scoped discovery to the requested connection", assertScopedDiscoveryLoadsOneConnection);
+
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "archive" } });
+
+  const section = screen.getByRole("region", { name: "其他数据库中的匹配表" });
+  const hit = within(section).getByRole("button", { name: /events_archive/u });
+  expect(hit).toHaveTextContent("analytics");
+
+  fireEvent.click(hit);
+  expect(openTable).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "analytics", "events_archive");
 }
 
-describe("ConnectionSidebar", registerConnectionSidebarTests);
+/** Verifies the scoped find shortcut focuses the navigator search box. */
+function assertScopedFindFocusesSearch(): void {
+  expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
+  tableSession.state.rows = TABLE_ROWS;
+  const { container } = renderSidebar();
+
+  fireEvent.keyDown(container.querySelector(".connection-groups")!, { key: "k", altKey: true });
+
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+}
+
+/** Verifies arrow keys traverse the object list from a single Tab stop. */
+function assertKeyboardTraversal(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  renderSidebar();
+
+  const [first, second] = screen.getAllByRole("treeitem");
+  first!.focus();
+  fireEvent.keyDown(first!, { key: "ArrowDown" });
+  expect(second).toHaveFocus();
+
+  fireEvent.keyDown(second!, { key: "ArrowUp" });
+  expect(first).toHaveFocus();
+
+  // Leaving the list returns to the search box, which is now the navigator's root.
+  fireEvent.keyDown(first!, { key: "ArrowLeft" });
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+}
+
+/** Verifies the Redis explorer loads its databases without an expand step. */
+async function assertRedisExplorer(): Promise<void> {
+  executeQueryOnce.mockImplementation(async (_id: string, command: string) => (
+    command === "INFO keyspace"
+      ? {
+        columns: [],
+        affectedRows: 0,
+        rows: [[{ kind: "text", value: "db0:keys=2,expires=0,avg_ttl=0" }]],
+      }
+      : { columns: [], affectedRows: 0, rows: [[{ kind: "text", value: "0" }, { kind: "text", value: "session:1" }]] }
+  ));
+  const openRedisKey = vi.fn();
+  renderSidebar({
+    profiles: [REDIS_CONNECTION],
+    selectedConnectionId: REDIS_CONNECTION.id,
+    onOpenRedisKey: openRedisKey,
+  });
+
+  const database = await screen.findByRole("treeitem", { name: /DB 0/u });
+  fireEvent.click(database);
+
+  const key = await screen.findByRole("treeitem", { name: /session:1/u });
+  fireEvent.click(key);
+  expect(openRedisKey).toHaveBeenCalledWith(REDIS_CONNECTION.id, "0", "session:1");
+}
+
+/** Verifies the database switcher lists visible schemas and switches the browsed one. */
+async function assertDatabaseSwitcher(): Promise<void> {
+  executeQueryOnce.mockImplementation(async (_connectionId: string, sql: string) => (
+    sql.includes("INFORMATION_SCHEMA.SCHEMATA")
+      ? {
+        columns: [],
+        affectedRows: 0,
+        rows: [
+          [{ kind: "text", value: "orders" }, { kind: "text", value: "utf8mb4" }, { kind: "text", value: "utf8mb4_bin" }],
+          [{ kind: "text", value: "analytics" }, { kind: "text", value: "utf8mb4" }, { kind: "text", value: "utf8mb4_bin" }],
+          [{ kind: "text", value: "mysql" }, { kind: "text", value: "utf8mb4" }, { kind: "text", value: "utf8mb4_bin" }],
+        ],
+      }
+      : { columns: [], rows: [], affectedRows: 0 }
+  ));
+  const selectDatabase = vi.fn();
+  tableSession.state.rows = TABLE_ROWS;
+  renderSidebar({ onSelectDatabase: selectDatabase });
+
+  fireEvent.click(screen.getByRole("button", { name: /数据库：orders/u }));
+  const list = await screen.findByRole("listbox", { name: "订单主库 数据库" });
+  expect(within(list).getAllByRole("option").map((option) => option.textContent))
+    .toEqual(["analytics", "orders默认"]);
+
+  // Server-managed schemas stay grouped behind a toggle rather than crowding the list.
+  fireEvent.click(within(list).getByRole("button", { name: /系统库/u }));
+  expect(within(list).getByRole("option", { name: "mysql" })).toBeVisible();
+
+  fireEvent.click(within(list).getByRole("option", { name: "analytics" }));
+  expect(selectDatabase).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id, "analytics");
+}
+
+/** Verifies create-database is reachable from the switcher for MySQL connections. */
+async function assertCreateDatabaseEntry(): Promise<void> {
+  executeQueryOnce.mockResolvedValue({ columns: [], rows: [], affectedRows: 0 });
+  const requestCreateDatabase = vi.fn();
+  renderSidebar({
+    selectedConnectionId: MYSQL_CONNECTIONS[1].id,
+    onRequestCreateDatabase: requestCreateDatabase,
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /数据库：未选择/u }));
+  fireEvent.click(await screen.findByRole("button", { name: "新建数据库…" }));
+
+  expect(requestCreateDatabase).toHaveBeenCalledWith(MYSQL_CONNECTIONS[1]);
+}
+
+/** Verifies scoped table discovery is still reachable for the focused connection. */
+function assertScopedTableDiscovery(): void {
+  tableSession.state.rows = TABLE_ROWS;
+  const findTables = vi.fn();
+  renderSidebar({ onFindTables: findTables });
+
+  fireEvent.click(screen.getByRole("button", { name: /在 订单主库 中查找数据表/u }));
+  expect(findTables).toHaveBeenCalledWith(MYSQL_CONNECTIONS[0].id);
+
+  fireEvent.click(screen.getByRole("button", { name: "查找表" }));
+  expect(findTables).toHaveBeenLastCalledWith();
+}
+
+describe("ConnectionSidebar", () => {
+  beforeEach(() => {
+    tableSession.run.mockClear();
+    tableSession.cancel.mockClear();
+    tableSession.state.rows = [];
+    tableSession.state.running = false;
+    tableSession.state.error = null;
+    tableSession.state.affectedRows = null;
+    tableSession.state.queryId = null;
+    executeQueryOnce.mockReset();
+    executeQueryOnce.mockResolvedValue({ columns: [], rows: [], affectedRows: 0 });
+    window.localStorage.clear();
+    resetAllShortcutBindings();
+  });
+  afterEach(cleanup);
+
+  it("lists only the focused connection's objects", assertFocusedConnectionObjectsOnly);
+  it("follows the selected connection", assertFocusFollowsSelectedConnection);
+  it("asks for a database when none is selected", assertPromptsForDatabaseWhenNoneSelected);
+  it("explains both empty states", assertEmptyStates);
+  it("opens a table against the focused schema", assertOpensTableWithItsSchema);
+  it("keeps table quick actions on the row menu", assertTableContextMenu);
+  it("sorts pinned tables first", assertPinnedTableOrdering);
+  it("marks dirty tables", assertDirtyTableMarkers);
+  it("marks objects already open as tabs", assertOpenObjectMarkers);
+  it("surfaces matches from other schemas", assertOtherSchemaSearchResults);
+  it("focuses search with the scoped find shortcut", assertScopedFindFocusesSearch);
+  it("traverses the object list from one Tab stop", assertKeyboardTraversal);
+  it("browses Redis databases and keys", assertRedisExplorer);
+  it("switches the browsed database", assertDatabaseSwitcher);
+  it("reaches create-database from the switcher", assertCreateDatabaseEntry);
+  it("keeps global and scoped table discovery", assertScopedTableDiscovery);
+});

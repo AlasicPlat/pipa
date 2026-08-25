@@ -31,6 +31,7 @@ pub(crate) async fn apply_table_mutations(
 
     let execution = async {
         enable_strict_sql_mode(&mut transaction).await?;
+        ensure_visible_database(&mut transaction, &input).await?;
         ensure_transactional_target(&mut transaction, &input).await?;
         execute_mutations(&mut transaction, &input).await
     }
@@ -64,6 +65,35 @@ async fn enable_strict_sql_mode(
 ) -> Result<(), MutationExecutionError> {
     let mut builder = QueryBuilder::<MySql>::new(STRICT_SQL_MODE_STATEMENT);
     builder.build().execute(&mut **transaction).await?;
+    Ok(())
+}
+
+/// Confirms the requested schema is one this connection can actually see.
+///
+/// The frontend may now target any database reachable through a saved connection rather than only
+/// the profile's default, so the trust boundary moves here. The set of acceptable schemas is
+/// resolved by the server through `INFORMATION_SCHEMA.SCHEMATA`, which honours the connection's own
+/// grants; the caller-supplied name is only ever a bind parameter, never SQL structure. A schema
+/// the credential cannot see is therefore indistinguishable from one that does not exist, and both
+/// are refused before any row is touched.
+async fn ensure_visible_database(
+    transaction: &mut MySqlTransaction<'_>,
+    input: &ApplyTableMutationsInput,
+) -> Result<(), MutationExecutionError> {
+    let mut builder = QueryBuilder::<MySql>::new(
+        "SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ",
+    );
+    builder.push_bind(input.database.clone());
+    if builder
+        .build()
+        .fetch_optional(&mut **transaction)
+        .await?
+        .is_none()
+    {
+        return Err(MutationExecutionError::Application(validation_error(
+            "The target database is not available to this connection",
+        )));
+    }
     Ok(())
 }
 
@@ -313,11 +343,9 @@ fn validate_input(
             "The mutation connection does not match the saved profile",
         ));
     }
-    if profile.database.as_deref() != Some(input.database.as_str()) {
-        return Err(validation_error(
-            "The table database does not match the saved connection",
-        ));
-    }
+    // The target schema is no longer required to equal the profile default, because the navigator
+    // can switch databases within one connection. Membership in the connection's visible schema set
+    // is confirmed against the server inside the transaction; see `ensure_visible_database`.
     if input.mutations.is_empty() || input.mutations.len() > MAX_MUTATIONS_PER_REQUEST {
         return Err(validation_error(
             "A table commit must contain between 1 and 1000 mutations",
@@ -497,6 +525,55 @@ mod tests {
             ..valid
         };
         assert!(validate_input(&profile(), &invalid).is_err());
+    }
+
+    /// Verifies offline validation no longer ties the target schema to the profile default.
+    ///
+    /// Switching databases inside one connection is now legitimate, so this check moved to
+    /// `ensure_visible_database`, which asks the server. Blank names stay rejected here because
+    /// they need no server round-trip to refuse.
+    #[test]
+    fn offline_validation_defers_database_choice_to_visibility() {
+        let insert = || {
+            vec![TableMutation::Insert {
+                values: vec![TableMutationField {
+                    name: "id".into(),
+                    value: TableMutationValue::Integer("1".into()),
+                }],
+            }]
+        };
+        let other_schema = ApplyTableMutationsInput {
+            connection_id: Uuid::nil(),
+            database: "analytics".into(),
+            table: "orders".into(),
+            mutations: insert(),
+        };
+        assert!(validate_input(&profile(), &other_schema).is_ok());
+
+        let no_default = ConnectionProfile {
+            database: None,
+            ..profile()
+        };
+        assert!(validate_input(&no_default, &other_schema).is_ok());
+
+        let blank_schema = ApplyTableMutationsInput {
+            database: "   ".into(),
+            ..other_schema
+        };
+        assert!(validate_input(&profile(), &blank_schema).is_err());
+    }
+
+    /// Verifies a mutation aimed at a different saved connection is still refused offline.
+    #[test]
+    fn rejects_mutations_for_another_connection() {
+        let input = ApplyTableMutationsInput {
+            connection_id: Uuid::new_v4(),
+            database: "shop".into(),
+            table: "orders".into(),
+            mutations: vec![TableMutation::Insert { values: vec![] }],
+        };
+
+        assert!(validate_input(&profile(), &input).is_err());
     }
 
     /// Verifies a non-zero float cannot silently underflow to zero before binding.

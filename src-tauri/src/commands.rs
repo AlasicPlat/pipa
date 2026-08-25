@@ -211,6 +211,15 @@ pub(crate) fn rename_connection(
     rename_connection_inner(&state, connection_id, name)
 }
 
+/// Updates one saved connection's non-secret fields without re-supplying its password.
+#[tauri::command]
+pub(crate) fn update_connection_profile(
+    state: State<'_, AppState>,
+    profile: ConnectionProfile,
+) -> Result<ConnectionProfile, AppError> {
+    update_connection_profile_inner(&state, profile)
+}
+
 /// Re-tests one saved connection using its credential from encrypted local storage.
 #[tauri::command]
 pub(crate) async fn reconnect_connection(
@@ -405,6 +414,54 @@ fn rename_connection_inner(
     state
         .local_store
         .rename_connection(connection_id, trimmed_name)
+}
+
+/// Validates and applies one connection's editable non-secret fields.
+///
+/// The saved credential is never read or rewritten here, so editing a host, port, username, or
+/// default database cannot require the user to re-enter their password.
+fn update_connection_profile_inner(
+    state: &AppState,
+    profile: ConnectionProfile,
+) -> Result<ConnectionProfile, AppError> {
+    let normalized = ConnectionProfile {
+        name: profile.name.trim().to_owned(),
+        host: profile.host.trim().to_owned(),
+        username: profile.username.trim().to_owned(),
+        database: profile
+            .database
+            .as_deref()
+            .map(str::trim)
+            .filter(|database| !database.is_empty())
+            .map(str::to_owned),
+        ..profile
+    };
+    if normalized.name.is_empty() {
+        return Err(validation_error("Connection name cannot be empty"));
+    }
+    if normalized.host.is_empty() {
+        return Err(validation_error("Connection host cannot be empty"));
+    }
+    if normalized.port == 0 {
+        return Err(validation_error(
+            "Connection port must be between 1 and 65535",
+        ));
+    }
+    if matches!(normalized.engine, Engine::MySql) && normalized.username.is_empty() {
+        return Err(validation_error("MySQL connections require a username"));
+    }
+
+    state.local_store.update_connection_profile(&normalized)
+}
+
+/// Builds a stable validation error for one rejected connection edit.
+fn validation_error(message: &'static str) -> AppError {
+    AppError {
+        code: AppErrorCode::Validation,
+        message: message.into(),
+        technical_details: None,
+        retryable: false,
+    }
 }
 
 /// Loads one profile and secret locally, then dispatches its adapter connection test.

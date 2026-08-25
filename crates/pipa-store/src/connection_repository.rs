@@ -104,6 +104,70 @@ impl LocalStore {
         result.ok_or_else(connection_not_found_error)
     }
 
+    /// Updates one saved connection's non-secret fields without touching its credential.
+    ///
+    /// The engine is deliberately immutable: a saved credential and every open workspace are
+    /// bound to it, so switching engines in place would silently reinterpret both. Callers that
+    /// need a different engine create a new connection instead.
+    pub fn update_connection_profile(
+        &self,
+        profile: &ConnectionProfile,
+    ) -> Result<ConnectionProfile, AppError> {
+        let mut connection = self.connection()?;
+        let result = (|| -> rusqlite::Result<Option<ConnectionProfile>> {
+            let transaction = connection.transaction()?;
+            // Matching the engine in the WHERE clause keeps an engine change from being applied
+            // silently; it surfaces as a not-found result instead.
+            let changed = transaction.execute(
+                "UPDATE connections
+                 SET name = ?1,
+                     environment = ?2,
+                     host = ?3,
+                     port = ?4,
+                     username = ?5,
+                     database_name = ?6,
+                     tls_mode = ?7,
+                     updated_at = ?8
+                 WHERE id = ?9 AND engine = ?10",
+                params![
+                    profile.name,
+                    environment_name(profile.environment),
+                    profile.host,
+                    profile.port,
+                    profile.username,
+                    profile.database,
+                    tls_mode_name(profile.tls_mode),
+                    Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
+                    profile.id,
+                    engine_name(profile.engine),
+                ],
+            )?;
+            let updated = if changed == 0 {
+                None
+            } else {
+                Some(transaction.query_row(
+                    "SELECT id, engine, name, environment, host, port, username, database_name,
+                            tls_mode
+                     FROM connections
+                     WHERE id = ?1",
+                    [profile.id],
+                    connection_profile_from_row,
+                )?)
+            };
+            transaction.commit()?;
+            Ok(updated)
+        })()
+        .map_err(|error| {
+            storage_error(
+                "Could not update database connection",
+                "update connection profile transaction",
+                error,
+            )
+        })?;
+
+        result.ok_or_else(connection_not_found_error)
+    }
+
     /// Loads one saved non-secret connection profile by its stable identifier.
     pub fn get_connection(&self, connection_id: Uuid) -> Result<ConnectionProfile, AppError> {
         match self.connection()?.query_row(

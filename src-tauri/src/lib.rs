@@ -158,6 +158,7 @@ pub fn run() {
             commands::list_connections,
             commands::delete_connection,
             commands::rename_connection,
+            commands::update_connection_profile,
             commands::reconnect_connection,
             commands::save_mysql_connection,
             commands::test_mysql_connection,

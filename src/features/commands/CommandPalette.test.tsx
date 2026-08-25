@@ -16,6 +16,7 @@ const ITEMS: readonly CommandPaletteItem[] = [
     detail: "生产主库 / app",
     keywords: ["订单", "mysql.example.com"],
     connectionId: "production-id",
+    database: "app",
   },
   {
     id: "production",
@@ -158,6 +159,7 @@ function assertTableContextActions(): void {
   fireEvent.click(screen.getByRole("menuitem", { name: "导出 JSON…" }));
   expect(onRequestTableAction).toHaveBeenLastCalledWith(
     "production-id",
+    "app",
     "customer_orders",
     "export_json",
   );
@@ -166,6 +168,7 @@ function assertTableContextActions(): void {
   fireEvent.click(screen.getByRole("menuitem", { name: "清空表…" }));
   expect(onRequestTableAction).toHaveBeenLastCalledWith(
     "production-id",
+    "app",
     "customer_orders",
     "truncate",
   );
@@ -177,6 +180,7 @@ function assertTableContextActions(): void {
   fireEvent.click(screen.getByRole("menuitem", { name: "删除表…" }));
   expect(onRequestTableAction).toHaveBeenLastCalledWith(
     "production-id",
+    "app",
     "customer_orders",
     "drop",
   );
