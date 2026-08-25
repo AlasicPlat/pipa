@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { CellValue } from "../../bindings/CellValue";
 import type { QueryColumn } from "../../bindings/QueryColumn";
 import {
+  buildCreateDatabaseStatement,
   buildDdlStatements,
   buildTableFilterClause,
   buildTableMutationPlan,
   columnDefaultValidationError,
+  databaseNameValidationError,
+  DATABASE_CHARSET_OPTIONS,
   columnTypeValidationError,
   buildAlterTableCommentStatement,
   describeTableFilter,
@@ -623,5 +626,51 @@ describe("table quick filter", () => {
       condition({ id: "b", operator: "CONTAINS", value: "x", conjunction: "OR" }),
       condition({ id: "c", operator: "=", value: "hidden", enabled: false }),
     ])).toBe("id 大于 1 OR name 包含 x");
+  });
+});
+
+describe("create database", () => {
+  it("quotes the schema name and omits unrequested clauses", () => {
+    expect(buildCreateDatabaseStatement("app_orders")).toBe("CREATE DATABASE `app_orders`;");
+    expect(buildCreateDatabaseStatement("we`ird")).toBe("CREATE DATABASE `we``ird`;");
+  });
+
+  it("emits only allowlisted character sets and collations", () => {
+    expect(buildCreateDatabaseStatement("shop", "utf8mb4", "utf8mb4_bin"))
+      .toBe("CREATE DATABASE `shop` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;");
+    // An injected charset is not on the list, so both clauses are dropped rather than interpolated.
+    expect(buildCreateDatabaseStatement("shop", "utf8mb4; DROP DATABASE x", "utf8mb4_bin"))
+      .toBe("CREATE DATABASE `shop`;");
+    // A collation that does not belong to the chosen charset is dropped, keeping the charset.
+    expect(buildCreateDatabaseStatement("shop", "gbk", "utf8mb4_bin"))
+      .toBe("CREATE DATABASE `shop` CHARACTER SET gbk;");
+    expect(buildCreateDatabaseStatement("shop", null, "utf8mb4_bin"))
+      .toBe("CREATE DATABASE `shop`;");
+  });
+
+  it("rejects names MySQL cannot store as a schema", () => {
+    expect(databaseNameValidationError("app_orders")).toBeNull();
+    expect(databaseNameValidationError("  spaced  ")).toBeNull();
+    expect(databaseNameValidationError("   ")).toBe("数据库名不能为空。");
+    expect(databaseNameValidationError("a".repeat(65)))
+      .toBe("数据库名不能超过 64 个字符。");
+    expect(databaseNameValidationError("a".repeat(64))).toBeNull();
+    expect(databaseNameValidationError("app/orders"))
+      .toBe("数据库名不能包含 / \\ . 这三种字符。");
+    expect(databaseNameValidationError("app.orders"))
+      .toBe("数据库名不能包含 / \\ . 这三种字符。");
+    expect(databaseNameValidationError("app\\orders"))
+      .toBe("数据库名不能包含 / \\ . 这三种字符。");
+    expect(databaseNameValidationError("app\u0000orders"))
+      .toBe("数据库名不能包含控制字符。");
+  });
+
+  it("keeps every listed collation prefixed by its own character set", () => {
+    for (const option of DATABASE_CHARSET_OPTIONS) {
+      expect(option.collations.length).toBeGreaterThan(0);
+      for (const collation of option.collations) {
+        expect(collation.startsWith(option.charset)).toBe(true);
+      }
+    }
   });
 });

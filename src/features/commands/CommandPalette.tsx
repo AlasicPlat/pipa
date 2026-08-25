@@ -14,6 +14,8 @@ export interface CommandPaletteItem {
   detail?: string;
   keywords?: readonly string[];
   connectionId?: string;
+  /** Schema that owns a table item; required to act on it unambiguously. */
+  database?: string;
   lastUsedAt?: number;
 }
 
@@ -25,6 +27,7 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onRequestTableAction?: (
     connectionId: string,
+    database: string,
     tableName: string,
     action: TableQuickAction,
   ) => void;
@@ -285,7 +288,7 @@ export function CommandPalette({
    * Side effects: positions and opens the table action menu.
    */
   function openTableContextMenu(item: CommandPaletteItem, x: number, y: number): void {
-    if (item.type !== "table" || !item.connectionId || !onRequestTableAction) {
+    if (item.type !== "table" || !item.connectionId || !item.database || !onRequestTableAction) {
       return;
     }
     const menuWidth = 220;
@@ -305,11 +308,11 @@ export function CommandPalette({
    */
   function requestTableAction(action: TableQuickAction): void {
     const item = tableContextMenu?.item;
-    if (!item?.connectionId) {
+    if (!item?.connectionId || !item.database) {
       return;
     }
     setTableContextMenu(null);
-    onRequestTableAction?.(item.connectionId, item.label, action);
+    onRequestTableAction?.(item.connectionId, item.database, item.label, action);
   }
 
   /** Selects an item and lets the parent close any palette-owned global state. */
@@ -419,7 +422,7 @@ export function CommandPalette({
                     key={item.id}
                     onClick={() => selectItem(item)}
                     onContextMenu={(event) => {
-                      if (item.type !== "table" || !item.connectionId || !onRequestTableAction) {
+                      if (item.type !== "table" || !item.connectionId || !item.database || !onRequestTableAction) {
                         return;
                       }
                       event.preventDefault();
@@ -464,6 +467,7 @@ export function CommandPalette({
           onAction={requestTableAction}
           pinned={pinnedTableKeys.has(tableTargetKey(
             tableContextMenu.item.connectionId ?? "",
+            tableContextMenu.item.database ?? "",
             tableContextMenu.item.label,
           ))}
           style={{ left: tableContextMenu.x, top: tableContextMenu.y }}

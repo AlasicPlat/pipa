@@ -22,6 +22,8 @@ export type DetachedWorkspaceLaunch =
     kind: "table";
     id: string;
     connectionId: string;
+    /** Schema that owns the table; required so a detached window cannot resolve the wrong one. */
+    database: string;
     tableName: string;
     title: string;
   };
@@ -60,9 +62,12 @@ export function readDetachedWorkspaceLaunch(
   if (kind === "query") return { kind, id, title };
   if (kind === "table") {
     const connectionId = params.get("connectionId");
+    const database = params.get("database");
     const tableName = params.get("tableName");
-    return connectionId && tableName
-      ? { kind, id, connectionId, tableName, title }
+    // A table descriptor without its schema is ambiguous now that one connection browses several,
+    // so an incomplete descriptor is refused rather than resolved against the profile default.
+    return connectionId && database && tableName
+      ? { kind, id, connectionId, database, tableName, title }
       : null;
   }
   return null;
@@ -87,6 +92,7 @@ function detachedWorkspaceUrl(workspace: DetachedWorkspaceLaunch): string {
   });
   if (workspace.kind === "table") {
     params.set("connectionId", workspace.connectionId);
+    params.set("database", workspace.database);
     params.set("tableName", workspace.tableName);
   }
   return `/?${params.toString()}`;

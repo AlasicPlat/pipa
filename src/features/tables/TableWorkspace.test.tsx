@@ -183,7 +183,7 @@ const PROFILE: ConnectionProfile = {
  */
 async function assertVisualChangePreviews(): Promise<void> {
   expect(updateShortcutBinding("selectRows", "Alt+A")).toBe(true);
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   expect(screen.queryByLabelText("name 第 1 行")).not.toBeInTheDocument();
@@ -214,7 +214,7 @@ async function assertVisualChangePreviews(): Promise<void> {
 
 /** Verifies row selection follows the documented keyboard interaction model. */
 async function assertKeyboardRowSelection(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   const firstRow = screen.getByText("old").closest<HTMLElement>("[role='row']");
@@ -236,7 +236,7 @@ async function assertKeyboardRowSelection(): Promise<void> {
 
 /** Verifies pagination is a fixed sibling of the independently scrolling grid. */
 async function assertPaginationOutsideScrollableGrid(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   const dataEditor = screen.getByRole("tabpanel", { name: "数据编辑器" });
@@ -251,7 +251,7 @@ async function assertPaginationOutsideScrollableGrid(): Promise<void> {
 
 /** Verifies dragging a header edge updates every data row's shared grid template. */
 async function assertResizableDataColumns(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   const resizeHandle = screen.getByRole("separator", { name: "调整 name 列宽" });
@@ -270,7 +270,7 @@ async function assertResizableDataColumns(): Promise<void> {
 /** Verifies scoped find focuses the visible data search and marks matching cells. */
 async function assertCurrentPageDataSearch(): Promise<void> {
   expect(updateShortcutBinding("find", "Alt+K")).toBe(true);
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
@@ -287,7 +287,7 @@ async function assertCurrentPageDataSearch(): Promise<void> {
 /** Verifies Escape exits editing before selection and Cmd/Ctrl+S submits dirty DML. */
 async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
   const onDirtyChange = vi.fn();
-  render(<TableWorkspace onDirtyChange={onDirtyChange} profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" onDirtyChange={onDirtyChange} profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.doubleClick(screen.getByText("old"));
@@ -316,7 +316,7 @@ async function assertEditingEscapeAndSaveShortcut(): Promise<void> {
 
 /** Verifies production saves require the existing second confirmation gesture. */
 async function assertProductionSaveConfirmation(): Promise<void> {
-  render(<TableWorkspace profile={{ ...PROFILE, environment: "production" }} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={{ ...PROFILE, environment: "production" }} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.doubleClick(screen.getByText("old"));
@@ -332,7 +332,7 @@ async function assertProductionSaveConfirmation(): Promise<void> {
 
 /** Verifies changing a staged insert invalidates an already armed production confirmation. */
 async function assertProductionConfirmationTracksLatestInsert(): Promise<void> {
-  render(<TableWorkspace profile={{ ...PROFILE, environment: "production" }} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={{ ...PROFILE, environment: "production" }} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: /新增行/ }));
@@ -352,7 +352,7 @@ async function assertProductionConfirmationTracksLatestInsert(): Promise<void> {
 /** Verifies schema drafts participate in dirty reporting and the save shortcut. */
 async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
   const onDirtyChange = vi.fn();
-  render(<TableWorkspace onDirtyChange={onDirtyChange} profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" onDirtyChange={onDirtyChange} profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
@@ -376,7 +376,7 @@ async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
  * Side effects: 渲染并操作模拟表结构工作区。
  */
 async function assertCommentDdlUsesQuotedString(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/ }));
@@ -395,7 +395,7 @@ async function assertCommentDdlUsesQuotedString(): Promise<void> {
 
 /** Verifies page reads are primary-key ordered and refresh cannot replace a dirty row snapshot. */
 async function assertStableOrderingAndDirtyRefreshLock(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   await waitFor(() => expect(sessionMocks.sessions[1].run).toHaveBeenCalledWith(
@@ -411,7 +411,7 @@ async function assertStableOrderingAndDirtyRefreshLock(): Promise<void> {
 
 /** Verifies inserted cells distinguish omitted DEFAULT from an explicit SQL NULL. */
 async function assertInsertDefaultAndNullStates(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "新增行" }));
@@ -435,7 +435,7 @@ async function assertFailedTypedCommitKeepsChanges(): Promise<void> {
     technicalDetails: null,
     retryable: true,
   });
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.doubleClick(screen.getByText("old"));
@@ -450,7 +450,7 @@ async function assertFailedTypedCommitKeepsChanges(): Promise<void> {
 
 /** Verifies the quick filter pushes a WHERE clause into both the page read and the exact count. */
 async function assertQuickFilterAppliesWhereClause(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   expect(screen.getByText("未启用筛选，当前展示全表数据")).toBeVisible();
@@ -499,7 +499,7 @@ async function assertQuickFilterAppliesWhereClause(): Promise<void> {
 
 /** Verifies the quick filter refuses to run while staged DML edits would be invalidated. */
 async function assertQuickFilterLockedWhileDirty(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "展开数据筛选条件" }));
@@ -520,7 +520,7 @@ async function assertQuickFilterLockedWhileDirty(): Promise<void> {
 
 /** Verifies the view tabs follow the WAI-ARIA tabs pattern with roving focus. */
 async function assertViewTabsKeyboardNavigation(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   const dataTab = screen.getByRole("tab", { name: /数据 DML/ });
@@ -555,7 +555,7 @@ async function assertViewTabsKeyboardNavigation(): Promise<void> {
 
 /** Verifies each tab flags only the uncommitted edits made inside its own panel. */
 async function assertPerPanelDirtyMarkers(): Promise<void> {
-  render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
   expect(await screen.findByText(/主键 id/)).toBeVisible();
   expect(screen.queryByLabelText(/项未提交变更/)).not.toBeInTheDocument();
@@ -589,7 +589,7 @@ async function assertFilteredEmptyState(): Promise<void> {
   const originalRows = dataSession.state.rows;
   dataSession.state = { ...dataSession.state, rows: [] };
   try {
-    render(<TableWorkspace profile={PROFILE} tableName="orders" />);
+    render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
 
     expect(await screen.findByText(/主键 id/)).toBeVisible();
     expect(screen.getByText("当前表还没有数据")).toBeVisible();
@@ -612,6 +612,39 @@ async function assertFilteredEmptyState(): Promise<void> {
   } finally {
     dataSession.state = { ...dataSession.state, rows: originalRows };
   }
+}
+
+/**
+ * Verifies a server-managed schema is browsable but states its read-only status up front.
+ *
+ * The backend refuses these writes anyway; surfacing it before edits are staged avoids a commit
+ * that can only fail.
+ * Parameters: none.
+ * @returns A promise settled after the read-only controls are asserted.
+ * Side effects: renders one mocked table workspace against a system schema.
+ */
+async function assertSystemSchemaIsReadOnly(): Promise<void> {
+  render(<TableWorkspace database="mysql" profile={PROFILE} tableName="user" />);
+
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
+    "只读：mysql 由服务器管理，只能浏览，无法修改。",
+  );
+  // Reading still works; only the mutating controls are withdrawn.
+  expect(screen.getByRole("table", { name: "user 数据" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /新增行/u })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /删除选中/u })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("tab", { name: /表结构 DDL/u }));
+  expect(screen.getByRole("button", { name: /新增字段/u })).toBeDisabled();
+}
+
+/** Verifies an ordinary user schema keeps its editing controls enabled. */
+async function assertUserSchemaRemainsEditable(): Promise<void> {
+  render(<TableWorkspace database="shop" profile={PROFILE} tableName="orders" />);
+
+  expect(await screen.findByText(/主键 id/u)).toBeVisible();
+  expect(screen.queryByText(/只读：/u)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /新增行/u })).toBeEnabled();
 }
 
 describe("TableWorkspace", () => {
@@ -646,4 +679,6 @@ describe("TableWorkspace", () => {
   it("moves between view tabs with arrow, Home, and End keys", assertViewTabsKeyboardNavigation);
   it("marks uncommitted changes on the owning panel tab only", assertPerPanelDirtyMarkers);
   it("explains an empty filtered result and resets it in one click", assertFilteredEmptyState);
+  it("marks a server-managed schema read-only before edits are staged", assertSystemSchemaIsReadOnly);
+  it("keeps an ordinary schema editable", assertUserSchemaRemainsEditable);
 });

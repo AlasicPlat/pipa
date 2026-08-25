@@ -693,6 +693,146 @@ async fn applies_all_scalar_mutation_value_types() {
     assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
 }
 
+/// Verifies a schema outside the connection's visible set is refused before any row is written.
+///
+/// The navigator can switch databases within one connection, so the target schema is no longer
+/// required to equal the profile default. This asserts the replacement boundary: membership in the
+/// server-resolved visible set, checked with the caller's name bound as a parameter.
+#[tokio::test]
+async fn rejects_mutations_targeting_an_invisible_database() {
+    let profile = test_profile();
+    let table_name = format!("pipa_invisible_db_{}", Uuid::new_v4().simple());
+    let setup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("CREATE TABLE `{table_name}` (id INT PRIMARY KEY)"),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let error = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: format!("pipa_absent_{}", Uuid::new_v4().simple()),
+                table: table_name.clone(),
+                mutations: vec![TableMutation::Insert {
+                    values: vec![field("id", TableMutationValue::Integer("1".into()))],
+                }],
+            },
+        )
+        .await
+        .expect_err("a schema outside the visible set cannot be written");
+    assert!(matches!(error.code, AppErrorCode::Validation));
+    assert_eq!(
+        error.message,
+        "The target database is not available to this connection"
+    );
+
+    // A hostile schema name must be rejected as data, never executed as structure.
+    let injection = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test`; DROP TABLE mysql.user; --".into(),
+                table: table_name.clone(),
+                mutations: vec![TableMutation::Insert {
+                    values: vec![field("id", TableMutationValue::Integer("2".into()))],
+                }],
+            },
+        )
+        .await
+        .expect_err("an injected schema name is not a visible schema");
+    assert!(matches!(injection.code, AppErrorCode::Validation));
+
+    let rows = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("SELECT COUNT(*) FROM `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(
+        &rows[2],
+        QueryEvent::Batch { rows, .. }
+            if matches!(rows[0].as_slice(), [CellValue::Integer(count)] if count == "0")
+    ));
+
+    let cleanup = run_query(
+        &profile,
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+}
+
+/// Verifies a visible schema that is not the profile default accepts mutations.
+///
+/// This is the behaviour the navigator's database switcher depends on. The profile deliberately
+/// carries no default database, so the previous rule (target must equal `profile.database`) would
+/// reject this write; only visibility may decide it now.
+#[tokio::test]
+async fn applies_mutations_to_a_visible_non_default_database() {
+    let profile = ConnectionProfile {
+        database: None,
+        ..test_profile()
+    };
+    let table_name = format!("pipa_switched_{}", Uuid::new_v4().simple());
+    // Setup runs on the default-database profile so the table lands in the granted schema.
+    let setup = run_query(
+        &test_profile(),
+        Uuid::new_v4(),
+        &format!("CREATE TABLE `{table_name}` (id INT PRIMARY KEY, label VARCHAR(32))"),
+    )
+    .await;
+    assert!(matches!(setup.last(), Some(QueryEvent::Completed { .. })));
+
+    let result = MySqlAdapter::new()
+        .apply_table_mutations(
+            &profile,
+            SecretString::from("pipa_test_password"),
+            ApplyTableMutationsInput {
+                connection_id: profile.id,
+                database: "pipa_test".into(),
+                table: table_name.clone(),
+                mutations: vec![TableMutation::Insert {
+                    values: vec![
+                        field("id", TableMutationValue::Integer("1".into())),
+                        field("label", TableMutationValue::Text("switched".into())),
+                    ],
+                }],
+            },
+        )
+        .await
+        .expect("a visible schema should accept mutations without being the profile default");
+    assert_eq!(result.applied_mutations, 1);
+    assert_eq!(result.affected_rows, 1);
+
+    let rows = run_query(
+        &test_profile(),
+        Uuid::new_v4(),
+        &format!("SELECT label FROM `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(
+        &rows[2],
+        QueryEvent::Batch { rows, .. }
+            if matches!(rows[0].as_slice(), [CellValue::Text(label)] if label == "switched")
+    ));
+
+    let cleanup = run_query(
+        &test_profile(),
+        Uuid::new_v4(),
+        &format!("DROP TABLE `{table_name}`"),
+    )
+    .await;
+    assert!(matches!(cleanup.last(), Some(QueryEvent::Completed { .. })));
+}
+
 /// Verifies non-transactional engines are rejected before any staged row can be written.
 #[tokio::test]
 async fn rejects_non_transactional_table_mutations() {

@@ -88,6 +88,16 @@ export function renameConnection(
 }
 
 /**
+ * 更新一条已保存连接的非敏感字段，不重新提交密码。
+ * @param profile - 已编辑的非敏感配置；后端会裁剪并校验各字段。
+ * @returns 包含后端确认后配置的 promise。
+ * Side effects: 调用 Tauri `update_connection_profile` 命令；已加密的凭据不会被读取或改写。
+ */
+export function updateConnectionProfile(profile: ConnectionProfile): Promise<ConnectionProfile> {
+  return invoke<ConnectionProfile>("update_connection_profile", { profile });
+}
+
+/**
  * Re-tests one saved connection with its credential read only by the desktop backend.
  * @param connectionId - Stable identifier of the connection to test again.
  * @returns A promise that resolves when the existing profile is reachable.

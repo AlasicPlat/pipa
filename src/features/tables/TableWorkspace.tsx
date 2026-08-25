@@ -8,6 +8,7 @@ import {
   Columns3,
   Copy,
   KeyRound,
+  Lock,
   Plus,
   RefreshCw,
   Save,
@@ -23,6 +24,7 @@ import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { applyTableMutations } from "../../lib/tauriClient";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
+import { isSystemDatabase } from "../connections/mysqlDatabases";
 import { useQuerySession } from "../query/useQuerySession";
 import { SelectableSqlBlock } from "./SelectableSqlBlock";
 import { StructureMetaSelect, StructureTypeSuggest } from "./structureEditors";
@@ -55,6 +57,13 @@ import {
 } from "./tableSql";
 
 interface TableWorkspaceProps {
+  /**
+   * Schema that owns this table.
+   *
+   * Passed explicitly rather than read from the profile, because the navigator can switch
+   * databases within one connection while the profile keeps its own default.
+   */
+  database: string;
   profile: ConnectionProfile;
   tableName: string;
   onDirtyChange?: (dirty: boolean) => void;
@@ -220,9 +229,13 @@ function parseCollationRows(rows: CellValue[][]): MysqlCollationInfo[] {
 }
 
 /** Renders a connection-bound table with guarded DML, schema, indexes, and raw DDL. */
-export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorkspaceProps) {
+export function TableWorkspace({
+  database,
+  profile,
+  tableName,
+  onDirtyChange,
+}: TableWorkspaceProps) {
   const shortcuts = useShortcutSettings();
-  const database = profile.database ?? "";
   const schemaSession = useQuerySession(profile.id, { recordHistory: false });
   const dataSession = useQuerySession(profile.id, { recordHistory: false });
   const ddlSession = useQuerySession(profile.id, { recordHistory: false });
@@ -508,6 +521,11 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
   );
   const dmlStatements = dmlPlan.statements;
   const hasDirtyChanges = ddlStatements.length > 0 || ddlValidationErrors.length > 0 || hasDmlChanges;
+  // Server-managed schemas are browsable but never writable. Stating that up front is better than
+  // letting a user stage edits and only discover it when the backend refuses the commit.
+  const readOnlyReason = isSystemDatabase(database)
+    ? `${database} 由服务器管理，只能浏览，无法修改。`
+    : null;
   const filterableColumns = useMemo(
     () => schema.filter((column) => filterOperatorsForColumnType(column.type).length > 0),
     [schema],
@@ -1027,6 +1045,9 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
 
   /** Executes reviewed DDL or a typed parameterized DML transaction after production confirmation. */
   function commit(kind: MutationKind): void {
+    if (readOnlyReason) {
+      return;
+    }
     const statements = kind === "ddl" ? ddlStatements : dmlStatements;
     if (
       statements.length === 0 ||
@@ -1157,6 +1178,12 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
 
       <div className="table-workspace__content">
         {!database ? <p className="table-state">当前连接未指定数据库，无法打开表。</p> : null}
+        {readOnlyReason ? (
+          <p className="table-state table-state--readonly" role="status">
+            <Lock size={13} aria-hidden="true" />
+            只读：{readOnlyReason}
+          </p>
+        ) : null}
         {mutationSession.state.error ? <p className="table-state table-state--error" role="alert">提交失败：{mutationSession.state.error.message}。变更集已保留。</p> : null}
         {dmlMutationError ? <p className="table-state table-state--error" role="alert">提交失败：{dmlMutationError.message}。变更集已保留。</p> : null}
 
@@ -1184,10 +1211,10 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
                 {normalizedDataSearch ? <small>{dataSearchMatchCount} 个匹配</small> : null}
               </label>
               <span className="table-editor-toolbar__actions">
-                <button disabled={selectedRows.size === 0 || primaryColumns.length === 0} onClick={deleteSelectedRows} type="button"><Trash2 size={13} aria-hidden="true" />删除选中</button>
-                <button disabled={dataSession.state.columns.length === 0} onClick={addInsertedRow} type="button"><Plus size={13} aria-hidden="true" />新增行</button>
+                <button disabled={Boolean(readOnlyReason) || selectedRows.size === 0 || primaryColumns.length === 0} onClick={deleteSelectedRows} type="button"><Trash2 size={13} aria-hidden="true" />删除选中</button>
+                <button disabled={Boolean(readOnlyReason) || dataSession.state.columns.length === 0} onClick={addInsertedRow} type="button"><Plus size={13} aria-hidden="true" />新增行</button>
                 <button disabled={!hasDmlChanges} onClick={discardDmlChanges} type="button">撤销全部</button>
-                <button className="table-commit" disabled={dmlStatements.length === 0 || dmlPlan.errors.length > 0 || ddlStatements.length > 0 || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("dml")} title={ddlStatements.length > 0 ? "请先提交或撤销表结构变更" : `提交当前数据变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`} type="button"><Save size={13} aria-hidden="true" />{dmlMutationRunning ? "提交中…" : pendingProductionAction === "dml" ? "确认在生产环境提交" : `提交 ${dmlChangeCount} 项`}</button>
+                <button className="table-commit" disabled={Boolean(readOnlyReason) || dmlStatements.length === 0 || dmlPlan.errors.length > 0 || ddlStatements.length > 0 || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("dml")} title={readOnlyReason ?? (ddlStatements.length > 0 ? "请先提交或撤销表结构变更" : `提交当前数据变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{dmlMutationRunning ? "提交中…" : pendingProductionAction === "dml" ? "确认在生产环境提交" : `提交 ${dmlChangeCount} 项`}</button>
               </span>
             </header>
             <TableFilterBar
@@ -1394,9 +1421,9 @@ export function TableWorkspace({ profile, tableName, onDirtyChange }: TableWorks
             <header className="table-editor-toolbar">
               <span>{`${draftColumns.length} 个字段 · ${indexes.length} 个索引`}{primaryColumns.length > 0 ? ` · 主键 ${primaryColumns.join(", ")}` : " · 无主键"}{columnDdlStatements.length > 0 ? ` · ${columnDdlStatements.length} 项待执行` : ""}</span>
               <span className="table-editor-toolbar__actions">
-                <button onClick={addDraftColumn} type="button"><Plus size={13} aria-hidden="true" />新增字段</button>
+                <button disabled={Boolean(readOnlyReason)} onClick={addDraftColumn} type="button"><Plus size={13} aria-hidden="true" />新增字段</button>
                 <button disabled={ddlStatements.length === 0} onClick={discardDdlChanges} type="button">撤销全部</button>
-                <button className="table-commit" disabled={ddlStatements.length === 0 || ddlValidationErrors.length > 0 || hasDmlChanges || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("ddl")} title={hasDmlChanges ? "请先提交或撤销数据变更" : `提交当前结构变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`} type="button"><Save size={13} aria-hidden="true" />{pendingProductionAction === "ddl" ? "确认在生产环境执行" : `执行 ${ddlStatements.length} 条 DDL`}</button>
+                <button className="table-commit" disabled={Boolean(readOnlyReason) || ddlStatements.length === 0 || ddlValidationErrors.length > 0 || hasDmlChanges || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("ddl")} title={readOnlyReason ?? (hasDmlChanges ? "请先提交或撤销数据变更" : `提交当前结构变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{pendingProductionAction === "ddl" ? "确认在生产环境执行" : `执行 ${ddlStatements.length} 条 DDL`}</button>
               </span>
             </header>
             <div className="structure-editor__scroll">

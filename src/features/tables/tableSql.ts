@@ -62,6 +62,86 @@ export function mysqlStringLiteral(value: string): string {
   return `'${value.replace(/\\/gu, "\\\\").replace(/'/gu, "''")}'`;
 }
 
+/** One selectable character set and the collations offered with it. */
+export interface DatabaseCharsetOption {
+  charset: string;
+  collations: readonly string[];
+}
+
+/**
+ * Closed allowlist of character sets and collations the create-database action may emit.
+ *
+ * Both values are copied from this list rather than from user text, so neither can alter SQL
+ * structure. Server-default remains the dialog's initial choice because it is always valid.
+ */
+export const DATABASE_CHARSET_OPTIONS: readonly DatabaseCharsetOption[] = [
+  {
+    charset: "utf8mb4",
+    collations: [
+      "utf8mb4_0900_ai_ci",
+      "utf8mb4_general_ci",
+      "utf8mb4_unicode_ci",
+      "utf8mb4_unicode_520_ci",
+      "utf8mb4_bin",
+    ],
+  },
+  { charset: "utf8mb3", collations: ["utf8mb3_general_ci", "utf8mb3_unicode_ci", "utf8mb3_bin"] },
+  { charset: "gbk", collations: ["gbk_chinese_ci", "gbk_bin"] },
+  { charset: "gb18030", collations: ["gb18030_chinese_ci", "gb18030_unicode_520_ci", "gb18030_bin"] },
+  { charset: "big5", collations: ["big5_chinese_ci", "big5_bin"] },
+  { charset: "latin1", collations: ["latin1_swedish_ci", "latin1_general_ci", "latin1_bin"] },
+  { charset: "ascii", collations: ["ascii_general_ci", "ascii_bin"] },
+  { charset: "binary", collations: ["binary"] },
+];
+
+/** Longest schema name MySQL accepts. */
+const MAX_DATABASE_NAME_LENGTH = 64;
+
+/**
+ * Reports why one schema name cannot be created, before any statement is built.
+ * @param databaseName - Raw name typed by the user.
+ * @returns A display-ready Chinese reason, or null when the trimmed name is acceptable.
+ * Side effects: none.
+ */
+export function databaseNameValidationError(databaseName: string): string | null {
+  const trimmed = databaseName.trim();
+  if (trimmed.length === 0) {
+    return "数据库名不能为空。";
+  }
+  if (trimmed.length > MAX_DATABASE_NAME_LENGTH) {
+    return `数据库名不能超过 ${MAX_DATABASE_NAME_LENGTH} 个字符。`;
+  }
+  // MySQL maps schema names onto directory names, so these separators are rejected by the server.
+  if (/[/\\.]/u.test(trimmed)) {
+    return "数据库名不能包含 / \\ . 这三种字符。";
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(trimmed)) {
+    return "数据库名不能包含控制字符。";
+  }
+  return null;
+}
+
+/**
+ * Builds one CREATE DATABASE statement with an optional allowlisted character set and collation.
+ * @param databaseName - Already-validated schema name; quoted as an identifier.
+ * @param charset - Requested character set, or null for the server default.
+ * @param collation - Requested collation, applied only when it belongs to the chosen character set.
+ * @returns A single executable MySQL statement.
+ * Side effects: none.
+ */
+export function buildCreateDatabaseStatement(
+  databaseName: string,
+  charset: string | null = null,
+  collation: string | null = null,
+): string {
+  const option = DATABASE_CHARSET_OPTIONS.find((item) => item.charset === charset) ?? null;
+  const charsetClause = option === null ? "" : ` CHARACTER SET ${option.charset}`;
+  const collationClause = option !== null && collation !== null && option.collations.includes(collation)
+    ? ` COLLATE ${collation}`
+    : "";
+  return `CREATE DATABASE ${quoteIdentifier(databaseName)}${charsetClause}${collationClause};`;
+}
+
 /**
  * Converts one transport cell into its exact editable text representation.
  * @param cell - Optional transport-safe database cell.

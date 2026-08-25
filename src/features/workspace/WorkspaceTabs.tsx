@@ -1,4 +1,4 @@
-import { FileClock, FileCode2, Plus, Table2, X } from "lucide-react";
+import { FileClock, FileCode2, Plus, Server, Table2, X } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { getShortcutKeyLabels, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { WorkspaceTab } from "../query/useWorkspacePersistence";
@@ -7,13 +7,15 @@ import { isScreenPointOutsideWindow, type ScreenPoint } from "./detachedWorkspac
 export interface OpenTableTab {
   id: string;
   connectionId: string;
+  /** Schema that owns the table; a connection may browse several. */
+  database: string;
   tableName: string;
   title: string;
 }
 
 export interface UtilityWorkspaceTab {
   id: string;
-  kind: "binlog";
+  kind: "binlog" | "connections";
   title: string;
 }
 
@@ -571,7 +573,9 @@ export function WorkspaceTabs({
                 tabIndex={isActive ? 0 : -1}
                 type="button"
               >
-                <FileClock size={12} aria-hidden="true" />
+                {tab.kind === "connections"
+                  ? <Server size={12} aria-hidden="true" />
+                  : <FileClock size={12} aria-hidden="true" />}
                 <span>{tab.title}</span>
               </button>
               <button

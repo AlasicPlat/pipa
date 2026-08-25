@@ -44,14 +44,38 @@ interface TableActionMenuProps {
 }
 
 /**
- * Builds a collision-safe identity for one connection-bound table.
+ * Builds a collision-safe identity for one table inside one database on one connection.
+ *
+ * The database is part of the identity because a single connection can now browse several
+ * schemas, and same-named tables in different schemas are unrelated objects.
  * @param connectionId - Saved connection identifier.
+ * @param database - Schema that owns the table.
  * @param tableName - Exact database-reported table name.
  * @returns A stable local-preference key.
  * Side effects: none.
  */
-export function tableTargetKey(connectionId: string, tableName: string): string {
-  return `${connectionId}\u0000${tableName}`;
+export function tableTargetKey(
+  connectionId: string,
+  database: string,
+  tableName: string,
+): string {
+  return `${connectionId}\u0000${database}\u0000${tableName}`;
+}
+
+/**
+ * Builds the workspace tab identity for one table inside one database.
+ * @param connectionId - Saved connection identifier.
+ * @param database - Schema that owns the table.
+ * @param tableName - Exact database-reported table name.
+ * @returns A stable tab identifier.
+ * Side effects: none.
+ */
+export function tableTabId(
+  connectionId: string,
+  database: string,
+  tableName: string,
+): string {
+  return `${connectionId}\u0000${database}\u0000${tableName}`;
 }
 
 /**

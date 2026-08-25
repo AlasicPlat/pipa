@@ -73,14 +73,19 @@ function assertWindowBoundaryDetection(): void {
 /** Verifies routing metadata round-trips without embedding editor contents in the URL. */
 function assertDetachedRouteParsing(): void {
   expect(readDetachedWorkspaceLaunch(
-    "?workspaceKind=table&workspaceId=table-1&workspaceTitle=%E8%AE%A2%E5%8D%95&connectionId=connection-1&tableName=orders",
+    "?workspaceKind=table&workspaceId=table-1&workspaceTitle=%E8%AE%A2%E5%8D%95&connectionId=connection-1&database=shop&tableName=orders",
   )).toEqual({
     kind: "table",
     id: "table-1",
     title: "订单",
     connectionId: "connection-1",
+    database: "shop",
     tableName: "orders",
   });
+  // A table route without its schema is ambiguous, so it is refused rather than guessed.
+  expect(readDetachedWorkspaceLaunch(
+    "?workspaceKind=table&workspaceId=table-1&workspaceTitle=%E8%AE%A2%E5%8D%95&connectionId=connection-1&tableName=orders",
+  )).toBeNull();
   expect(readDetachedWorkspaceLaunch("?workspaceKind=table&workspaceId=broken&workspaceTitle=Broken"))
     .toBeNull();
   expect(readWorkspaceWindowContext()).toEqual({
