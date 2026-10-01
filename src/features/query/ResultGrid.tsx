@@ -29,7 +29,6 @@ import {
 import {
   buildResultView,
   cellMatchesSearch,
-  countSearchMatches,
   cycleColumnSort,
   type ResultSortState,
 } from "./resultView";
@@ -200,15 +199,14 @@ export function ResultGrid({
   );
 
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
-  const viewRows = useMemo(
+  // One pass produces the visible rows and the match count together.
+  const view = useMemo(
     () => buildResultView(rows, { search: searchQuery, sort }),
     [rows, searchQuery, sort],
   );
+  const viewRows = view.rows;
   const displayRows = useMemo(() => viewRows.map((row) => row.cells), [viewRows]);
-  const searchMatchCount = useMemo(
-    () => countSearchMatches(viewRows, columns, normalizedSearch),
-    [viewRows, columns, normalizedSearch],
-  );
+  const searchMatchCount = view.matchCount;
 
   const virtualizer = useVirtualizer({
     count: viewRows.length,

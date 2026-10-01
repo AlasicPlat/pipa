@@ -122,7 +122,11 @@ export function databaseNameValidationError(databaseName: string): string | null
 }
 
 /**
- * Builds one CREATE DATABASE statement with an optional allowlisted character set and collation.
+ * Previews the CREATE DATABASE statement for one schema name.
+ *
+ * This is a preview, not the executed statement. `build_create_database` in `pipa-core` owns the
+ * statement that reaches the server, including the name validation and the charset allowlist.
+ *
  * @param databaseName - Already-validated schema name; quoted as an identifier.
  * @param charset - Requested character set, or null for the server default.
  * @param collation - Requested collation, applied only when it belongs to the chosen character set.
@@ -434,7 +438,12 @@ export function columnDefaultValidationError(column: TableColumnDefinition): str
 }
 
 /**
- * Produces ALTER TABLE statements by comparing source columns with the visual draft.
+ * Previews the ALTER TABLE statements the visual draft describes.
+ *
+ * This is a preview, not the executed DDL. `build_table_ddl` in `pipa-core` owns the statements that
+ * reach the server; this copy exists so the structure view can show pending statements and their
+ * count synchronously while editing. If the two ever disagree, the backend is correct.
+ *
  * @param database - Owning database name.
  * @param table - Target table name.
  * @param originalColumns - Latest server-backed schema snapshot.
@@ -995,10 +1004,17 @@ export interface TableFilterClause {
 }
 
 /**
- * Compiles quick-filter conditions into one MySQL WHERE clause.
+ * Pre-checks quick-filter conditions and previews the MySQL WHERE clause they describe.
+ *
+ * This is a UI pre-check, not the executed clause. `build_filter_clause` in `pipa-core` owns the
+ * clause that reaches the database; this copy exists only so validation errors and the active count
+ * can be rendered synchronously while the user types, without an IPC round trip per keystroke.
+ * Both implementations are kept in step by `matches the backend clause compiler` in this module's
+ * test file — if they ever disagree, the backend is correct and this copy is the bug.
+ *
  * @param conditions - Ordered conditions from the filter bar.
  * @param schema - Live table schema that authorizes every referenced column.
- * @returns The clause, its validation errors, and the applied condition count.
+ * @returns The previewed clause, its validation errors, and the applied condition count.
  * Side effects: none. Column names are matched against the schema and quoted, operators come from a
  * closed allowlist, and every operand is encoded as a literal, so user text can never alter structure.
  */

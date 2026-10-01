@@ -26,16 +26,16 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  padding: 22px 26px 18px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-7);
+  padding: var(--space-6) var(--space-7) var(--space-5);
+  border-bottom: var(--divider);
   background: var(--surface-toolbar, var(--surface-panel));
   box-shadow: var(--shadow-highlight);
 }
 
 .binlog-workspace__header h1 {
-  margin: 3px 0 4px;
-  font-size: 1.25rem;
+  margin: var(--space-px) 0 var(--space-0);
+  font-size: var(--text-xl);
   font-weight: 680;
   letter-spacing: -0.015em;
 }
@@ -43,7 +43,7 @@
 .binlog-workspace__header p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .binlog-workspace__eyebrow {
@@ -56,13 +56,13 @@
 
 .binlog-button {
   display: inline-flex;
-  min-height: 32px;
+  min-height: var(--control-h-md);
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 6px 11px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-sm);
   font-weight: 620;
@@ -118,22 +118,21 @@
   height: 66px;
   margin-bottom: 18px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent-mysql) 25%, var(--border-subtle));
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--accent-mysql) 8%, var(--surface-raised));
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--accent-mysql) 12%, var(--surface-raised));
   color: var(--accent-mysql);
 }
 
 .binlog-empty h2 {
-  margin: 0 0 8px;
-  font-size: 1.05rem;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
 }
 
 .binlog-empty p {
   max-width: 480px;
-  margin: 0 0 22px;
+  margin: 0 0 var(--space-6);
   color: var(--text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   line-height: 1.65;
 }
 
@@ -141,58 +140,56 @@
 .binlog-state-card {
   width: min(720px, calc(100% - 48px));
   margin: 42px auto;
-  padding: 22px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 11px;
+  padding: var(--space-6);
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: var(--shadow-sm), var(--shadow-highlight);
 }
 
 .binlog-import__heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--space-6);
 }
 
 .binlog-import__heading h2 {
-  margin: 4px 0 0;
+  margin: var(--space-0) 0 0;
   overflow: hidden;
-  font-size: 1rem;
+  font-size: var(--text-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .binlog-import__heading > strong {
-  font-size: 1.35rem;
+  font-size: var(--text-2xl);
   font-variant-numeric: tabular-nums;
 }
 
 .binlog-import progress {
   width: 100%;
   height: 7px;
-  margin: 18px 0 10px;
+  margin: var(--space-5) 0 var(--space-3);
   overflow: hidden;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-muted);
   color: var(--accent-mysql);
 }
 
 .binlog-import progress::-webkit-progress-bar {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-muted);
 }
 
 .binlog-import progress::-webkit-progress-value {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-mysql);
 }
 
 .binlog-import__stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -201,25 +198,24 @@
 .binlog-file-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 18px 0;
+  gap: var(--space-1);
+  margin: var(--space-5) 0;
 }
 
 .binlog-file-list span {
   max-width: 240px;
   overflow: hidden;
-  padding: 4px 7px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  padding: var(--space-0) var(--space-1);
+  border-radius: var(--radius-xs);
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font: 0.72rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--text-xs) var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .binlog-inline-error {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-4);
   color: var(--status-danger);
   font-size: var(--text-sm);
 }
@@ -229,19 +225,19 @@
   min-height: 300px;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-4);
   color: var(--accent-mysql);
 }
 
 .binlog-loading div {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-0);
 }
 
 .binlog-loading strong {
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: var(--text-md);
 }
 
 .binlog-loading span {
@@ -262,7 +258,7 @@
 .binlog-state-card {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .binlog-state-card > svg {
@@ -275,14 +271,14 @@
 }
 
 .binlog-state-card h2 {
-  margin: 0 0 5px;
-  font-size: 1rem;
+  margin: 0 0 var(--space-0);
+  font-size: var(--text-md);
 }
 
 .binlog-state-card p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
@@ -296,31 +292,34 @@
 .binlog-state-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 16px;
 }
 
 .binlog-analysis {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px 22px 28px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-7);
 }
 
 .binlog-summary {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
 }
 
+/*
+ * Six outlined cards in one row was the densest box grid in the app. They are one metric each, so
+ * a tone step and the gap between them is enough separation.
+ */
 .binlog-summary__card {
   display: flex;
   min-width: 0;
   min-height: 92px;
-  padding: 11px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-panel);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
   flex-direction: column;
 }
 
@@ -337,7 +336,7 @@
 .binlog-summary__card strong {
   overflow: hidden;
   margin-top: auto;
-  font-size: 1.02rem;
+  font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -366,14 +365,13 @@
 }
 
 .binlog-diagnostics {
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-panel);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
   font-size: var(--text-sm);
 }
 
 .binlog-diagnostics summary {
-  padding: 9px 12px;
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
   color: var(--text-secondary);
   font-weight: 620;
@@ -381,7 +379,7 @@
 
 .binlog-diagnostics ul {
   margin: 0;
-  padding: 0 12px 10px;
+  padding: 0 var(--space-4) var(--space-3);
   list-style: none;
 }
 
@@ -389,9 +387,9 @@
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 8px;
-  padding: 7px 0;
-  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-top: var(--divider);
 }
 
 .binlog-diagnostics code,
@@ -416,11 +414,11 @@
   color: var(--accent-mysql);
 }
 
+/* The timeline is the page's main content, so it is the surface rather than a card on it. */
 .binlog-timeline {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
 }
 
@@ -428,27 +426,27 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 18px;
-  padding: 13px 14px 11px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: var(--divider);
 }
 
 .binlog-timeline__toolbar h2 {
-  margin: 3px 0 0;
-  font-size: 0.95rem;
+  margin: var(--space-px) 0 0;
+  font-size: var(--text-md);
 }
 
 .binlog-filters {
   display: flex;
   align-items: flex-end;
-  gap: 7px;
+  gap: var(--space-1);
 }
 
 .binlog-filters label {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  column-gap: 4px;
+  column-gap: var(--space-0);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
@@ -460,11 +458,11 @@
 .binlog-filters select {
   grid-column: 1 / -1;
   min-width: 124px;
-  height: 29px;
+  height: var(--control-h-sm);
   margin-top: 3px;
-  padding: 3px 25px 3px 8px;
+  padding: var(--space-px) var(--space-7) var(--space-px) var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -473,8 +471,8 @@
 .binlog-timeline__legend {
   display: flex;
   justify-content: space-between;
-  padding: 6px 14px 6px 35px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-8);
+  border-bottom: var(--divider);
   background: var(--surface-muted);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -485,7 +483,7 @@
 }
 
 .binlog-transaction {
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: var(--divider);
 }
 
 .binlog-transaction:last-child {
@@ -499,15 +497,15 @@
 .binlog-transaction__toggle {
   display: grid;
   width: 100%;
-  min-height: 39px;
-  padding: 7px 12px;
+  min-height: var(--band-h-sm);
+  padding: var(--space-1) var(--space-4);
   border: 0;
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
   grid-template-columns: 16px 158px minmax(180px, 1fr) auto 68px;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-1);
   text-align: left;
 }
 
@@ -532,7 +530,7 @@
 
 .binlog-transaction__identity {
   overflow: hidden;
-  font: 0.7rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--text-xs) var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -549,8 +547,8 @@
   min-height: var(--control-h-xs);
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-px) var(--space-1);
+  border-radius: var(--radius-xs);
   font-size: var(--text-xs);
   font-weight: 720;
   white-space: nowrap;
@@ -570,26 +568,26 @@
 
 .binlog-transaction__meta {
   display: flex;
-  min-height: 30px;
+  min-height: var(--control-h-sm);
   align-items: center;
-  gap: 12px;
-  padding: 4px 13px 7px 35px;
+  gap: var(--space-4);
+  padding: var(--space-0) var(--space-4) var(--space-1) var(--space-8);
   color: var(--text-tertiary);
-  font: 0.65rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--text-xs) var(--font-mono);
 }
 
 .binlog-transaction__tables {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-0);
 }
 
 .binlog-reset-sql {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   margin-left: auto;
 }
 
@@ -597,10 +595,10 @@
   display: inline-flex;
   min-height: var(--control-h-xs);
   align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
+  gap: var(--space-0);
+  padding: var(--space-px) var(--space-1);
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--surface-raised);
   color: var(--text-secondary);
   cursor: pointer;
@@ -645,32 +643,30 @@
   display: inline-flex;
   max-width: 240px;
   overflow: hidden;
-  padding: 2px 5px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  padding: var(--space-px) var(--space-1);
+  border-radius: var(--radius-xs);
   background: var(--surface-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .binlog-transaction__details {
-  padding: 0 12px 12px 35px;
+  padding: 0 var(--space-4) var(--space-4) var(--space-8);
 }
 
 .binlog-change {
   overflow: hidden;
-  margin-top: 7px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 7px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
 }
 
 .binlog-change__heading {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--divider);
   font-size: var(--text-sm);
 }
 
@@ -697,8 +693,8 @@
 
 .binlog-change__sql {
   margin: 0;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--divider);
   background: var(--surface-muted);
   color: var(--text-secondary);
   font-size: var(--text-xs);
@@ -708,7 +704,7 @@
 
 .binlog-change__empty {
   margin: 0;
-  padding: 10px;
+  padding: var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--text-sm);
 }
@@ -720,7 +716,7 @@
 .binlog-diff {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: var(--divider);
 }
 
 .binlog-diff:last-child {
@@ -728,8 +724,8 @@
 }
 
 .binlog-diff__label {
-  padding: 8px;
-  border-right: 1px solid var(--border-subtle);
+  padding: var(--space-2);
+  border-right: var(--divider);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
@@ -744,15 +740,15 @@
   min-width: 460px;
   border-collapse: collapse;
   table-layout: fixed;
-  font: 0.68rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--text-xs) var(--font-mono);
 }
 
 .binlog-diff th,
 .binlog-diff td {
   overflow: hidden;
-  padding: 6px 8px;
-  border-right: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-1) var(--space-2);
+  border-right: var(--divider);
+  border-bottom: var(--divider);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -806,7 +802,7 @@
   min-height: 88px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--text-sm);
 }
@@ -828,9 +824,9 @@
 }
 
 .binlog-timeline__error button {
-  padding: 3px 7px;
+  padding: var(--space-px) var(--space-1);
   border: 1px solid currentColor;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -842,7 +838,7 @@
 
 .binlog-timeline__end {
   margin: 0;
-  padding: 10px;
+  padding: var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   text-align: center;

@@ -712,7 +712,7 @@ Cargo:rsa@0.10.0-rc.18 (LICENSE-APACHE)
 Cargo:rustc_version@0.4.1 (LICENSE-APACHE)
 Cargo:rustix@1.1.4 (LICENSE-APACHE)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-APACHE)
-Cargo:rustls@0.23.41 (LICENSE-APACHE)
+Cargo:rustls@0.23.45 (LICENSE-APACHE)
 Cargo:scopeguard@1.2.0 (LICENSE-APACHE)
 Cargo:security-framework-sys@2.17.0 (LICENSE-APACHE)
 Cargo:security-framework@3.7.0 (LICENSE-APACHE)
@@ -3590,7 +3590,7 @@ Cargo:x11rb@0.13.2 (LICENSE-APACHE)
 Cargo:zeroize@1.9.0 (LICENSE-APACHE)
 Cargo:zune-core@0.5.1 (LICENSE-APACHE)
 Cargo:zune-jpeg@0.5.15 (LICENSE-APACHE)
-npm:dompurify@3.4.13 (LICENSE)
+npm:dompurify@3.4.16 (LICENSE)
 --------------------------------------------------------------------------------
 Apache License
                            Version 2.0, January 2004
@@ -5235,7 +5235,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 Cargo:cssparser-macros@0.6.1 (LICENSE)
 Cargo:cssparser@0.36.0 (LICENSE)
 Cargo:dtoa-short@0.3.5 (LICENSE)
-npm:dompurify@3.4.13 (LICENSE-MPL)
+npm:dompurify@3.4.16 (LICENSE-MPL)
 --------------------------------------------------------------------------------
 Mozilla Public License Version 2.0
 ==================================
@@ -8689,7 +8689,7 @@ THE SOFTWARE.
 ================================================================================
 Cargo:hyper-rustls@0.27.9 (LICENSE-ISC)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-ISC)
-Cargo:rustls@0.23.41 (LICENSE-ISC)
+Cargo:rustls@0.23.45 (LICENSE-ISC)
 --------------------------------------------------------------------------------
 ISC License (ISC)
 Copyright (c) 2016, Joseph Birr-Pixton <jpixton@gmail.com>
@@ -8710,7 +8710,7 @@ THIS SOFTWARE.
 ================================================================================
 Cargo:hyper-rustls@0.27.9 (LICENSE-MIT)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-MIT)
-Cargo:rustls@0.23.41 (LICENSE-MIT)
+Cargo:rustls@0.23.45 (LICENSE-MIT)
 --------------------------------------------------------------------------------
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
 
@@ -13713,7 +13713,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Cargo:rustls-webpki@0.103.13 (LICENSE)
+Cargo:rustls-webpki@0.103.15 (LICENSE)
 --------------------------------------------------------------------------------
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:

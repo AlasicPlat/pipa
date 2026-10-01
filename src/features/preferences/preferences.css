@@ -13,16 +13,16 @@
   right: 0;
   width: 232px;
   overflow: hidden;
-  padding: 5px;
+  padding: var(--space-0);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--shadow-md), var(--shadow-highlight);
   animation: pipa-overlay-in var(--duration-base, 200ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
 
 .theme-menu__heading {
-  padding: 5px 7px 6px;
+  padding: var(--space-0) var(--space-1) var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   font-weight: 740;
@@ -33,13 +33,13 @@
 .theme-menu .theme-menu__option {
   display: grid;
   width: 100%;
-  min-height: 42px;
+  min-height: var(--band-h-md);
   grid-template-columns: 18px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 7px;
-  padding: 5px 7px;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-1);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;

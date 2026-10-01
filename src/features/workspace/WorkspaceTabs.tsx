@@ -1,5 +1,5 @@
-import { FileClock, FileCode2, Plus, Server, Table2, X } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
+import { FileClock, FileCode2, LoaderCircle, Plus, Server, Table2, X } from "lucide-react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
 import { getShortcutKeyLabels, useShortcutSettings } from "../commands/shortcutRegistry";
 import type { WorkspaceTab } from "../query/useWorkspacePersistence";
 import { isScreenPointOutsideWindow, type ScreenPoint } from "./detachedWorkspace";
@@ -108,12 +108,37 @@ export function WorkspaceTabs({
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null);
   const firstMenuItemRef = useRef<HTMLButtonElement>(null);
+  const tabListRef = useRef<HTMLDivElement>(null);
   // `dragend` always fires after a successful `drop`, so the drop records that it already handled
   // the gesture. Without this, an in-strip reorder would also be read as a detach request.
   const reorderHandledRef = useRef(false);
   const closeShortcut = getShortcutKeyLabels(shortcuts.bindings.closeWorkspace).join(" + ");
   const newQueryShortcut = getShortcutKeyLabels(shortcuts.bindings.newQuery).join(" + ");
   const newQueryKind = newQueryEngine === "redis" ? "Redis 工作区" : "SQL 查询";
+
+  useEffect(() => {
+    tabListRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeQueryTabId, activeTableTabId, activeUtilityTabId]);
+
+  /** Navigate the whole strip without adding a Tab stop for every open workspace. */
+  function handleTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+      || !(event.target instanceof HTMLElement) || event.target.getAttribute("role") !== "tab") {
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+
+    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const index = tabs.indexOf(event.target as HTMLButtonElement);
+    const nextIndex = event.key === "Home" ? 0
+      : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    event.stopPropagation();
+    tabs[nextIndex].focus({ preventScroll: true });
+    tabs[nextIndex].click();
+  }
 
   useEffect(() => {
     if (!tabMenu) {
@@ -456,7 +481,7 @@ export function WorkspaceTabs({
 
   return (
     <div className="query-tabs-bar" onDragOver={handleStripDragOver} onDrop={handleStripDrop}>
-      <div className="query-tabs" role="tablist" aria-label="工作区标签">
+      <div className="query-tabs" role="tablist" aria-label="工作区标签" onKeyDown={handleTabKeyDown} ref={tabListRef}>
         {queryTabs.map((tab, index) => {
           const isActive = activeUtilityTabId === null
             && activeTableTabId === null
@@ -474,20 +499,25 @@ export function WorkspaceTabs({
               onDrop={(event) => handleWorkspaceDrop(event, "query", index)}
             >
               <button
+                aria-controls={`workspace-panel-${encodeURIComponent(tab.id)}`}
                 aria-selected={isActive}
                 className="query-tab__select"
                 data-workspace-tab-id={tab.id}
+                id={`workspace-tab-${encodeURIComponent(tab.id)}`}
                 draggable={Boolean(onDetach || onReorderQuery) && busyQueryTabId === null}
                 onDragEnd={(event) => handleWorkspaceDragEnd(event, "query", tab.id)}
                 onDragStart={(event) => handleWorkspaceDragStart(event, "query", tab.id)}
                 onClick={() => onSelectQuery(tab.id)}
                 role="tab"
+                tabIndex={isActive ? 0 : -1}
                 title={busyQueryTabId === null
                   ? "拖动可排序；拖出窗口可分离；右键查看更多操作"
                   : undefined}
                 type="button"
               >
-                <FileCode2 size={12} aria-hidden="true" />
+                {busyQueryTabId === tab.id
+                  ? <LoaderCircle className="spin" size={12} aria-hidden="true" />
+                  : <FileCode2 size={12} aria-hidden="true" />}
                 <span>{tab.title}</span>
               </button>
               <button
@@ -495,6 +525,7 @@ export function WorkspaceTabs({
                 className="query-tab__close"
                 disabled={busyQueryTabId === tab.id}
                 onClick={() => onCloseQuery(tab.id)}
+                tabIndex={isActive ? 0 : -1}
                 title={isActive ? `关闭标签 · ${closeShortcut}` : "关闭标签"}
                 type="button"
               >
@@ -521,15 +552,18 @@ export function WorkspaceTabs({
               onDrop={(event) => handleWorkspaceDrop(event, "table", index)}
             >
               <button
+                aria-controls={`workspace-panel-${encodeURIComponent(tab.id)}`}
                 aria-label={`${tab.title}${isDirty ? "，有未提交修改" : ""}`}
                 aria-selected={isActive}
                 className="query-tab__select"
                 data-workspace-tab-id={tab.id}
+                id={`workspace-tab-${encodeURIComponent(tab.id)}`}
                 draggable={Boolean(onDetach || onReorderTable) && busyQueryTabId === null && !isDirty}
                 onDragEnd={(event) => handleWorkspaceDragEnd(event, "table", tab.id)}
                 onDragStart={(event) => handleWorkspaceDragStart(event, "table", tab.id)}
                 onClick={() => onSelectTable(tab.id)}
                 role="tab"
+                tabIndex={isActive ? 0 : -1}
                 title={isDirty
                   ? "请先提交或撤销表修改，再拖出工作区"
                   : busyQueryTabId === null
@@ -545,6 +579,7 @@ export function WorkspaceTabs({
                 aria-label={`关闭表 ${tab.tableName}`}
                 className="query-tab__close"
                 onClick={() => onCloseTable(tab.id)}
+                tabIndex={isActive ? 0 : -1}
                 title={isActive ? `关闭表工作区 · ${closeShortcut}` : "关闭表工作区"}
                 type="button"
               >
@@ -582,6 +617,7 @@ export function WorkspaceTabs({
                 aria-label={`关闭 ${tab.title}`}
                 className="query-tab__close"
                 onClick={() => onCloseUtility(tab.id)}
+                tabIndex={isActive ? 0 : -1}
                 title={isActive ? `关闭工作区 · ${closeShortcut}` : "关闭工作区"}
                 type="button"
               >

@@ -3,7 +3,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bigdecimal::BigDecimal;
 use pipa_core::{
-    BinlogCell, BinlogChange, BinlogOperation, BinlogResetSql, BinlogTransaction,
+    quote_identifier, BinlogCell, BinlogChange, BinlogOperation, BinlogResetSql, BinlogTransaction,
     BinlogTransactionStatus, CellValue,
 };
 use std::{collections::BTreeMap, str::FromStr};
@@ -321,11 +321,6 @@ fn placeholder_column(column: &str) -> bool {
     column.strip_prefix('@').is_some_and(|suffix| {
         !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
     })
-}
-
-/// Escapes a MySQL identifier by doubling embedded backticks.
-fn quote_identifier(identifier: &str) -> String {
-    format!("`{}`", identifier.replace('`', "``"))
 }
 
 /// Serializes one decoded cell without relying on connection SQL modes.

@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Braces, Command as CommandIcon, Copy, Database, DatabasePlus, FileClock, Keyboard, PanelLeft, Pencil, Plus, RotateCw, Server, Sparkles, Trash2 } from "lucide-react";
+import { Command as CommandIcon, FileClock, Keyboard, PanelLeft, RotateCw, Server } from "lucide-react";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
 import type { Engine } from "../bindings/Engine";
 import { BinlogWorkspace } from "../features/binlog/BinlogWorkspace";
 import { CommandPalette, type CommandPaletteItem } from "../features/commands/CommandPalette";
+import {
+  buildCommandPaletteItems,
+  paletteTableItemId,
+  parsePaletteTableItemId,
+} from "../features/commands/commandPaletteItems";
 import { ShortcutHelpDialog, type ShortcutDialogView } from "../features/commands/ShortcutHelpDialog";
 import {
   getShortcutKeyLabels,
@@ -18,10 +23,28 @@ import {
 import { handleScopedSelectAll } from "../features/commands/scopedSelectAll";
 import { ConnectionForm } from "../features/connections/ConnectionForm";
 import { ConnectionManager } from "../features/connections/ConnectionManager";
+import {
+  formatConnectionConfigExport,
+  getConnectionActionError,
+  getConnectionDeletionError,
+} from "../features/connections/connectionErrors";
+import {
+  ConnectionOverview,
+  WorkspaceRecoveryNotice,
+} from "../features/connections/ConnectionOverview";
 import { ConnectionPicker } from "../features/connections/ConnectionPicker";
 import { ConnectionSidebar } from "../features/connections/ConnectionSidebar";
 import { ConnectionTypePicker } from "../features/connections/ConnectionTypePicker";
+import { CreateDatabaseDialog } from "../features/dialogs/CreateDatabaseDialog";
+import { DeleteConnectionDialog } from "../features/dialogs/DeleteConnectionDialog";
+import { DiscardTableChangesDialog } from "../features/dialogs/DiscardTableChangesDialog";
+import { DropDatabaseDialog } from "../features/dialogs/DropDatabaseDialog";
+import { RenameConnectionDialog } from "../features/dialogs/RenameConnectionDialog";
+import { TableDdlPreviewDialog } from "../features/dialogs/TableDdlPreviewDialog";
+import { TableDestructiveActionDialog } from "../features/dialogs/TableDestructiveActionDialog";
+import { TableNameActionDialog, type TableNameActionRequest } from "../features/dialogs/TableNameActionDialog";
 import { useConnections } from "../features/connections/useConnections";
+import { useConnectionFormFlow } from "../features/connections/useConnectionFormFlow";
 import { McpPanel } from "../features/mcp/McpPanel";
 import { useMcpPendingApprovals } from "../features/mcp/useMcpState";
 import { ThemeToggle } from "../features/preferences/ThemeToggle";
@@ -32,30 +55,22 @@ import {
   persistFocusedConnectionId,
   persistFocusedDatabases,
 } from "../features/preferences/workspaceFocus";
-import {
-  loadSidebarCollapsed,
-  loadSidebarWidth,
-  persistSidebarCollapsed,
-  persistSidebarWidth,
-} from "../features/preferences/sidebarLayout";
+import { useSidebarLayout } from "../features/preferences/useSidebarLayout";
+import { useDatabaseOperations } from "../features/connections/useDatabaseOperations";
+import { useTableUtilityActions } from "../features/tables/useTableUtilityActions";
+import { useAppToasts } from "./useAppToast";
 import { loadPinnedTables, persistPinnedTables } from "../features/preferences/pinnedTables";
 import { useThemePreference } from "../features/preferences/theme";
-import { QueryWorkspace } from "../features/query/QueryWorkspace";
 import { executeQueryOnce } from "../features/query/executeQueryOnce";
-import {
-  cellValueToPlainText,
-  downloadTextFile,
-  serializeResultAsCsv,
-  serializeRowsAsInsert,
-  serializeSelectionAsJson,
-} from "../features/query/resultExport";
 import {
   useWorkspacePersistence,
   type WorkspaceTab,
 } from "../features/query/useWorkspacePersistence";
-import { RedisWorkspace } from "../features/redis/RedisWorkspace";
-import { TableWorkspace } from "../features/tables/TableWorkspace";
-import { SelectableSqlBlock } from "../features/tables/SelectableSqlBlock";
+import {
+  redisDatabaseFromWorkspaceTitle,
+  redisKeyInspectionCommands,
+  redisKeyWorkspaceTitle,
+} from "../features/redis/redisKeyWorkspace";
 import {
   tableTabId,
   tableTargetKey,
@@ -63,12 +78,18 @@ import {
   type TableQuickAction,
 } from "../features/tables/TableActionMenu";
 import {
-  buildCreateDatabaseStatement,
-  databaseNameValidationError,
-  DATABASE_CHARSET_OPTIONS,
-  quoteIdentifier,
-} from "../features/tables/tableSql";
+  addTableToCatalog,
+  buildDestructiveTableStatement,
+  buildTableNameActionStatements,
+  removePinnedTableKey,
+  removeTableFromCatalog,
+  renamePinnedTableKey,
+  renameTableInCatalog,
+  tableNameActionValidationError,
+  togglePinnedTableKey,
+} from "../features/tables/tableActions";
 import { UpdateControl } from "../features/updater/UpdateControl";
+import { QueryTabPanels, TableTabPanels } from "../features/workspace/WorkspacePanels";
 import {
   WorkspaceTabs,
   type OpenTableTab,
@@ -82,6 +103,13 @@ import {
   registerDetachedWorkspaceCloseHandler,
   restoreDetachedQueryWindow,
 } from "../features/workspace/detachedWorkspace";
+import {
+  orderWorkspaceTabs,
+  resolveWorkspaceTabCycle,
+  resolveWorkspaceTabJump,
+  type WorkspaceTabRef,
+} from "../features/workspace/workspaceNavigation";
+import { resolveWorkspaceShortcut } from "../features/commands/workspaceShortcuts";
 import {
   deleteConnection,
   listWorkspaceWindowLabels,
@@ -119,77 +147,10 @@ interface PendingTableNameAction {
   tableName: string;
 }
 
-interface TableDdlPreview {
-  connectionId: string;
-  error: string | null;
-  loading: boolean;
-  sql: string;
-  tableName: string;
-}
 
-/** One schema awaiting an explicit typed confirmation before it is dropped. */
-interface PendingDropDatabase {
-  connectionId: string;
-  database: string;
-}
 
-/** Draft state for the create-database quick action, scoped to one MySQL connection. */
-interface PendingCreateDatabase {
-  connectionId: string;
-  /** Empty string means "server default", which is always a valid choice. */
-  charset: string;
-  collation: string;
-  name: string;
-}
 
-/**
- * Builds the command-palette identity for one table inside one database.
- *
- * A NUL separator keeps the parts unambiguous even when a schema or table name contains a colon.
- * @param connectionId - Saved connection identifier.
- * @param database - Schema that owns the table.
- * @param tableName - Exact database-reported table name.
- * @returns A stable palette item identifier.
- * Side effects: none.
- */
-function paletteTableItemId(
-  connectionId: string,
-  database: string,
-  tableName: string,
-): string {
-  return `table:${connectionId}\u0000${database}\u0000${tableName}`;
-}
 
-/**
- * Parses one palette table identity back into its parts.
- * @param itemId - Identifier produced by `paletteTableItemId`.
- * @returns The connection, database, and table, or null when the identity is malformed.
- * Side effects: none.
- */
-function parsePaletteTableItemId(
-  itemId: string,
-): { connectionId: string; database: string; tableName: string } | null {
-  const [connectionId, database, tableName] = itemId.slice("table:".length).split("\u0000");
-  return connectionId && database && tableName
-    ? { connectionId, database, tableName }
-    : null;
-}
-
-/** Returns a safe connection-deletion error message from an unknown IPC rejection. */
-function getConnectionDeletionError(error: unknown): string {
-  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  return "删除失败。连接和相关数据均未从当前界面移除，请重试。";
-}
-
-/** Returns a safe message for a non-destructive connection action. */
-function getConnectionActionError(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  return fallback;
-}
 
 /**
  * Reports whether one engine owns an executable workspace in the current desktop slice.
@@ -201,66 +162,6 @@ function matchesRunnableEngine(engine: Engine): engine is Extract<Engine, "my_sq
   return engine === "my_sql" || engine === "redis";
 }
 
-/** Returns the display/search label for one supported database engine. */
-function connectionEngineLabel(engine: Engine): string {
-  return {
-    my_sql: "MySQL",
-    postgre_sql: "PostgreSQL",
-    mongo_db: "MongoDB",
-    redis: "Redis",
-  }[engine];
-}
-
-/** Returns connection metadata fields shared by global object and workspace search. */
-function connectionSearchTerms(profile: ConnectionProfile | undefined): string[] {
-  if (!profile) return [];
-  const environment = {
-    production: "生产",
-    development: "开发",
-    unspecified: "未指定",
-  }[profile.environment];
-  return [
-    profile.name,
-    connectionEngineLabel(profile.engine),
-    profile.host,
-    `${profile.host}:${profile.port}`,
-    String(profile.port),
-    profile.username,
-    profile.database ?? "",
-    profile.environment,
-    environment,
-  ];
-}
-
-/** Formats the compact connection identity displayed in global search results. */
-function connectionPaletteDetail(profile: ConnectionProfile): string {
-  return `${connectionEngineLabel(profile.engine)} · ${profile.database ?? "未指定数据库"} · ${profile.host}:${profile.port}`;
-}
-
-/**
- * Quotes one Redis key for the command editor without changing its UTF-8 content.
- * @param value - Key name returned by Redis SCAN.
- * @returns Double-quoted redis-cli argument with control characters escaped.
- * Side effects: none.
- */
-function quoteRedisArgument(value: string): string {
-  return `"${value
-    .replace(/\\/gu, "\\\\")
-    .replace(/"/gu, "\\\"")
-    .replace(/\n/gu, "\\n")
-    .replace(/\r/gu, "\\r")
-    .replace(/\t/gu, "\\t")}"`;
-}
-
-/**
- * Recovers the Redis database embedded in a persisted key-workspace title.
- * @param title - Persisted workspace title created by the Redis navigator.
- * @returns The logical database number, or `null` for generic workspaces.
- * Side effects: none.
- */
-function redisDatabaseFromWorkspaceTitle(title: string): string | null {
-  return title.match(/ · DB (\d+) · /u)?.[1] ?? null;
-}
 
 /**
  * 解析持久化查询工作区执行时使用的连接配置。
@@ -306,8 +207,7 @@ export function App() {
   const detachedTableTab = workspaceWindowContext.descriptor?.kind === "table"
     ? workspaceWindowContext.descriptor
     : null;
-  const [isAddingConnection, setIsAddingConnection] = useState(false);
-  const [connectionFormEngine, setConnectionFormEngine] = useState<Extract<Engine, "my_sql" | "redis"> | null>(null);
+  const connectionForm = useConnectionFormFlow(!queryWorkspace.recoveryBlocked);
   const [openTableTabs, setOpenTableTabs] = useState<OpenTableTab[]>(() => detachedTableTab
     ? [{
       id: detachedTableTab.id,
@@ -334,30 +234,17 @@ export function App() {
   const [pendingCloseTableId, setPendingCloseTableId] = useState<string | null>(null);
   const [pendingTableAction, setPendingTableAction] = useState<PendingTableDestructiveAction | null>(null);
   const [pendingTableNameAction, setPendingTableNameAction] = useState<PendingTableNameAction | null>(null);
-  const [tableNameDraft, setTableNameDraft] = useState("");
-  const [duplicateTableData, setDuplicateTableData] = useState(true);
   const [executingTableNameAction, setExecutingTableNameAction] = useState(false);
   const [tableNameActionError, setTableNameActionError] = useState<string | null>(null);
-  const [tableDdlPreview, setTableDdlPreview] = useState<TableDdlPreview | null>(null);
   const [pinnedTableKeys, setPinnedTableKeys] = useState(loadPinnedTables);
-  const [runningTableUtilityAction, setRunningTableUtilityAction] = useState(false);
   const [tableActionError, setTableActionError] = useState<string | null>(null);
   const [executingTableAction, setExecutingTableAction] = useState(false);
   const [tableCatalogRefreshVersions, setTableCatalogRefreshVersions] = useState<Record<string, number>>({});
   const [deleteCandidate, setDeleteCandidate] = useState<ConnectionProfile | null>(null);
   const [deletingConnectionId, setDeletingConnectionId] = useState<string | null>(null);
   const [connectionDeletionError, setConnectionDeletionError] = useState<string | null>(null);
-  const [deletionNotice, setDeletionNotice] = useState<string | null>(null);
-  const [connectionActionError, setConnectionActionError] = useState<string | null>(null);
+  const toasts = useAppToasts();
   const [renameCandidate, setRenameCandidate] = useState<ConnectionProfile | null>(null);
-  const [pendingCreateDatabase, setPendingCreateDatabase] = useState<PendingCreateDatabase | null>(null);
-  const [creatingDatabase, setCreatingDatabase] = useState(false);
-  const [createDatabaseError, setCreateDatabaseError] = useState<string | null>(null);
-  const [pendingDropDatabase, setPendingDropDatabase] = useState<PendingDropDatabase | null>(null);
-  const [dropDatabaseConfirmation, setDropDatabaseConfirmation] = useState("");
-  const [droppingDatabase, setDroppingDatabase] = useState(false);
-  const [dropDatabaseError, setDropDatabaseError] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
   const [renamingConnectionId, setRenamingConnectionId] = useState<string | null>(null);
   const [reconnectingConnectionId, setReconnectingConnectionId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -365,8 +252,7 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [shortcutDialogView, setShortcutDialogView] = useState<ShortcutDialogView>("help");
   const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
-  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const sidebar = useSidebarLayout();
   const [focusConnectionId, setFocusConnectionId] = useState<string | null>(null);
   // Table names per connection, then per schema, so same-named tables in different schemas stay
   // distinct in global search.
@@ -426,7 +312,6 @@ export function App() {
   const [recentItemTimestamps, setRecentItemTimestamps] = useState<Record<string, number>>({});
   const [detachingWorkspaceId, setDetachingWorkspaceId] = useState<string | null>(null);
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
-  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const detachedWindowRestoreStartedRef = useRef(false);
 
   // Only the main window recreates detached labels that still own persisted query tabs.
@@ -445,7 +330,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         console.error("Pipa detached workspace restore failed", error);
-        setConnectionActionError("部分独立工作窗口无法恢复，请重新拖出对应工作区。");
+        toasts.error.show("部分独立工作窗口无法恢复，请重新拖出对应工作区。");
       });
   }, [workspaceWindowContext.windowLabel]);
 
@@ -463,7 +348,7 @@ export function App() {
       queryWorkspace.discardWorkspace,
       (error: unknown) => {
         console.error("Pipa detached workspace close failed", error);
-        setConnectionActionError(getConnectionActionError(
+        toasts.error.show(getConnectionActionError(
           error,
           "无法关闭独立工作窗口，请重试。",
         ));
@@ -478,7 +363,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         console.error("Pipa detached workspace close listener failed", error);
-        setConnectionActionError("无法监听独立工作窗口关闭事件，请重试。");
+        toasts.error.show("无法监听独立工作窗口关闭事件，请重试。");
       });
     return () => {
       disposed = true;
@@ -500,15 +385,63 @@ export function App() {
   const pendingTableNameActionProfile = pendingTableNameAction
     ? connections.profiles.find((profile) => profile.id === pendingTableNameAction.connectionId) ?? null
     : null;
-  const pendingCreateDatabaseProfile = pendingCreateDatabase
-    ? connections.profiles.find((profile) => profile.id === pendingCreateDatabase.connectionId) ?? null
-    : null;
-  const pendingDropDatabaseProfile = pendingDropDatabase
-    ? connections.profiles.find((profile) => profile.id === pendingDropDatabase.connectionId) ?? null
-    : null;
-  const pendingCreateDatabaseCollations = DATABASE_CHARSET_OPTIONS
-    .find((option) => option.charset === pendingCreateDatabase?.charset)
-    ?.collations ?? [];
+  /*
+   * `handleOpenTable` is a hoisted function declaration, so the same-window fallback can reach it
+   * from here even though it is defined further down the component.
+   */
+  const tableUtilityActions = useTableUtilityActions({
+    clearError: toasts.error.clear,
+    openTableInCurrentWindow: (connectionId, database, tableName) => {
+      handleOpenTable(connectionId, database, tableName);
+    },
+    showError: toasts.error.show,
+    showNotice: toasts.notice.show,
+  });
+
+  /*
+   * `closeTableImmediately` is a hoisted function declaration, so the drop callback can reach it
+   * from here even though it is defined further down the component.
+   */
+  const databaseOperations = useDatabaseOperations({
+    clearError: toasts.error.clear,
+    findProfile: (connectionId) => connections.profiles.find(
+      (profile) => profile.id === connectionId,
+    ),
+    onDatabaseCreated: (connectionId) => {
+      // The navigator lists only the connection's default schema, so refresh it in case the new
+      // database is that schema's name and metadata is now stale.
+      setTableCatalogRefreshVersions((current) => ({
+        ...current,
+        [connectionId]: (current[connectionId] ?? 0) + 1,
+      }));
+    },
+    onDatabaseDropped: (connectionId, database) => {
+      // Every table workspace bound to the dropped schema can no longer resolve, so close them.
+      for (const tab of openTableTabs) {
+        if (tab.connectionId === connectionId && tab.database === database) {
+          closeTableImmediately(tab.id);
+        }
+      }
+      setTableCatalog((current) => {
+        const perDatabase = current[connectionId];
+        if (!perDatabase || !(database in perDatabase)) {
+          return current;
+        }
+        const { [database]: _dropped, ...remaining } = perDatabase;
+        return { ...current, [connectionId]: remaining };
+      });
+      setSelectedDatabases((current) => {
+        if (current[connectionId] !== database) {
+          return current;
+        }
+        const { [connectionId]: _cleared, ...remaining } = current;
+        return remaining;
+      });
+      setDatabaseRefreshVersion((current) => current + 1);
+    },
+    selectConnection: connections.selectConnection,
+    showNotice: toasts.notice.show,
+  });
   const pendingTableActionTabId = pendingTableAction
     ? `${pendingTableAction.connectionId}:${pendingTableAction.tableName}`
     : null;
@@ -519,13 +452,32 @@ export function App() {
     ? dirtyTableTabIds.has(`${pendingTableNameAction.connectionId}:${pendingTableNameAction.tableName}`)
     : false;
   // Lets the navigator mark rows that are genuinely open instead of guessing from local clicks.
-  const openTableObjects = openTableTabs.map((tab) => ({
+  const openTableObjects = useMemo(() => openTableTabs.map((tab) => ({
     connectionId: tab.connectionId,
     objectName: tab.tableName,
-  }));
-  const dirtyTables = openTableTabs
+  })), [openTableTabs]);
+  const dirtyTables = useMemo(() => openTableTabs
     .filter((tab) => dirtyTableTabIds.has(tab.id))
-    .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName }));
+    .map((tab) => ({ connectionId: tab.connectionId, tableName: tab.tableName })), [
+    dirtyTableTabIds,
+    openTableTabs,
+  ]);
+  /*
+   * Redis workspaces execute against a profile whose database comes from the navigator rather than
+   * the saved default, so resolution allocates a new profile object. Memoizing keeps that object
+   * identity stable across unrelated renders, which the workspace panels depend on.
+   */
+  const queryWorkspaceProfiles = useMemo(
+    () => new Map(queryWorkspace.tabs.map((tab) => [
+      tab.id,
+      resolveQueryWorkspaceProfile(
+        connections.profiles.find((profile) => profile.id === tab.connectionId),
+        tab,
+        selectedRedisDatabases,
+      ),
+    ])),
+    [connections.profiles, queryWorkspace.tabs, selectedRedisDatabases],
+  );
   const activeTableProfile = connections.profiles.find((profile) => profile.id === activeTableTab?.connectionId);
   const isBinlogWorkspaceActive = binlogWorkspaceOpen
     && activeUtilityTabId === BINLOG_WORKSPACE_TAB.id;
@@ -536,10 +488,10 @@ export function App() {
   const activeNavigatorProfile = connections.profiles.find(
     (profile) => profile.id === connections.selectedConnectionId,
   ) ?? null;
-  const openUtilityTabs: UtilityWorkspaceTab[] = [
+  const openUtilityTabs: UtilityWorkspaceTab[] = useMemo(() => [
     ...(connectionManagerOpen ? [CONNECTION_MANAGER_TAB] : []),
     ...(binlogWorkspaceOpen ? [BINLOG_WORKSPACE_TAB] : []),
-  ];
+  ], [binlogWorkspaceOpen, connectionManagerOpen]);
   const newQueryProfile = selectedProfile
     ? matchesRunnableEngine(selectedProfile.engine) ? selectedProfile : null
     : activeTableProfile?.engine === "my_sql"
@@ -563,243 +515,61 @@ export function App() {
       ),
   );
   /** Formats one current binding for compact command and toolbar hints. */
-  const shortcutLabel = (actionId: ShortcutActionId): string =>
-    getShortcutKeyLabels(shortcuts.bindings[actionId]).join(" + ");
-  const commandPaletteItems: CommandPaletteItem[] = [
-    {
-      id: "command:add-connection",
-      type: "command",
-      label: "添加数据库连接",
-      detail: "选择 MySQL 或 Redis",
-      keywords: ["新建连接", "mysql", "redis"],
-      lastUsedAt: recentItemTimestamps["command:add-connection"],
-    },
-    {
-      id: "command:open-mcp",
-      type: "command",
-      label: "打开 MCP 控制台",
-      detail: "启停 MCP、查看执行日志并确认写 SQL",
-      keywords: ["mcp", "ai", "只读", "propose"],
-      lastUsedAt: recentItemTimestamps["command:open-mcp"],
-    },
-    {
-      id: "command:open-connection-manager",
-      type: "command",
-      label: "打开连接管理",
-      detail: connectionManagerOpen ? "切换到已打开的连接管理" : "编辑连接配置、浏览与新建数据库",
-      keywords: ["connection", "database", "连接管理", "数据库管理", "配置", "建库"],
-      lastUsedAt: recentItemTimestamps["command:open-connection-manager"],
-    },
-    {
-      id: "command:open-binlog",
-      type: "command",
-      label: "打开 Binlog 分析",
-      detail: binlogWorkspaceOpen ? "切换到已打开的独立日志工作区" : "导入并分析本地 MySQL Binlog",
-      keywords: ["binlog", "binary log", "时间线", "日志", "恢复"],
-      lastUsedAt: recentItemTimestamps["command:open-binlog"],
-    },
-    {
-      id: "command:shortcut-help",
-      type: "command",
-      label: "打开快捷键帮助",
-      detail: `搜索全部键盘操作 · ${shortcutLabel("shortcutHelp")}`,
-      keywords: ["keyboard", "hotkey", "帮助"],
-      lastUsedAt: recentItemTimestamps["command:shortcut-help"],
-    },
-    {
-      id: "command:shortcut-settings",
-      type: "command",
-      label: "打开快捷键设置",
-      detail: "修改组合键、检查冲突或恢复默认",
-      keywords: ["keyboard", "hotkey", "偏好", "修改"],
-      lastUsedAt: recentItemTimestamps["command:shortcut-settings"],
-    },
-    {
-      id: "command:toggle-sidebar",
-      type: "command",
-      label: sidebarCollapsed ? "展开连接侧边栏" : "收起连接侧边栏",
-      detail: shortcutLabel("toggleSidebar"),
-      keywords: ["sidebar", "收起", "展开", "panel"],
-      lastUsedAt: recentItemTimestamps["command:toggle-sidebar"],
-    },
-    ...(selectedProfile?.engine === "my_sql" ? [{
-      id: "command:create-database",
-      type: "command" as const,
-      label: "新建数据库",
-      detail: `在连接 ${selectedProfile.name} 上执行 CREATE DATABASE`,
-      keywords: ["create database", "建库", "schema", "数据库"],
-      connectionId: selectedProfile.id,
-      lastUsedAt: recentItemTimestamps["command:create-database"],
-    }] : []),
-    ...(newQueryProfile ? [{
-      id: "command:new-query",
-      type: "command" as const,
-      label: newQueryProfile.engine === "redis" ? "新建 Redis 工作区" : "新建 SQL 查询",
-      detail: shortcutLabel("newQuery"),
-      keywords: ["query", newQueryProfile.engine === "redis" ? "redis" : "sql"],
-      lastUsedAt: recentItemTimestamps["command:new-query"],
-    }] : []),
-    ...((activeUtilityTabId || activeTableTabId || queryWorkspace.activeTabId) ? [{
-      id: "command:close-workspace",
-      type: "command" as const,
-      label: "关闭当前工作区",
-      detail: shortcutLabel("closeWorkspace"),
-      keywords: ["close", "关闭标签"],
-      lastUsedAt: recentItemTimestamps["command:close-workspace"],
-    }] : []),
-    ...(queryWorkspace.tabs.length + openTableTabs.length + openUtilityTabs.length > 1 ? [
-      {
-        id: "command:next-workspace",
-        type: "command" as const,
-        label: "下一个工作区",
-        detail: shortcutLabel("nextWorkspace"),
-        keywords: ["next", "切换标签"],
-        lastUsedAt: recentItemTimestamps["command:next-workspace"],
-      },
-      {
-        id: "command:previous-workspace",
-        type: "command" as const,
-        label: "上一个工作区",
-        detail: shortcutLabel("previousWorkspace"),
-        keywords: ["previous", "切换标签"],
-        lastUsedAt: recentItemTimestamps["command:previous-workspace"],
-      },
-    ] : []),
-    ...(activeUtilityTabId === null && activeTableTabId === null && queryWorkspace.activeTabId ? [
-      {
-        id: "command:execute-sql",
-        type: "command" as const,
-        label: activeQueryProfile?.engine === "redis" ? "刷新 / 执行 Redis 工作区" : "执行当前 SQL",
-        detail: shortcutLabel("executeQuery"),
-        keywords: ["run", "查询"],
-        lastUsedAt: recentItemTimestamps["command:execute-sql"],
-      },
-      {
-        id: "command:select-sql",
-        type: "command" as const,
-        label: activeQueryProfile?.engine === "redis" ? "选中当前 Redis 命令" : "选中当前 SQL",
-        detail: shortcutLabel("selectSql"),
-        keywords: ["select", "全选 sql"],
-        lastUsedAt: recentItemTimestamps["command:select-sql"],
-      },
-      {
-        id: "command:find-current",
-        type: "command" as const,
-        label: activeQueryProfile?.engine === "redis" ? "查找当前 Redis 工作区" : "查找当前 SQL",
-        detail: shortcutLabel("find"),
-        keywords: ["search", "查找文本"],
-        lastUsedAt: recentItemTimestamps["command:find-current"],
-      },
-      ...(busyQueryTabId === queryWorkspace.activeTabId ? [{
-        id: "command:cancel-query",
-        type: "command" as const,
-        label: "取消当前查询",
-        detail: shortcutLabel("cancelQuery"),
-        keywords: ["stop", "停止"],
-        lastUsedAt: recentItemTimestamps["command:cancel-query"],
-      }] : []),
-    ] : []),
-    ...(activeUtilityTabId !== null && busyQueryTabId ? [{
-      id: "command:cancel-query",
-      type: "command" as const,
-      label: "取消后台查询",
-      detail: shortcutLabel("cancelQuery"),
-      keywords: ["stop", "停止", "后台查询"],
-      lastUsedAt: recentItemTimestamps["command:cancel-query"],
-    }] : []),
-    ...(activeUtilityTabId === null && activeTableTabId ? [
-      {
-        id: "command:find-current",
-        type: "command" as const,
-        label: "查找当前页数据",
-        detail: shortcutLabel("find"),
-        keywords: ["search", "过滤"],
-        lastUsedAt: recentItemTimestamps["command:find-current"],
-      },
-      {
-        id: "command:select-current-page",
-        type: "command" as const,
-        label: "选择当前页全部行",
-        detail: shortcutLabel("selectRows"),
-        keywords: ["全选", "rows"],
-        lastUsedAt: recentItemTimestamps["command:select-current-page"],
-      },
-      {
-        id: "command:save-table-changes",
-        type: "command" as const,
-        label: "提交表变更",
-        detail: shortcutLabel("saveTable"),
-        keywords: ["save", "ddl", "dml"],
-        lastUsedAt: recentItemTimestamps["command:save-table-changes"],
-      },
-    ] : []),
-    ...connections.profiles.map((profile) => ({
-      id: `connection:${profile.id}`,
-      type: "connection" as const,
-      label: profile.name,
-      detail: connectionPaletteDetail(profile),
-      keywords: connectionSearchTerms(profile),
-      connectionId: profile.id,
-      lastUsedAt: recentItemTimestamps[`connection:${profile.id}`],
-    })),
-    ...Object.entries(tableCatalog).flatMap(([connectionId, tablesByDatabase]) => {
-      const profile = connections.profiles.find((item) => item.id === connectionId);
-      return profile
-        ? Object.entries(tablesByDatabase).flatMap(([database, tableNames]) => (
-          tableNames.map((tableName) => ({
-            id: paletteTableItemId(connectionId, database, tableName),
-            type: "table" as const,
-            label: tableName,
-            database,
-            detail: `${profile.name} · ${database} · ${profile.host}:${profile.port}`,
-            keywords: [database, ...connectionSearchTerms(profile)],
-            connectionId,
-            lastUsedAt: recentItemTimestamps[paletteTableItemId(connectionId, database, tableName)],
-          }))
-        ))
-        : [];
-    }),
-    ...queryWorkspace.tabs.map((tab) => {
-      const profile = connections.profiles.find((item) => item.id === tab.connectionId);
-      return {
-        id: `workspace:query:${tab.id}`,
-        type: "workspace" as const,
-        label: tab.title,
-        detail: profile ? `${profile.name} · ${profile.host}:${profile.port}` : "连接不可用",
-        keywords: [tab.sqlText.slice(0, 160), "SQL 查询", ...connectionSearchTerms(profile)],
-        connectionId: tab.connectionId,
-        lastUsedAt: recentItemTimestamps[`workspace:query:${tab.id}`],
-      };
-    }),
-    ...openTableTabs.map((tab) => {
-      const profile = connections.profiles.find((item) => item.id === tab.connectionId);
-      return {
-        id: `workspace:table:${tab.id}`,
-        type: "workspace" as const,
-        label: tab.title,
-        detail: profile ? `${profile.name} · ${profile.host}:${profile.port}` : "表工作区",
-        keywords: [tab.tableName, ...connectionSearchTerms(profile)],
-        connectionId: tab.connectionId,
-        lastUsedAt: recentItemTimestamps[`workspace:table:${tab.id}`],
-      };
-    }),
-    ...(connectionManagerOpen ? [{
-      id: `workspace:utility:${CONNECTION_MANAGER_TAB.id}`,
-      type: "workspace" as const,
-      label: CONNECTION_MANAGER_TAB.title,
-      detail: "管理连接配置与数据库",
-      keywords: ["connection", "database", "连接", "数据库", "配置"],
-      lastUsedAt: recentItemTimestamps[`workspace:utility:${CONNECTION_MANAGER_TAB.id}`],
-    }] : []),
-    ...(binlogWorkspaceOpen ? [{
-      id: `workspace:utility:${BINLOG_WORKSPACE_TAB.id}`,
-      type: "workspace" as const,
-      label: BINLOG_WORKSPACE_TAB.title,
-      detail: "独立 Binlog 工作区",
-      keywords: ["binlog", "binary log", "时间线", "日志"],
-      lastUsedAt: recentItemTimestamps[`workspace:utility:${BINLOG_WORKSPACE_TAB.id}`],
-    }] : []),
-  ];
+  const shortcutLabel = useCallback(
+    (actionId: ShortcutActionId): string =>
+      getShortcutKeyLabels(shortcuts.bindings[actionId]).join(" + "),
+    [shortcuts.bindings],
+  );
+  /*
+   * Building this list walks every table in `tableCatalog`, measured at 10.7 ms for 15k tables and
+   * 32 ms for 50k. It previously ran on every App render even while the palette was closed, so it
+   * stays memoized and gated on `commandPaletteOpen`.
+   */
+  const commandPaletteItems: CommandPaletteItem[] = useMemo(
+    () => commandPaletteOpen
+      ? buildCommandPaletteItems({
+        activeQueryProfile,
+        activeQueryTabId: queryWorkspace.activeTabId,
+        activeTableTabId,
+        activeUtilityTabId,
+        binlogWorkspaceOpen,
+        binlogWorkspaceTab: BINLOG_WORKSPACE_TAB,
+        busyQueryTabId,
+        connectionManagerOpen,
+        connectionManagerTab: CONNECTION_MANAGER_TAB,
+        newQueryProfile,
+        openTableTabs,
+        openUtilityTabCount: openUtilityTabs.length,
+        profiles: connections.profiles,
+        queryTabs: queryWorkspace.tabs,
+        recentItemTimestamps,
+        selectedProfile,
+        shortcutLabel,
+        sidebarCollapsed: sidebar.collapsed,
+        tableCatalog,
+      })
+      : [],
+    [
+      activeQueryProfile,
+      activeTableTabId,
+      activeUtilityTabId,
+      binlogWorkspaceOpen,
+      busyQueryTabId,
+      commandPaletteOpen,
+      connectionManagerOpen,
+      connections.profiles,
+      newQueryProfile,
+      openTableTabs,
+      openUtilityTabs.length,
+      queryWorkspace.activeTabId,
+      queryWorkspace.tabs,
+      recentItemTimestamps,
+      selectedProfile,
+      shortcutLabel,
+      sidebar.collapsed,
+      tableCatalog,
+    ],
+  );
 
   /**
    * Adds and selects the saved profile before returning to the connection overview.
@@ -821,8 +591,7 @@ export function App() {
         "SELECT 1;",
       );
     }
-    setIsAddingConnection(false);
-    setConnectionFormEngine(null);
+    connectionForm.close();
   }
 
   /** Records session-local object recency without persisting connection metadata outside the encrypted store. */
@@ -837,8 +606,7 @@ export function App() {
    * Side effects: cancels an unfinished connection form and updates session-local workspace state.
    */
   function handleOpenBinlogWorkspace(): void {
-    setIsAddingConnection(false);
-    setConnectionFormEngine(null);
+    connectionForm.close();
     setBinlogWorkspaceOpen(true);
     setActiveUtilityTabId(BINLOG_WORKSPACE_TAB.id);
     markPaletteItemRecent(`workspace:utility:${BINLOG_WORKSPACE_TAB.id}`);
@@ -854,8 +622,7 @@ export function App() {
    * Side effects: cancels an unfinished connection form and activates the manager tab.
    */
   function handleOpenConnectionManager(connectionId?: string, view?: "profile" | "databases"): void {
-    setIsAddingConnection(false);
-    setConnectionFormEngine(null);
+    connectionForm.close();
     setConnectionManagerOpen(true);
     setActiveUtilityTabId(CONNECTION_MANAGER_TAB.id);
     // Landing on the requested connection avoids making the user find it again in the manager.
@@ -994,36 +761,21 @@ export function App() {
    * Side effects: updates React state, persists the preference, and may move focus out of the panel.
    */
   function handleToggleSidebar(nextCollapsed?: boolean): void {
-    const collapsed = nextCollapsed ?? !sidebarCollapsed;
-    setSidebarCollapsed(collapsed);
-    persistSidebarCollapsed(collapsed);
-    if (collapsed) {
-      const activeElement = document.activeElement;
-      if (activeElement instanceof HTMLElement && activeElement.closest(".connection-panel")) {
-        sidebarToggleRef.current?.focus();
-      }
-    }
-  }
-
-  /** Ensures the connection sidebar is visible before navigation that depends on it. */
-  function ensureSidebarExpanded(): void {
-    if (sidebarCollapsed) {
-      handleToggleSidebar(false);
-    }
+    sidebar.toggle(nextCollapsed);
   }
 
   /** Runs the command or navigation represented by one selected palette item. */
   function handleCommandPaletteSelect(item: CommandPaletteItem): void {
     markPaletteItemRecent(item.id);
     if (item.type === "connection") {
-      ensureSidebarExpanded();
+      sidebar.ensureExpanded();
       handleSelectConnection(item.id.slice("connection:".length));
       return;
     }
     if (item.type === "table") {
       const target = parsePaletteTableItemId(item.id);
       if (target) {
-        ensureSidebarExpanded();
+        sidebar.ensureExpanded();
         handleOpenTable(target.connectionId, target.database, target.tableName);
       }
       return;
@@ -1041,11 +793,11 @@ export function App() {
 
     switch (item.id) {
       case "command:add-connection":
-        handleAddConnection();
+        connectionForm.start();
         break;
       case "command:create-database":
         if (selectedProfile) {
-          handleRequestCreateDatabase(selectedProfile);
+          databaseOperations.requestCreate(selectedProfile);
         }
         break;
       case "command:new-query":
@@ -1123,118 +875,33 @@ export function App() {
     handleRequestTableAction(connectionId, database, tableName, action);
   }
 
-  /**
-   * Opens the create-database dialog for one MySQL connection.
-   * @param profile - Saved connection selected in the navigator.
-   * @returns Nothing (`void`).
-   * Side effects: selects the connection and opens an empty draft defaulting to the server charset.
-   */
-  function handleRequestCreateDatabase(profile: ConnectionProfile): void {
-    if (profile.engine !== "my_sql") {
-      return;
-    }
-    connections.selectConnection(profile.id);
-    setConnectionActionError(null);
-    setCreateDatabaseError(null);
-    setPendingCreateDatabase({
-      connectionId: profile.id,
-      charset: "",
-      collation: "",
-      name: "",
-    });
-  }
-
-  /** Closes the create-database dialog while no statement is executing. */
-  function handleCancelCreateDatabase(): void {
-    if (creatingDatabase) {
-      return;
-    }
-    setPendingCreateDatabase(null);
-    setCreateDatabaseError(null);
-  }
-
-  /**
-   * Replaces the drafted character set and resets the collation to that set's default.
-   * @param charset - Allowlisted character set, or an empty string for the server default.
-   * @returns Nothing (`void`).
-   * Side effects: updates the draft only; no SQL runs.
-   */
-  function handleSelectCreateDatabaseCharset(charset: string): void {
-    setPendingCreateDatabase((current) => current === null
-      ? current
-      : { ...current, charset, collation: "" });
-  }
-
-  /**
-   * Creates one database on the selected connection after validating its name.
-   * Parameters: none.
-   * @returns A promise settled after the statement runs and the navigator is reconciled.
-   * Side effects: executes CREATE DATABASE, refreshes table metadata, and reports the outcome.
-   */
-  async function handleConfirmCreateDatabase(): Promise<void> {
-    const target = pendingCreateDatabase;
-    const profile = pendingCreateDatabaseProfile;
-    if (!target || !profile || creatingDatabase) {
-      return;
-    }
-    const validationError = databaseNameValidationError(target.name);
-    if (validationError) {
-      setCreateDatabaseError(validationError);
-      return;
-    }
-    const databaseName = target.name.trim();
-    setCreatingDatabase(true);
-    setCreateDatabaseError(null);
-    try {
-      await executeQueryOnce(
-        target.connectionId,
-        buildCreateDatabaseStatement(
-          databaseName,
-          target.charset || null,
-          target.collation || null,
-        ),
-      );
-      // The navigator lists only the connection's default schema, so refresh it in case the new
-      // database is that schema's name and metadata is now stale.
-      setTableCatalogRefreshVersions((current) => ({
-        ...current,
-        [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
-      }));
-      setPendingCreateDatabase(null);
-      setDeletionNotice(
-        `已在连接“${profile.name}”中创建数据库“${databaseName}”。要浏览它，请把连接的默认数据库改为该库。`,
-      );
-    } catch (error: unknown) {
-      setCreateDatabaseError(getConnectionActionError(error, "创建数据库失败，请重试。"));
-    } finally {
-      setCreatingDatabase(false);
-    }
-  }
-
   /** Opens the rename dialog with the exact current non-secret profile name. */
   function handleRequestRenameConnection(profile: ConnectionProfile): void {
-    setConnectionActionError(null);
+    toasts.error.clear();
     setRenameCandidate(profile);
-    setRenameDraft(profile.name);
   }
 
   /** Cancels connection renaming without mutating local or persisted state. */
   function handleCancelRenameConnection(): void {
     setRenameCandidate(null);
-    setRenameDraft("");
-    setConnectionActionError(null);
+    toasts.error.clear();
   }
 
-  /** Persists a validated connection name and updates generated workspace labels. */
-  async function handleConfirmRenameConnection(): Promise<void> {
-    if (!renameCandidate || renamingConnectionId || !renameDraft.trim()) {
+  /**
+   * Persists a validated connection name and updates generated workspace labels.
+   * @param name - Draft name owned by the dialog; trimmed by the backend command.
+   * @returns A promise settled after the rename attempt.
+   * Side effects: persists the profile and rewrites dependent tab titles.
+   */
+  async function handleConfirmRenameConnection(name: string): Promise<void> {
+    if (!renameCandidate || renamingConnectionId || !name.trim()) {
       return;
     }
     const previousProfile = renameCandidate;
     setRenamingConnectionId(previousProfile.id);
-    setConnectionActionError(null);
+    toasts.error.clear();
     try {
-      const renamedProfile = await renameConnection(previousProfile.id, renameDraft);
+      const renamedProfile = await renameConnection(previousProfile.id, name);
       connections.addProfile(renamedProfile);
       queryWorkspace.renameConnectionTabTitles(previousProfile.id, previousProfile.name, renamedProfile.name);
       setOpenTableTabs((current) => current.map((tab) => (
@@ -1243,10 +910,9 @@ export function App() {
           : tab
       )));
       setRenameCandidate(null);
-      setRenameDraft("");
-      setDeletionNotice(`已将连接重命名为“${renamedProfile.name}”。`);
+      toasts.notice.show(`已将连接重命名为“${renamedProfile.name}”。`);
     } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, "重命名失败，请重试。"));
+      toasts.error.show(getConnectionActionError(error, "重命名失败，请重试。"));
     } finally {
       setRenamingConnectionId(null);
     }
@@ -1269,104 +935,17 @@ export function App() {
           : tab
       )));
     }
-    setDeletionNotice(`已更新连接“${profile.name}”的配置。`);
-  }
-
-  /**
-   * Requests confirmation before dropping one schema from the manager.
-   * @param profile - Connection that owns the schema.
-   * @param database - Exact schema name reported by the server.
-   * @returns Nothing (`void`).
-   * Side effects: opens the confirmation dialog; no SQL runs until it is confirmed.
-   */
-  function handleRequestDeleteDatabase(profile: ConnectionProfile, database: string): void {
-    setDropDatabaseError(null);
-    setDropDatabaseConfirmation("");
-    setPendingDropDatabase({ connectionId: profile.id, database });
-  }
-
-  /** Closes the drop-database dialog while no statement is executing. */
-  function handleCancelDropDatabase(): void {
-    if (droppingDatabase) {
-      return;
-    }
-    setPendingDropDatabase(null);
-    setDropDatabaseError(null);
-    setDropDatabaseConfirmation("");
-  }
-
-  /**
-   * Drops one schema after the user retypes its name, then reconciles every dependent surface.
-   * Parameters: none.
-   * @returns A promise settled after the statement runs and local state is reconciled.
-   * Side effects: executes DROP DATABASE, closes that schema's tabs, and refreshes metadata.
-   */
-  async function handleConfirmDropDatabase(): Promise<void> {
-    const target = pendingDropDatabase;
-    const profile = pendingDropDatabaseProfile;
-    if (!target || !profile || droppingDatabase) {
-      return;
-    }
-    if (dropDatabaseConfirmation !== target.database) {
-      setDropDatabaseError("请准确输入数据库名以确认删除。");
-      return;
-    }
-    setDroppingDatabase(true);
-    setDropDatabaseError(null);
-    try {
-      await executeQueryOnce(
-        target.connectionId,
-        `DROP DATABASE ${quoteIdentifier(target.database)};`,
-      );
-      // Every table workspace bound to the dropped schema can no longer resolve, so close them.
-      for (const tab of openTableTabs) {
-        if (tab.connectionId === target.connectionId && tab.database === target.database) {
-          closeTableImmediately(tab.id);
-        }
-      }
-      setTableCatalog((current) => {
-        const perDatabase = current[target.connectionId];
-        if (!perDatabase || !(target.database in perDatabase)) {
-          return current;
-        }
-        const { [target.database]: _dropped, ...remaining } = perDatabase;
-        return { ...current, [target.connectionId]: remaining };
-      });
-      setSelectedDatabases((current) => {
-        if (current[target.connectionId] !== target.database) {
-          return current;
-        }
-        const { [target.connectionId]: _cleared, ...remaining } = current;
-        return remaining;
-      });
-      setDatabaseRefreshVersion((current) => current + 1);
-      setPendingDropDatabase(null);
-      setDropDatabaseConfirmation("");
-      setDeletionNotice(`已删除数据库“${target.database}”。`);
-    } catch (error: unknown) {
-      setDropDatabaseError(getConnectionActionError(error, "删除数据库失败，请重试。"));
-    } finally {
-      setDroppingDatabase(false);
-    }
+    toasts.notice.show(`已更新连接“${profile.name}”的配置。`);
   }
 
   /** Copies only the non-secret connection profile fields as formatted JSON. */
   async function handleCopyConnectionConfig(profile: ConnectionProfile): Promise<void> {
-    setConnectionActionError(null);
+    toasts.error.clear();
     try {
-      await writeText(JSON.stringify({
-        engine: profile.engine,
-        name: profile.name,
-        environment: profile.environment,
-        host: profile.host,
-        port: profile.port,
-        username: profile.username,
-        database: profile.database,
-        tlsMode: profile.tlsMode,
-      }, null, 2));
-      setDeletionNotice(`已复制“${profile.name}”的非敏感连接配置。`);
+      await writeText(formatConnectionConfigExport(profile));
+      toasts.notice.show(`已复制“${profile.name}”的非敏感连接配置。`);
     } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, "复制失败，请检查系统剪贴板权限。"));
+      toasts.error.show(getConnectionActionError(error, "复制失败，请检查系统剪贴板权限。"));
     }
   }
 
@@ -1376,12 +955,12 @@ export function App() {
       return;
     }
     setReconnectingConnectionId(profile.id);
-    setConnectionActionError(null);
+    toasts.error.clear();
     try {
       await reconnectConnection(profile.id);
-      setDeletionNotice(`连接“${profile.name}”可用。`);
+      toasts.notice.show(`连接“${profile.name}”可用。`);
     } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, `无法重新连接“${profile.name}”。`));
+      toasts.error.show(getConnectionActionError(error, `无法重新连接“${profile.name}”。`));
     } finally {
       setReconnectingConnectionId(null);
     }
@@ -1456,7 +1035,7 @@ export function App() {
         return nextTabs;
       });
       setDeleteCandidate(null);
-      setDeletionNotice(`已删除连接“${profile.name}”及其本地数据。`);
+      toasts.notice.show(`已删除连接“${profile.name}”及其本地数据。`);
     } catch (error: unknown) {
       setConnectionDeletionError(getConnectionDeletionError(error));
     } finally {
@@ -1562,229 +1141,26 @@ export function App() {
   }
 
   /**
-   * Copies table metadata through the desktop clipboard and reports one visible result.
-   * @param text - Exact text to place on the clipboard.
-   * @param successMessage - Toast shown after the platform accepts the write.
-   * @returns A promise settled after the clipboard operation.
-   * Side effects: writes to the system clipboard and updates app feedback.
-   */
-  async function copyTableText(text: string, successMessage: string): Promise<void> {
-    try {
-      await writeText(text);
-      setDeletionNotice(successMessage);
-    } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(
-        error,
-        "复制失败，请检查系统剪贴板权限。",
-      ));
-    }
-  }
-
-  /**
-   * Fetches the server-authored CREATE TABLE statement for one exact MySQL table.
-   * @param connectionId - Saved connection identifier.
-   * @param database - Exact database name.
-   * @param tableName - Exact table name.
-   * @returns The server-authored DDL text.
-   * Side effects: executes one internal SHOW CREATE TABLE query.
-   */
-  async function loadCreateTableSql(
-    connectionId: string,
-    database: string,
-    tableName: string,
-  ): Promise<string> {
-    const result = await executeQueryOnce(
-      connectionId,
-      `SHOW CREATE TABLE ${quoteIdentifier(database)}.${quoteIdentifier(tableName)};`,
-    );
-    return cellValueToPlainText(result.rows[0]?.[1] ?? result.rows[0]?.[0]);
-  }
-
-  /**
    * Toggles one table pin and persists the exact connection-bound identity locally.
    * @param connectionId - Saved connection identifier.
+   * @param database - Schema that owns the table.
    * @param tableName - Exact database-reported table name.
    * @returns Nothing (`void`).
    * Side effects: updates React state, local preferences, ordering, and feedback.
    */
   function togglePinnedTable(connectionId: string, database: string, tableName: string): void {
-    const key = tableTargetKey(connectionId, database, tableName);
-    setPinnedTableKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      persistPinnedTables(next);
-      setDeletionNotice(next.has(key) ? `已置顶表“${tableName}”。` : `已取消置顶表“${tableName}”。`);
-      return next;
-    });
-  }
-
-  /**
-   * Opens one table in a separate native window, with same-window fallback for browsers.
-   * @param profile - MySQL profile that owns the table.
-   * @param tableName - Exact database-reported table name.
-   * @returns A promise settled after window creation or fallback navigation.
-   * Side effects: creates a desktop window or activates a local table tab.
-   */
-  async function openTableInNewWindow(
-    profile: ConnectionProfile,
-    database: string,
-    tableName: string,
-  ): Promise<void> {
-    if (!isTauri()) {
-      handleOpenTable(profile.id, database, tableName);
-      setDeletionNotice("当前环境不支持独立窗口，已在当前窗口打开表。");
-      return;
-    }
-    try {
-      await createDetachedWorkspaceWindow(
-        {
-          kind: "table",
-          id: tableTabId(profile.id, database, tableName),
-          connectionId: profile.id,
-          database,
-          tableName,
-          title: `${profile.name} · ${database}.${tableName}`,
-        },
-        { x: window.screenX + 140, y: window.screenY + 90 },
-      );
-      setDeletionNotice(`已在新窗口中打开表“${tableName}”。`);
-    } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, "无法打开独立表窗口，请重试。"));
-    }
-  }
-
-  /**
-   * Loads an entire table result and saves it in the explicitly selected export format.
-   * @param profile - MySQL profile that owns the table.
-   * @param tableName - Exact database-reported table name.
-   * @param action - Requested CSV, JSON, or SQL INSERT format.
-   * @returns A promise settled after query and save-dialog completion.
-   * Side effects: queries table rows, opens a save dialog, writes a file, and reports progress.
-   */
-  async function exportTable(
-    profile: ConnectionProfile,
-    database: string,
-    tableName: string,
-    action: Extract<TableQuickAction, "export_csv" | "export_json" | "export_sql">,
-  ): Promise<void> {
-    if (!database || runningTableUtilityAction) {
-      return;
-    }
-    const target = `${quoteIdentifier(database)}.${quoteIdentifier(tableName)}`;
-    const fileBase = `${database}-${tableName}`
-      .replace(/[^\w\u4e00-\u9fff.-]+/gu, "_")
-      .slice(0, 80) || "table";
-    setRunningTableUtilityAction(true);
-    setConnectionActionError(null);
-    setDeletionNotice(`正在导出表“${tableName}”…`);
-    try {
-      const result = await executeQueryOnce(profile.id, `SELECT * FROM ${target};`);
-      const selection = {
-        startRow: 0,
-        startCol: 0,
-        endRow: Math.max(0, result.rows.length - 1),
-        endCol: Math.max(0, result.columns.length - 1),
-      };
-      const exportDefinition = action === "export_csv"
-        ? {
-          content: serializeResultAsCsv(result.columns, result.rows),
-          fileName: `${fileBase}.csv`,
-          mimeType: "text/csv;charset=utf-8",
-          label: "CSV",
-        }
-        : action === "export_json"
-          ? {
-            content: result.rows.length > 0 && result.columns.length > 0
-              ? serializeSelectionAsJson(result.columns, result.rows, selection)
-              : "[]",
-            fileName: `${fileBase}.json`,
-            mimeType: "application/json;charset=utf-8",
-            label: "JSON",
-          }
-          : {
-            content: serializeRowsAsInsert(result.columns, result.rows, {
-              tableName: `${database}.${tableName}`,
-              includePrimaryKey: true,
-            }) || `-- ${database}.${tableName} 暂无可导出的数据\n`,
-            fileName: `${fileBase}.sql`,
-            mimeType: "application/sql;charset=utf-8",
-            label: "SQL INSERT",
-          };
-      const outcome = await downloadTextFile(
-        exportDefinition.content,
-        exportDefinition.fileName,
-        exportDefinition.mimeType,
-      );
-      setDeletionNotice(outcome === "saved"
-        ? `已导出 ${exportDefinition.label} · ${result.rows.length} 行。`
-        : outcome === "cancelled" ? "已取消导出。" : "导出失败，请重试。");
-    } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, "无法读取或导出该表，请重试。"));
-    } finally {
-      setRunningTableUtilityAction(false);
-    }
-  }
-
-  /**
-   * Opens the shared DDL preview after loading the server-authored CREATE TABLE statement.
-   * @param profile - MySQL profile that owns the table.
-   * @param tableName - Exact database-reported table name.
-   * @returns A promise settled after the DDL query.
-   * Side effects: opens and updates the DDL preview dialog.
-   */
-  async function showCreateTable(
-    profile: ConnectionProfile,
-    database: string,
-    tableName: string,
-  ): Promise<void> {
-    if (!database) {
-      return;
-    }
-    setTableDdlPreview({ connectionId: profile.id, tableName, loading: true, sql: "", error: null });
-    try {
-      const sql = await loadCreateTableSql(profile.id, database, tableName);
-      setTableDdlPreview((current) => current?.connectionId === profile.id && current.tableName === tableName
-        ? { ...current, loading: false, sql }
-        : current);
-    } catch (error: unknown) {
-      setTableDdlPreview((current) => current?.connectionId === profile.id && current.tableName === tableName
-        ? {
-          ...current,
-          loading: false,
-          error: getConnectionActionError(error, "无法读取 CREATE TABLE 语法。"),
-        }
-        : current);
-    }
-  }
-
-  /**
-   * Loads and copies the server-authored CREATE TABLE statement without opening a preview.
-   * @param profile - MySQL profile that owns the table.
-   * @param tableName - Exact database-reported table name.
-   * @returns A promise settled after query and clipboard completion.
-   * Side effects: executes a metadata query, writes the clipboard, and updates feedback.
-   */
-  async function copyCreateTable(
-    profile: ConnectionProfile,
-    database: string,
-    tableName: string,
-  ): Promise<void> {
-    if (!database || runningTableUtilityAction) {
-      return;
-    }
-    setRunningTableUtilityAction(true);
-    try {
-      const sql = await loadCreateTableSql(profile.id, database, tableName);
-      await copyTableText(sql, `已复制表“${tableName}”的 CREATE TABLE 语法。`);
-    } catch (error: unknown) {
-      setConnectionActionError(getConnectionActionError(error, "无法读取 CREATE TABLE 语法。"));
-    } finally {
-      setRunningTableUtilityAction(false);
-    }
+    /*
+     * Persisting and announcing happen here rather than inside the state updater. React invokes
+     * updaters twice under StrictMode, which previously wrote to local storage and queued the toast
+     * twice per click.
+     */
+    const toggle = togglePinnedTableKey(
+      pinnedTableKeys,
+      tableTargetKey(connectionId, database, tableName),
+    );
+    setPinnedTableKeys(toggle.keys);
+    persistPinnedTables(toggle.keys);
+    toasts.notice.show(toggle.pinned ? `已置顶表“${tableName}”。` : `已取消置顶表“${tableName}”。`);
   }
 
   /**
@@ -1806,13 +1182,11 @@ export function App() {
       return;
     }
     connections.selectConnection(connectionId);
-    setConnectionActionError(null);
+    toasts.error.clear();
     if (action === "copy_name") {
-      void copyTableText(tableName, `已复制表名“${tableName}”。`);
+      void tableUtilityActions.copyText(tableName, `已复制表名“${tableName}”。`);
     } else if (action === "rename" || action === "duplicate") {
       setTableNameActionError(null);
-      setDuplicateTableData(true);
-      setTableNameDraft(action === "rename" ? tableName : `${tableName}_copy`);
       setPendingTableNameAction({ action, connectionId, database, tableName });
     } else if (action === "truncate" || action === "drop") {
       setTableActionError(null);
@@ -1820,13 +1194,13 @@ export function App() {
     } else if (action === "toggle_pin") {
       togglePinnedTable(connectionId, database, tableName);
     } else if (action === "open_window") {
-      void openTableInNewWindow(profile, database, tableName);
+      void tableUtilityActions.openInNewWindow(profile, database, tableName);
     } else if (action === "show_create") {
-      void showCreateTable(profile, database, tableName);
+      void tableUtilityActions.showCreateTable(profile, database, tableName);
     } else if (action === "copy_create") {
-      void copyCreateTable(profile, database, tableName);
+      void tableUtilityActions.copyCreateTable(profile, database, tableName);
     } else {
-      void exportTable(profile, database, tableName, action);
+      void tableUtilityActions.exportTable(profile, database, tableName, action);
     }
   }
 
@@ -1868,46 +1242,34 @@ export function App() {
       return;
     }
     const target = pendingTableAction;
-    const qualifiedTable = `${quoteIdentifier(database)}.${quoteIdentifier(target.tableName)}`;
-    const sql = target.action === "drop"
-      ? `DROP TABLE ${qualifiedTable};`
-      : `TRUNCATE TABLE ${qualifiedTable};`;
+    const sql = buildDestructiveTableStatement(target.action, database, target.tableName);
     setExecutingTableAction(true);
     setTableActionError(null);
     try {
       await executeQueryOnce(target.connectionId, sql);
       closeTableImmediately(tableTabId(target.connectionId, target.database, target.tableName));
       if (target.action === "drop") {
-        setTableCatalog((current) => {
-          const previous = current[target.connectionId]?.[target.database];
-          if (!previous) {
-            return current;
-          }
-          return {
-            ...current,
-            [target.connectionId]: {
-              ...current[target.connectionId],
-              [target.database]: previous.filter((tableName) => tableName !== target.tableName),
-            },
-          };
-        });
-        setPinnedTableKeys((current) => {
-          const key = tableTargetKey(target.connectionId, target.database, target.tableName);
-          if (!current.has(key)) {
-            return current;
-          }
-          const next = new Set(current);
-          next.delete(key);
-          persistPinnedTables(next);
-          return next;
-        });
+        setTableCatalog((current) => removeTableFromCatalog(
+          current,
+          target.connectionId,
+          target.database,
+          target.tableName,
+        ));
+        const unpinned = removePinnedTableKey(
+          pinnedTableKeys,
+          tableTargetKey(target.connectionId, target.database, target.tableName),
+        );
+        if (unpinned.changed) {
+          setPinnedTableKeys(unpinned.keys);
+          persistPinnedTables(unpinned.keys);
+        }
       }
       setTableCatalogRefreshVersions((current) => ({
         ...current,
         [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
       }));
       setPendingTableAction(null);
-      setDeletionNotice(target.action === "drop"
+      toasts.notice.show(target.action === "drop"
         ? `已删除表“${target.tableName}”。`
         : `已清空表“${target.tableName}”的全部数据。`);
     } catch (error: unknown) {
@@ -1931,45 +1293,46 @@ export function App() {
       return;
     }
     setPendingTableNameAction(null);
-    setTableNameDraft("");
     setTableNameActionError(null);
   }
 
   /**
    * Renames or duplicates one table after validating the destination identifier.
-   * Parameters: none.
+   * @param request - Destination name and copy-data choice drafted in the dialog.
    * @returns A promise settled after SQL execution and local catalog reconciliation.
    * Side effects: mutates MySQL schema/data and updates table tabs, pins, and cached metadata.
    */
-  async function handleConfirmTableNameAction(): Promise<void> {
+  async function handleConfirmTableNameAction(request: TableNameActionRequest): Promise<void> {
     const target = pendingTableNameAction;
     const profile = pendingTableNameActionProfile;
     const database = profile?.database;
-    const nextTableName = tableNameDraft.trim();
+    const nextTableName = request.tableName.trim();
     if (!target || !profile || !database || executingTableNameAction) {
       return;
     }
-    if (!nextTableName || nextTableName.length > 64) {
-      setTableNameActionError("表名不能为空，且不能超过 64 个字符。");
+    const validationError = tableNameActionValidationError(
+      target.action,
+      target.tableName,
+      nextTableName,
+      pendingTableNameActionHasDirtyWorkspace,
+    );
+    if (validationError) {
+      setTableNameActionError(validationError);
       return;
     }
-    if (nextTableName === target.tableName) {
-      setTableNameActionError(target.action === "rename" ? "请输入不同的新表名。" : "复制表不能与原表同名。");
-      return;
-    }
-    if (target.action === "rename" && pendingTableNameActionHasDirtyWorkspace) {
-      setTableNameActionError("请先提交或撤销该表的本地修改，再重命名。");
-      return;
-    }
-
-    const source = `${quoteIdentifier(database)}.${quoteIdentifier(target.tableName)}`;
-    const destination = `${quoteIdentifier(database)}.${quoteIdentifier(nextTableName)}`;
+    const statements = buildTableNameActionStatements(
+      target.action,
+      database,
+      target.tableName,
+      nextTableName,
+      request.copyData,
+    );
     let duplicateStructureCreated = false;
     setExecutingTableNameAction(true);
     setTableNameActionError(null);
     try {
       if (target.action === "rename") {
-        await executeQueryOnce(target.connectionId, `RENAME TABLE ${source} TO ${destination};`);
+        await executeQueryOnce(target.connectionId, statements.primary);
         const previousTabId = tableTabId(target.connectionId, target.database, target.tableName);
         const nextTabId = tableTabId(target.connectionId, target.database, nextTableName);
         setOpenTableTabs((current) => current.map((tab) => tab.id === previousTabId
@@ -1981,48 +1344,36 @@ export function App() {
           }
           : tab));
         setActiveTableTabId((current) => current === previousTabId ? nextTabId : current);
-        setPinnedTableKeys((current) => {
-          const previousKey = tableTargetKey(
-            target.connectionId,
-            target.database,
-            target.tableName,
-          );
-          if (!current.has(previousKey)) {
-            return current;
-          }
-          const next = new Set(current);
-          next.delete(previousKey);
-          next.add(tableTargetKey(target.connectionId, target.database, nextTableName));
-          persistPinnedTables(next);
-          return next;
-        });
-        setTableCatalog((current) => ({
-          ...current,
-          [target.connectionId]: {
-            ...current[target.connectionId],
-            [target.database]: (current[target.connectionId]?.[target.database] ?? []).map(
-              (tableName) => (tableName === target.tableName ? nextTableName : tableName),
-            ),
-          },
-        }));
-        setDeletionNotice(`已将表“${target.tableName}”重命名为“${nextTableName}”。`);
-      } else {
-        await executeQueryOnce(target.connectionId, `CREATE TABLE ${destination} LIKE ${source};`);
-        duplicateStructureCreated = true;
-        setTableCatalog((current) => ({
-          ...current,
-          [target.connectionId]: {
-            ...current[target.connectionId],
-            [target.database]: Array.from(new Set([
-              ...(current[target.connectionId]?.[target.database] ?? []),
-              nextTableName,
-            ])),
-          },
-        }));
-        if (duplicateTableData) {
-          await executeQueryOnce(target.connectionId, `INSERT INTO ${destination} SELECT * FROM ${source};`);
+        const repinned = renamePinnedTableKey(
+          pinnedTableKeys,
+          tableTargetKey(target.connectionId, target.database, target.tableName),
+          tableTargetKey(target.connectionId, target.database, nextTableName),
+        );
+        if (repinned.changed) {
+          setPinnedTableKeys(repinned.keys);
+          persistPinnedTables(repinned.keys);
         }
-        setDeletionNotice(duplicateTableData
+        setTableCatalog((current) => renameTableInCatalog(
+          current,
+          target.connectionId,
+          target.database,
+          target.tableName,
+          nextTableName,
+        ));
+        toasts.notice.show(`已将表“${target.tableName}”重命名为“${nextTableName}”。`);
+      } else {
+        await executeQueryOnce(target.connectionId, statements.primary);
+        duplicateStructureCreated = true;
+        setTableCatalog((current) => addTableToCatalog(
+          current,
+          target.connectionId,
+          target.database,
+          nextTableName,
+        ));
+        if (statements.copyRows) {
+          await executeQueryOnce(target.connectionId, statements.copyRows);
+        }
+        toasts.notice.show(request.copyData
           ? `已复制表“${target.tableName}”及其数据为“${nextTableName}”。`
           : `已复制表“${target.tableName}”的结构为“${nextTableName}”。`);
       }
@@ -2031,16 +1382,14 @@ export function App() {
         [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
       }));
       setPendingTableNameAction(null);
-      setTableNameDraft("");
     } catch (error: unknown) {
       if (target.action === "duplicate" && duplicateStructureCreated) {
         setPendingTableNameAction(null);
-        setTableNameDraft("");
         setTableCatalogRefreshVersions((current) => ({
           ...current,
           [target.connectionId]: (current[target.connectionId] ?? 0) + 1,
         }));
-        setConnectionActionError(
+        toasts.error.show(
           `已创建表“${nextTableName}”的结构，但复制数据失败：${getConnectionActionError(error, "未知错误")}`,
         );
         return;
@@ -2071,11 +1420,10 @@ export function App() {
     if (profile?.engine !== "redis" || queryWorkspace.loading || queryWorkspace.recoveryBlocked) {
       return;
     }
-    const key = quoteRedisArgument(keyName);
-    const inspectionSql = `TYPE ${key};\nTTL ${key};\nMEMORY USAGE ${key};`;
+    const inspectionSql = redisKeyInspectionCommands(keyName);
     connections.selectConnection(connectionId);
     setSelectedRedisDatabases((current) => ({ ...current, [connectionId]: database }));
-    const title = `${profile.name} · DB ${database} · ${keyName}`;
+    const title = redisKeyWorkspaceTitle(profile.name, database, keyName);
     const existingTab = queryWorkspace.tabs.find(
       (tab) => (
         tab.connectionId === connectionId
@@ -2236,7 +1584,7 @@ export function App() {
   async function handleDetachWorkspace(request: WorkspaceDetachRequest): Promise<void> {
     if (!isTauri() || detachingWorkspaceId !== null) return;
     const targetWindowLabel = `workspace-${crypto.randomUUID()}`;
-    setConnectionActionError(null);
+    toasts.error.clear();
     setDetachingWorkspaceId(request.tabId);
     if (request.kind === "query") {
       const tab = queryWorkspace.tabs.find((item) => item.id === request.tabId);
@@ -2272,7 +1620,7 @@ export function App() {
             console.error("Pipa query workspace detach rollback failed", rollbackError);
           }
         }
-        setConnectionActionError(getConnectionActionError(error, "无法分离查询工作区，请重试。"));
+        toasts.error.show(getConnectionActionError(error, "无法分离查询工作区，请重试。"));
       } finally {
         setDetachingWorkspaceId(null);
       }
@@ -2281,7 +1629,7 @@ export function App() {
 
     const tableTab = openTableTabs.find((tab) => tab.id === request.tabId);
     if (!tableTab || dirtyTableTabIds.has(tableTab.id)) {
-      setConnectionActionError("请先提交或撤销表修改，再分离该工作区。");
+      toasts.error.show("请先提交或撤销表修改，再分离该工作区。");
       setDetachingWorkspaceId(null);
       return;
     }
@@ -2294,7 +1642,7 @@ export function App() {
       closeTableImmediately(tableTab.id);
     } catch (error: unknown) {
       console.error("Pipa table workspace detach failed", error);
-      setConnectionActionError(getConnectionActionError(error, "无法分离表工作区，请重试。"));
+      toasts.error.show(getConnectionActionError(error, "无法分离表工作区，请重试。"));
     } finally {
       setDetachingWorkspaceId(null);
     }
@@ -2306,12 +1654,12 @@ export function App() {
    * @returns Ordered tab identities across the query, table, and utility collections.
    * Side effects: none.
    */
-  function orderedWorkspaceTabs(): { id: string; type: "query" | "table" | "utility" }[] {
-    return [
-      ...queryWorkspace.tabs.map((tab) => ({ id: tab.id, type: "query" as const })),
-      ...openTableTabs.map((tab) => ({ id: tab.id, type: "table" as const })),
-      ...openUtilityTabs.map((tab) => ({ id: tab.id, type: "utility" as const })),
-    ];
+  function orderedWorkspaceTabs(): WorkspaceTabRef[] {
+    return orderWorkspaceTabs({
+      queryTabIds: queryWorkspace.tabs.map((tab) => tab.id),
+      tableTabIds: openTableTabs.map((tab) => tab.id),
+      utilityTabIds: openUtilityTabs.map((tab) => tab.id),
+    });
   }
 
   /**
@@ -2320,7 +1668,7 @@ export function App() {
    * @returns Nothing (`void`).
    * Side effects: updates the active workspace and session-local recency.
    */
-  function activateWorkspaceTab(tab: { id: string; type: "query" | "table" | "utility" }): void {
+  function activateWorkspaceTab(tab: WorkspaceTabRef): void {
     if (tab.type === "query") {
       handleSelectQueryTab(tab.id);
     } else if (tab.type === "table") {
@@ -2337,13 +1685,7 @@ export function App() {
    * Side effects: activates one workspace; a running query keeps executing in the background.
    */
   function jumpToWorkspaceTab(position: number): boolean {
-    const orderedTabs = orderedWorkspaceTabs();
-    if (orderedTabs.length === 0) {
-      return false;
-    }
-    const targetTab = position >= 9
-      ? orderedTabs[orderedTabs.length - 1]
-      : orderedTabs[position - 1];
+    const targetTab = resolveWorkspaceTabJump(orderedWorkspaceTabs(), position);
     if (!targetTab) {
       return false;
     }
@@ -2360,15 +1702,8 @@ export function App() {
    * Side effects: activates the adjacent workspace.
    */
   function cycleWorkspaceTabs(reverse: boolean): void {
-    const cycleableTabs = orderedWorkspaceTabs();
-    if (cycleableTabs.length < 2) {
-      return;
-    }
     const currentId = activeUtilityTabId ?? activeTableTabId ?? queryWorkspace.activeTabId;
-    const currentIndex = Math.max(0, cycleableTabs.findIndex((tab) => tab.id === currentId));
-    const delta = reverse ? -1 : 1;
-    const nextIndex = (currentIndex + delta + cycleableTabs.length) % cycleableTabs.length;
-    const nextTab = cycleableTabs[nextIndex];
+    const nextTab = resolveWorkspaceTabCycle(orderedWorkspaceTabs(), currentId, reverse);
     if (nextTab) {
       activateWorkspaceTab(nextTab);
     }
@@ -2400,13 +1735,13 @@ export function App() {
     function handleWorkspaceShortcut(event: KeyboardEvent): void {
       if (
         event.defaultPrevented ||
-        isAddingConnection ||
+        connectionForm.open ||
         deleteCandidate ||
         pendingCloseTableId ||
         pendingTableAction ||
         renameCandidate ||
-        pendingCreateDatabase ||
-        pendingDropDatabase ||
+        databaseOperations.createTarget ||
+        databaseOperations.dropTarget ||
         commandPaletteOpen ||
         mcpPanelOpen ||
         shortcutHelpOpen
@@ -2416,29 +1751,34 @@ export function App() {
       if (handleScopedSelectAll(event, (candidate) => matchesShortcut(candidate, "Mod+A"))) {
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.commandPalette)) {
+      const intent = resolveWorkspaceShortcut(event, shortcuts.bindings);
+      if (!intent) {
+        return;
+      }
+      if (intent.kind === "openCommandPalette") {
         event.preventDefault();
         openCommandPalette();
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.shortcutHelp)) {
+      if (intent.kind === "openShortcutHelp") {
         event.preventDefault();
         openShortcutDialog("help");
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.toggleSidebar)) {
+      if (intent.kind === "toggleSidebar") {
         event.preventDefault();
         handleToggleSidebar();
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.newQuery)) {
+      if (intent.kind === "newQuery") {
         event.preventDefault();
+        // A running query owns the only tab that must stay mounted, so creating one is deferred.
         if (busyQueryTabId === null) {
           handleCreateQuery();
         }
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.closeWorkspace)) {
+      if (intent.kind === "closeWorkspace") {
         if (!activeUtilityTabId && !activeTableTabId && !queryWorkspace.activeTabId) {
           return;
         }
@@ -2452,166 +1792,19 @@ export function App() {
         }
         return;
       }
-      // Positional jumps are fixed rather than rebindable, matching platform tab strips.
-      if (
-        (event.metaKey || event.ctrlKey)
-        && !event.altKey
-        && !event.shiftKey
-        && /^[1-9]$/u.test(event.key)
-      ) {
-        if (jumpToWorkspaceTab(Number.parseInt(event.key, 10))) {
+      if (intent.kind === "jumpToTab") {
+        // Only consume the press when a tab actually occupies that position.
+        if (jumpToWorkspaceTab(intent.position)) {
           event.preventDefault();
         }
         return;
       }
-      if (matchesShortcut(event, shortcuts.bindings.nextWorkspace)) {
-        event.preventDefault();
-        cycleWorkspaceTabs(false);
-        return;
-      }
-      if (matchesShortcut(event, shortcuts.bindings.previousWorkspace)) {
-        event.preventDefault();
-        cycleWorkspaceTabs(true);
-      }
+      event.preventDefault();
+      cycleWorkspaceTabs(intent.reverse);
     }
     document.addEventListener("keydown", handleWorkspaceShortcut, true);
     return () => document.removeEventListener("keydown", handleWorkspaceShortcut, true);
   });
-
-  useEffect(() => {
-    if (!deletionNotice) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => setDeletionNotice(null), 3200);
-    return () => window.clearTimeout(timeoutId);
-  }, [deletionNotice]);
-
-  useEffect(() => {
-    if (!connectionActionError) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => setConnectionActionError(null), 5000);
-    return () => window.clearTimeout(timeoutId);
-  }, [connectionActionError]);
-
-  useEffect(() => {
-    if (!deleteCandidate || deletingConnectionId) {
-      return;
-    }
-    /** Closes an idle deletion confirmation with the platform-standard Escape key. */
-    function handleDeleteDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        handleCancelDeleteConnection();
-      }
-    }
-    document.addEventListener("keydown", handleDeleteDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleDeleteDialogKeyDown);
-  }, [deleteCandidate, deletingConnectionId]);
-
-  useEffect(() => {
-    if (!pendingTableAction || executingTableAction) {
-      return;
-    }
-    /**
-     * Cancels an idle table operation without mutating database state.
-     * @param event - Document-level keyboard event.
-     * @returns Nothing (`void`).
-     * Side effects: may close the pending table action and restore focus.
-     */
-    function handleTableActionDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        handleCancelTableAction();
-      }
-    }
-    document.addEventListener("keydown", handleTableActionDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleTableActionDialogKeyDown);
-  }, [executingTableAction, pendingTableAction]);
-
-  useEffect(() => {
-    if (!pendingCloseTableId) {
-      return;
-    }
-    /** Returns to the dirty table workspace without discarding changes. */
-    function handleDirtyCloseDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        cancelPendingTableClose();
-      }
-    }
-    document.addEventListener("keydown", handleDirtyCloseDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleDirtyCloseDialogKeyDown);
-  }, [pendingCloseTableId]);
-
-  useEffect(() => {
-    if (!renameCandidate || renamingConnectionId) {
-      return;
-    }
-    /** Cancels the non-destructive rename layer while preserving the selected connection. */
-    function handleRenameDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        handleCancelRenameConnection();
-      }
-    }
-    document.addEventListener("keydown", handleRenameDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleRenameDialogKeyDown);
-  }, [renameCandidate, renamingConnectionId]);
-
-  useEffect(() => {
-    if (!pendingCreateDatabase || creatingDatabase) {
-      return;
-    }
-    /** Closes the idle create-database layer without executing any statement. */
-    function handleCreateDatabaseDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        handleCancelCreateDatabase();
-      }
-    }
-    document.addEventListener("keydown", handleCreateDatabaseDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleCreateDatabaseDialogKeyDown);
-  }, [creatingDatabase, pendingCreateDatabase]);
-
-  useEffect(() => {
-    if (!pendingDropDatabase || droppingDatabase) {
-      return;
-    }
-    /** Closes the idle drop-database layer without executing any statement. */
-    function handleDropDatabaseDialogKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        handleCancelDropDatabase();
-      }
-    }
-    document.addEventListener("keydown", handleDropDatabaseDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleDropDatabaseDialogKeyDown);
-  }, [droppingDatabase, pendingDropDatabase]);
-
-  /**
-   * Opens the global database-type picker from either workspace entry point.
-   * Parameters: none.
-   * @returns Nothing (`void`).
-   * Side effects: updates local form visibility state.
-   */
-  function handleAddConnection(): void {
-    if (queryWorkspace.recoveryBlocked) {
-      return;
-    }
-    setIsAddingConnection(true);
-    setConnectionFormEngine(null);
-  }
-
-  /**
-   * Closes the connection flow without persisting its ephemeral state.
-   * Parameters: none.
-   * @returns Nothing (`void`).
-   * Side effects: unmounts the form and its password state.
-   */
-  function handleCancelConnection(): void {
-    setIsAddingConnection(false);
-    setConnectionFormEngine(null);
-  }
-
-  /** Opens the selected engine-specific connection form. */
-  function handleSelectConnectionType(engine: Extract<Engine, "my_sql" | "redis">): void {
-    setConnectionFormEngine(engine);
-  }
 
   /**
    * Retries loading local profiles after an actionable load error.
@@ -2625,14 +1818,14 @@ export function App() {
 
   /** Retries the blocked startup restore before allowing any workspace mutation. */
   function handleRetryWorkspaceRecovery(): void {
-    setIsAddingConnection(false);
+    connectionForm.close();
     void queryWorkspace.retryLoad();
   }
 
   return (
     <div
-      className={`app-shell${sidebarCollapsed ? " app-shell--sidebar-collapsed" : ""}`}
-      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      className={`app-shell${sidebar.collapsed ? " app-shell--sidebar-collapsed" : ""}`}
+      style={{ "--sidebar-width": `${sidebar.width}px` } as CSSProperties}
       role="application"
       aria-label="Pipa 数据库工作台"
     >
@@ -2640,11 +1833,11 @@ export function App() {
         <span className="product-mark" aria-label="Pipa">P</span>
         <button
           aria-controls="connection-panel"
-          aria-expanded={!sidebarCollapsed}
-          aria-label={sidebarCollapsed ? "展开连接侧边栏" : "收起连接侧边栏"}
-          className={`activity-rail__toggle${sidebarCollapsed ? "" : " is-active"}`}
+          aria-expanded={!sidebar.collapsed}
+          aria-label={sidebar.collapsed ? "展开连接侧边栏" : "收起连接侧边栏"}
+          className={`activity-rail__toggle${sidebar.collapsed ? "" : " is-active"}`}
           onClick={() => handleToggleSidebar()}
-          ref={sidebarToggleRef}
+          ref={sidebar.toggleRef}
           title={`连接侧边栏（${shortcutLabel("toggleSidebar")}）`}
           type="button"
         >
@@ -2652,11 +1845,11 @@ export function App() {
         </button>
       </aside>
       <nav
-        aria-hidden={sidebarCollapsed || undefined}
+        aria-hidden={sidebar.collapsed || undefined}
         aria-label="数据库连接"
         className="connection-panel"
         id="connection-panel"
-        inert={sidebarCollapsed}
+        inert={sidebar.collapsed}
       >
         <header className="connection-panel__header">
           <span>
@@ -2692,13 +1885,13 @@ export function App() {
           discoverTablesForConnectionId={commandPaletteConnectionId}
           dirtyTables={dirtyTables}
           focusConnectionId={focusConnectionId}
-          onAddConnection={handleAddConnection}
+          onAddConnection={connectionForm.start}
           onFindTables={openTableFinder}
           onFocusConnectionHandled={() => setFocusConnectionId(null)}
           onOpenConnectionManager={handleOpenConnectionManager}
           onOpenRedisKey={handleOpenRedisKey}
           onOpenTable={handleOpenTable}
-          onRequestCreateDatabase={handleRequestCreateDatabase}
+          onRequestCreateDatabase={databaseOperations.requestCreate}
           onRequestTableAction={handleRequestTableAction}
           onSelectRedisDatabase={handleSelectRedisDatabase}
           onTablesLoaded={handleTablesLoaded}
@@ -2714,9 +1907,9 @@ export function App() {
         />
       </nav>
       <SidebarResizer
-        onWidthChange={setSidebarWidth}
-        onWidthCommit={persistSidebarWidth}
-        width={sidebarWidth}
+        onWidthChange={sidebar.setWidth}
+        onWidthCommit={sidebar.commitWidth}
+        width={sidebar.width}
       />
 
       <main className="workspace" aria-label="查询工作区">
@@ -2732,12 +1925,12 @@ export function App() {
                 ?? null
               : null}
             activeProfile={activeNavigatorProfile}
-            onAddConnection={handleAddConnection}
+            onAddConnection={connectionForm.start}
             onCopyConfig={(profile) => void handleCopyConnectionConfig(profile)}
             onEditConnection={(profile) => handleOpenConnectionManager(profile.id, "profile")}
             onOpenConnectionManager={() => handleOpenConnectionManager()}
             onReconnect={(profile) => void handleReconnectConnection(profile)}
-            onRequestCreateDatabase={handleRequestCreateDatabase}
+            onRequestCreateDatabase={databaseOperations.requestCreate}
             onRequestDelete={handleRequestDeleteConnection}
             onRequestRename={handleRequestRenameConnection}
             onSelectConnection={handleSelectConnection}
@@ -2827,29 +2020,11 @@ export function App() {
           }`}
         >
           {queryWorkspace.recoveryBlocked && !isBinlogWorkspaceActive ? (
-            <section
-              className="connection-overview"
-              aria-labelledby="workspace-recovery-title"
-              role="alert"
-            >
-              <span className="connection-overview__glow" aria-hidden="true" />
-              <span className="connection-overview__icon" aria-hidden="true">
-                <Database size={24} strokeWidth={1.6} />
-              </span>
-              <span className="eyebrow">RECOVERY REQUIRED</span>
-              <h2 id="workspace-recovery-title">无法恢复上次工作区</h2>
-              <p>{queryWorkspace.loadError}</p>
-              <div className="connection-overview__actions">
-                <button
-                  className="button button--primary"
-                  disabled={queryWorkspace.loading}
-                  onClick={handleRetryWorkspaceRecovery}
-                  type="button"
-                >
-                  {queryWorkspace.loading ? "正在恢复…" : "重新恢复"}
-                </button>
-              </div>
-            </section>
+            <WorkspaceRecoveryNotice
+              error={queryWorkspace.loadError}
+              onRetry={handleRetryWorkspaceRecovery}
+              retrying={queryWorkspace.loading}
+            />
           ) : queryWorkspace.loading && !isBinlogWorkspaceActive ? (
             <p className="panel-status" role="status">
               正在恢复本地工作区…
@@ -2879,74 +2054,26 @@ export function App() {
                 utilityTabs={openUtilityTabs}
               />
               <div className="workspace-tab-panels">
-                {queryWorkspace.tabs.map((queryTab) => {
-                  const storedProfile = connections.profiles.find(
-                    (profile) => profile.id === queryTab.connectionId,
-                  );
-                  const workspaceProfile = resolveQueryWorkspaceProfile(
-                    storedProfile,
-                    queryTab,
-                    selectedRedisDatabases,
-                  );
-                  if (!workspaceProfile) {
-                    return null;
-                  }
-                  const isActive = activeUtilityTabId === null
-                    && activeTableTabId === null
-                    && queryWorkspace.activeTabId === queryTab.id;
-                  return (
-                    <div
-                      className="workspace-tab-panel"
-                      hidden={!isActive}
-                      key={queryTab.id}
-                    >
-                      {workspaceProfile.engine === "redis" ? (
-                        <RedisWorkspace
-                          active={isActive}
-                          onDatabaseChange={(database) => handleSelectRedisDatabase(
-                            workspaceProfile.id,
-                            database,
-                          )}
-                          onRetryPersistence={queryWorkspace.retrySave}
-                          onRunningChange={handleQueryRunningChange}
-                          onSqlChange={queryWorkspace.updateTabSql}
-                          persistenceError={queryWorkspace.saveError}
-                          profile={workspaceProfile}
-                          tab={queryTab}
-                          theme={theme.resolvedTheme}
-                        />
-                      ) : (
-                        <QueryWorkspace
-                          active={isActive}
-                          onRetryPersistence={queryWorkspace.retrySave}
-                          onRunningChange={handleQueryRunningChange}
-                          onSqlChange={queryWorkspace.updateTabSql}
-                          persistenceError={queryWorkspace.saveError}
-                          profile={workspaceProfile}
-                          tab={queryTab}
-                          theme={theme.resolvedTheme}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-                {openTableTabs.map((tableTab) => {
-                  const profile = connections.profiles.find((item) => item.id === tableTab.connectionId);
-                  return profile?.engine === "my_sql" ? (
-                    <div
-                      className="workspace-tab-panel"
-                      hidden={activeUtilityTabId !== null || activeTableTabId !== tableTab.id}
-                      key={tableTab.id}
-                    >
-                      <TableWorkspace
-                        database={tableTab.database}
-                        onDirtyChange={(dirty) => handleTableDirtyChange(tableTab.id, dirty)}
-                        profile={profile}
-                        tableName={tableTab.tableName}
-                      />
-                    </div>
-                  ) : null;
-                })}
+                <QueryTabPanels
+                  activeQueryTabId={queryWorkspace.activeTabId}
+                  onDatabaseChange={handleSelectRedisDatabase}
+                  onRetryPersistence={queryWorkspace.retrySave}
+                  onRunningChange={handleQueryRunningChange}
+                  onSqlChange={queryWorkspace.updateTabSql}
+                  persistenceError={queryWorkspace.saveError}
+                  profiles={queryWorkspaceProfiles}
+                  tableWorkspaceActive={activeTableTabId !== null}
+                  tabs={queryWorkspace.tabs}
+                  theme={theme.resolvedTheme}
+                  utilityWorkspaceActive={activeUtilityTabId !== null}
+                />
+                <TableTabPanels
+                  activeTableTabId={activeTableTabId}
+                  onDirtyChange={handleTableDirtyChange}
+                  profiles={connections.profiles}
+                  tabs={openTableTabs}
+                  utilityWorkspaceActive={activeUtilityTabId !== null}
+                />
                 {binlogWorkspaceOpen ? (
                   <div
                     aria-labelledby={`workspace-tab-${BINLOG_WORKSPACE_TAB.id}`}
@@ -2970,11 +2097,11 @@ export function App() {
                       databaseRefreshVersion={databaseRefreshVersion}
                       requestToken={connectionManagerRequestToken}
                       requestedView={connectionManagerRequest?.view ?? null}
-                      onAddConnection={handleAddConnection}
+                      onAddConnection={connectionForm.start}
                       onProfileUpdated={handleConnectionProfileUpdated}
-                      onRequestCreateDatabase={handleRequestCreateDatabase}
+                      onRequestCreateDatabase={databaseOperations.requestCreate}
                       onRequestDeleteConnection={handleRequestDeleteConnection}
-                      onRequestDeleteDatabase={handleRequestDeleteDatabase}
+                      onRequestDeleteDatabase={databaseOperations.requestDrop}
                       onSelectConnection={handleSelectConnection}
                       profiles={connections.profiles}
                       selectedConnectionId={connections.selectedConnectionId}
@@ -2983,167 +2110,39 @@ export function App() {
                 ) : null}
               </div>
             </section>
-          ) : queryWorkspace.activeTab ? (
-            <section className="connection-overview" aria-labelledby="connection-overview-title">
-              <span className="connection-overview__glow" aria-hidden="true" />
-              <span className="connection-overview__icon" aria-hidden="true">
-                <Database size={24} strokeWidth={1.6} />
-              </span>
-              <span className="eyebrow">CONNECTION UNAVAILABLE</span>
-              <h2 id="connection-overview-title">无法恢复查询连接</h2>
-              <p>此标签仍保留原连接标识，不会改绑到当前侧栏连接。</p>
-              <div className="connection-overview__hints">
-                <button onClick={handleAddConnection} type="button">
-                  <Plus size={13} aria-hidden="true" />
-                  添加可用连接
-                </button>
-                <button onClick={openCommandPalette} type="button">
-                  <CommandIcon size={13} aria-hidden="true" />
-                  命令面板
-                  <kbd>{shortcutLabel("commandPalette")}</kbd>
-                </button>
-              </div>
-            </section>
-          ) : selectedProfile ? (
-            <section className="connection-overview" aria-labelledby="connection-overview-title">
-              <span className="connection-overview__glow" aria-hidden="true" />
-              <span className="connection-overview__icon" aria-hidden="true">
-                <Database size={24} strokeWidth={1.6} />
-              </span>
-              <span className="eyebrow">CONNECTION SELECTED</span>
-              <h2 id="connection-overview-title">{selectedProfile.name}</h2>
-              <p>
-                {selectedProfile.engine === "redis"
-                  ? "已选中 Redis 连接。创建命令工作区，或在侧栏展开浏览键。"
-                  : selectedProfile.engine === "my_sql"
-                    ? "已选中 MySQL 连接。创建查询工作区，或展开侧栏打开数据表。"
-                    : "此引擎界面位置已预留，当前请改用 MySQL 或 Redis 连接继续。"}
-              </p>
-              {newQueryProfile ? (
-                <div className="connection-overview__actions">
-                  <button className="button button--primary" onClick={handleCreateQuery} type="button">
-                    <Plus size={16} aria-hidden="true" />
-                    {newQueryProfile.engine === "redis" ? "新建 Redis 工作区" : "新建 SQL 查询"}
-                  </button>
-                  <button className="button button--secondary" onClick={openCommandPalette} type="button">
-                    <CommandIcon size={14} aria-hidden="true" />
-                    命令面板
-                    <kbd>{shortcutLabel("commandPalette")}</kbd>
-                  </button>
-                </div>
-              ) : (
-                <div className="connection-overview__actions">
-                  <button className="button button--primary" onClick={handleAddConnection} type="button">
-                    <Plus size={16} aria-hidden="true" />
-                    添加连接
-                  </button>
-                </div>
-              )}
-              {newQueryProfile ? (
-                <ol className="connection-overview__guide">
-                  <li>
-                    <span className="connection-overview__guide-index" aria-hidden="true">1</span>
-                    <span>
-                      <strong>在侧栏展开连接</strong>
-                      <span>
-                        {selectedProfile.engine === "redis"
-                          ? "浏览逻辑库与键，点击键即可打开检查工作区。"
-                          : "展开后加载数据表，点击即可进入表工作区。"}
-                      </span>
-                    </span>
-                    <kbd>{shortcutLabel("toggleSidebar")}</kbd>
-                  </li>
-                  <li>
-                    <span className="connection-overview__guide-index" aria-hidden="true">2</span>
-                    <span>
-                      <strong>{selectedProfile.engine === "redis" ? "执行 Redis 命令" : "编写并执行 SQL"}</strong>
-                      <span>在工作区编辑器中运行语句，结果会流式展示在下方。</span>
-                    </span>
-                    <kbd>{shortcutLabel("executeQuery")}</kbd>
-                  </li>
-                </ol>
-              ) : null}
-            </section>
           ) : (
-            <section className="connection-overview" aria-labelledby="connection-overview-title">
-              <span className="connection-overview__glow" aria-hidden="true" />
-              <span className="connection-overview__icon" aria-hidden="true">
-                <Sparkles size={24} strokeWidth={1.6} />
-              </span>
-              <span className="eyebrow">GET STARTED</span>
-              <h2 id="connection-overview-title">选择或创建一个数据库连接</h2>
-              <p>连接按引擎整理，凭据仅保存在本机。当前支持 MySQL 与 Redis。</p>
-              <div className="connection-overview__actions">
-                <button className="button button--primary" onClick={handleAddConnection} type="button">
-                  <Plus size={16} aria-hidden="true" />
-                  添加连接
-                </button>
-                <button className="button button--secondary" onClick={openCommandPalette} type="button">
-                  <CommandIcon size={14} aria-hidden="true" />
-                  命令面板
-                  <kbd>{shortcutLabel("commandPalette")}</kbd>
-                </button>
-              </div>
-              <ol className="connection-overview__guide">
-                <li>
-                  <span className="connection-overview__guide-index" aria-hidden="true">1</span>
-                  <span>
-                    <strong>添加本机连接</strong>
-                    <span>选择 MySQL 或 Redis，测试通过后保存到本地加密存储。</span>
-                  </span>
-                </li>
-                <li>
-                  <span className="connection-overview__guide-index" aria-hidden="true">2</span>
-                  <span>
-                    <strong>打开工作区</strong>
-                    <span>新建查询、浏览数据表 / 键，或导入 Binlog 做离线分析。</span>
-                  </span>
-                </li>
-                <li>
-                  <span className="connection-overview__guide-index" aria-hidden="true">3</span>
-                  <span>
-                    <strong>用命令面板加速</strong>
-                    <span>搜索连接、表、工作区与常用操作，无需离开键盘。</span>
-                  </span>
-                  <kbd>{shortcutLabel("commandPalette")}</kbd>
-                </li>
-              </ol>
-              <div className="connection-overview__hints">
-                <button onClick={handleOpenBinlogWorkspace} type="button">
-                  <FileClock size={13} aria-hidden="true" />
-                  Binlog 分析
-                </button>
-                <button onClick={() => setMcpPanelOpen(true)} type="button">
-                  <Server size={13} aria-hidden="true" />
-                  MCP 控制台
-                </button>
-                <button onClick={() => openShortcutDialog("help")} type="button">
-                  <Keyboard size={13} aria-hidden="true" />
-                  快捷键
-                  <kbd>{shortcutLabel("shortcutHelp")}</kbd>
-                </button>
-              </div>
-            </section>
+            <ConnectionOverview
+              newQueryProfile={newQueryProfile}
+              onAddConnection={connectionForm.start}
+              onCreateQuery={handleCreateQuery}
+              onOpenBinlog={handleOpenBinlogWorkspace}
+              onOpenCommandPalette={openCommandPalette}
+              onOpenMcp={() => setMcpPanelOpen(true)}
+              onOpenShortcutHelp={() => openShortcutDialog("help")}
+              orphanedQueryWorkspace={Boolean(queryWorkspace.activeTab)}
+              selectedProfile={selectedProfile ?? null}
+              shortcutLabel={shortcutLabel}
+            />
           )}
         </div>
       </main>
-      {isAddingConnection ? (
+      {connectionForm.open ? (
         <div
-          aria-labelledby={connectionFormEngine ? "connection-form-title" : "connection-type-title"}
+          aria-labelledby={connectionForm.engine ? "connection-form-title" : "connection-type-title"}
           aria-modal="true"
           className="connection-flow-backdrop"
           role="dialog"
         >
-          {connectionFormEngine ? (
+          {connectionForm.engine ? (
             <ConnectionForm
-              engine={connectionFormEngine}
-              onCancel={() => setConnectionFormEngine(null)}
+              engine={connectionForm.engine}
+              onCancel={connectionForm.clearEngine}
               onSaved={handleConnectionSaved}
             />
           ) : (
             <ConnectionTypePicker
-              onCancel={handleCancelConnection}
-              onSelect={handleSelectConnectionType}
+              onCancel={connectionForm.close}
+              onSelect={connectionForm.selectEngine}
             />
           )}
         </div>
@@ -3167,576 +2166,79 @@ export function App() {
         open={mcpPanelOpen}
         profiles={connections.profiles}
       />
-      {renameCandidate ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !renamingConnectionId) {
-              handleCancelRenameConnection();
-            }
-          }}
-        >
-          <section
-            aria-labelledby="rename-connection-title"
-            aria-modal="true"
-            className="destructive-dialog connection-action-dialog"
-            role="dialog"
-          >
-            <header>
-              <span className="connection-action-dialog__icon" aria-hidden="true">
-                <Pencil size={17} />
-              </span>
-              <span>
-                <span className="eyebrow">CONNECTION NAME</span>
-                <h2 id="rename-connection-title">重命名连接</h2>
-              </span>
-            </header>
-            <label className="connection-action-dialog__field">
-              <span>连接名称</span>
-              <input
-                autoFocus
-                disabled={Boolean(renamingConnectionId)}
-                maxLength={120}
-                onChange={(event) => setRenameDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleConfirmRenameConnection();
-                  }
-                }}
-                value={renameDraft}
-              />
-            </label>
-            {connectionActionError ? <p className="destructive-dialog__error" role="alert">{connectionActionError}</p> : null}
-            <footer>
-              <button className="button button--secondary" disabled={Boolean(renamingConnectionId)} onClick={handleCancelRenameConnection} type="button">
-                取消
-              </button>
-              <button className="button button--primary" disabled={Boolean(renamingConnectionId) || !renameDraft.trim()} onClick={() => void handleConfirmRenameConnection()} type="button">
-                {renamingConnectionId ? "正在保存…" : "保存名称"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {pendingCreateDatabase && pendingCreateDatabaseProfile ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              handleCancelCreateDatabase();
-            }
-          }}
-        >
-          <section
-            aria-labelledby="create-database-title"
-            aria-modal="true"
-            className="destructive-dialog connection-action-dialog"
-            role="dialog"
-          >
-            <header>
-              <span className="connection-action-dialog__icon" aria-hidden="true">
-                <DatabasePlus size={17} />
-              </span>
-              <span>
-                <span className="eyebrow">CREATE DATABASE</span>
-                <h2 id="create-database-title">新建数据库</h2>
-              </span>
-            </header>
-            <dl>
-              <div><dt>连接</dt><dd>{pendingCreateDatabaseProfile.name}</dd></div>
-              <div>
-                <dt>地址</dt>
-                <dd>{pendingCreateDatabaseProfile.host}:{pendingCreateDatabaseProfile.port}</dd>
-              </div>
-            </dl>
-            <label className="connection-action-dialog__field">
-              <span>数据库名</span>
-              <input
-                autoFocus
-                disabled={creatingDatabase}
-                maxLength={64}
-                onChange={(event) => setPendingCreateDatabase((current) => current === null
-                  ? current
-                  : { ...current, name: event.target.value })}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleConfirmCreateDatabase();
-                  }
-                }}
-                value={pendingCreateDatabase.name}
-              />
-            </label>
-            <label className="connection-action-dialog__field">
-              <span>字符集</span>
-              <select
-                disabled={creatingDatabase}
-                onChange={(event) => handleSelectCreateDatabaseCharset(event.target.value)}
-                value={pendingCreateDatabase.charset}
-              >
-                <option value="">服务器默认</option>
-                {DATABASE_CHARSET_OPTIONS.map((option) => (
-                  <option key={option.charset} value={option.charset}>{option.charset}</option>
-                ))}
-              </select>
-            </label>
-            {pendingCreateDatabase.charset ? (
-              <label className="connection-action-dialog__field">
-                <span>排序规则</span>
-                <select
-                  disabled={creatingDatabase}
-                  onChange={(event) => setPendingCreateDatabase((current) => current === null
-                    ? current
-                    : { ...current, collation: event.target.value })}
-                  value={pendingCreateDatabase.collation}
-                >
-                  <option value="">字符集默认</option>
-                  {pendingCreateDatabaseCollations.map((collation) => (
-                    <option key={collation} value={collation}>{collation}</option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <p>
-              将在此连接上执行 CREATE DATABASE。侧边栏只展示连接的默认数据库，新库需要把连接的默认数据库改成它才能浏览。
-            </p>
-            {createDatabaseError ? (
-              <p className="destructive-dialog__error" role="alert">{createDatabaseError}</p>
-            ) : null}
-            <footer>
-              <button
-                className="button button--secondary"
-                disabled={creatingDatabase}
-                onClick={handleCancelCreateDatabase}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="button button--primary"
-                disabled={creatingDatabase || !pendingCreateDatabase.name.trim()}
-                onClick={() => void handleConfirmCreateDatabase()}
-                type="button"
-              >
-                {creatingDatabase ? "正在创建…" : "创建数据库"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {pendingDropDatabase && pendingDropDatabaseProfile ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              handleCancelDropDatabase();
-            }
-          }}
-        >
-          <section
-            aria-labelledby="drop-database-title"
-            aria-modal="true"
-            className="destructive-dialog"
-            role="dialog"
-          >
-            <header>
-              <span className="destructive-dialog__icon" aria-hidden="true">
-                <AlertTriangle size={17} />
-              </span>
-              <span>
-                <span className="eyebrow">DROP DATABASE</span>
-                <h2 id="drop-database-title">删除数据库</h2>
-              </span>
-            </header>
-            <dl>
-              <div><dt>连接</dt><dd>{pendingDropDatabaseProfile.name}</dd></div>
-              <div><dt>数据库</dt><dd>{pendingDropDatabase.database}</dd></div>
-            </dl>
-            <p className="destructive-dialog__warning">
-              这会永久删除该数据库及其中所有表和数据，无法撤销。
-            </p>
-            <label className="connection-action-dialog__field">
-              <span>请输入 {pendingDropDatabase.database} 以确认</span>
-              <input
-                autoFocus
-                disabled={droppingDatabase}
-                onChange={(event) => setDropDatabaseConfirmation(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleConfirmDropDatabase();
-                  }
-                }}
-                value={dropDatabaseConfirmation}
-              />
-            </label>
-            {dropDatabaseError ? (
-              <p className="destructive-dialog__error" role="alert">{dropDatabaseError}</p>
-            ) : null}
-            <footer>
-              <button
-                className="button button--secondary"
-                disabled={droppingDatabase}
-                onClick={handleCancelDropDatabase}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="button button--danger"
-                disabled={
-                  droppingDatabase || dropDatabaseConfirmation !== pendingDropDatabase.database
-                }
-                onClick={() => void handleConfirmDropDatabase()}
-                type="button"
-              >
-                {droppingDatabase ? "正在删除…" : "永久删除"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {pendingTableNameAction && pendingTableNameActionProfile ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              handleCancelTableNameAction();
-            }
-          }}
-        >
-          <section
-            aria-labelledby="table-name-action-title"
-            aria-modal="true"
-            className="destructive-dialog connection-action-dialog"
-            role="dialog"
-          >
-            <header>
-              <span className="connection-action-dialog__icon" aria-hidden="true">
-                {pendingTableNameAction.action === "rename" ? <Pencil size={17} /> : <Copy size={17} />}
-              </span>
-              <span>
-                <span className="eyebrow">TABLE OPERATION</span>
-                <h2 id="table-name-action-title">
-                  {pendingTableNameAction.action === "rename" ? "重命名表" : "复制表"}
-                </h2>
-              </span>
-            </header>
-            <dl>
-              <div><dt>连接</dt><dd>{pendingTableNameActionProfile.name}</dd></div>
-              <div><dt>原表</dt><dd>{pendingTableNameAction.tableName}</dd></div>
-            </dl>
-            <label className="connection-action-dialog__field">
-              <span>{pendingTableNameAction.action === "rename" ? "新表名" : "复制为"}</span>
-              <input
-                autoFocus
-                disabled={executingTableNameAction}
-                maxLength={64}
-                onChange={(event) => setTableNameDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleConfirmTableNameAction();
-                  }
-                }}
-                value={tableNameDraft}
-              />
-            </label>
-            {pendingTableNameAction.action === "duplicate" ? (
-              <label className="table-copy-option">
-                <input
-                  checked={duplicateTableData}
-                  disabled={executingTableNameAction}
-                  onChange={(event) => setDuplicateTableData(event.target.checked)}
-                  type="checkbox"
-                />
-                同时复制表数据
-              </label>
-            ) : null}
-            {pendingTableNameActionHasDirtyWorkspace ? (
-              <p className="destructive-dialog__warning">
-                该表有未提交的本地修改；请先提交或撤销后再重命名。
-              </p>
-            ) : null}
-            {tableNameActionError ? (
-              <p className="destructive-dialog__error" role="alert">{tableNameActionError}</p>
-            ) : null}
-            <footer>
-              <button
-                className="button button--secondary"
-                disabled={executingTableNameAction}
-                onClick={handleCancelTableNameAction}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="button button--primary"
-                disabled={executingTableNameAction || !tableNameDraft.trim()}
-                onClick={() => void handleConfirmTableNameAction()}
-                type="button"
-              >
-                {executingTableNameAction
-                  ? "正在执行…"
-                  : pendingTableNameAction.action === "rename" ? "保存新表名" : "开始复制"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {tableDdlPreview ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setTableDdlPreview(null);
-            }
-          }}
-        >
-          <section
-            aria-labelledby="table-ddl-preview-title"
-            aria-modal="true"
-            className="destructive-dialog connection-action-dialog table-ddl-dialog"
-            role="dialog"
-          >
-            <header>
-              <span className="connection-action-dialog__icon" aria-hidden="true">
-                <Braces size={17} />
-              </span>
-              <span>
-                <span className="eyebrow">SHOW CREATE TABLE</span>
-                <h2 id="table-ddl-preview-title">{tableDdlPreview.tableName}</h2>
-              </span>
-            </header>
-            <div className="table-ddl-dialog__body">
-              {tableDdlPreview.loading ? (
-                <p className="panel-status">正在读取 CREATE TABLE 语法…</p>
-              ) : tableDdlPreview.error ? (
-                <p className="destructive-dialog__error" role="alert">{tableDdlPreview.error}</p>
-              ) : (
-                <SelectableSqlBlock
-                  ariaLabel={`${tableDdlPreview.tableName} CREATE TABLE 语法`}
-                  value={tableDdlPreview.sql}
-                />
-              )}
-            </div>
-            <footer>
-              <button className="button button--secondary" onClick={() => setTableDdlPreview(null)} type="button">
-                关闭
-              </button>
-              <button
-                className="button button--primary"
-                disabled={!tableDdlPreview.sql}
-                onClick={() => void copyTableText(
-                  tableDdlPreview.sql,
-                  `已复制表“${tableDdlPreview.tableName}”的 CREATE TABLE 语法。`,
-                )}
-                type="button"
-              >
-                <Copy size={14} aria-hidden="true" />
-                复制语法
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {pendingTableAction && pendingTableActionProfile ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              handleCancelTableAction();
-            }
-          }}
-        >
-          <section
-            aria-describedby="table-action-description"
-            aria-labelledby="table-action-title"
-            aria-modal="true"
-            className="destructive-dialog"
-            role="alertdialog"
-          >
-            <header>
-              <span className="destructive-dialog__icon" aria-hidden="true">
-                <AlertTriangle size={18} />
-              </span>
-              <span>
-                <span className="eyebrow">DESTRUCTIVE SQL</span>
-                <h2 id="table-action-title">
-                  {pendingTableAction.action === "drop"
-                    ? `删除表“${pendingTableAction.tableName}”？`
-                    : `清空“${pendingTableAction.tableName}”的全部数据？`}
-                </h2>
-              </span>
-            </header>
-            <p id="table-action-description">
-              {pendingTableAction.action === "drop"
-                ? "DROP TABLE 会永久删除表结构及全部数据，无法撤销。"
-                : "TRUNCATE TABLE 会永久删除全部行并重置自增计数，无法撤销。"}
-              {pendingTableActionHasDirtyWorkspace
-                ? " 此表还有未提交的本地修改；执行成功后工作区会关闭，这些修改也会丢失。"
-                : " 执行成功后会关闭已打开的表工作区，避免继续显示旧数据。"}
-            </p>
-            <dl>
-              <div><dt>连接</dt><dd>{pendingTableActionProfile.name}</dd></div>
-              <div><dt>数据库</dt><dd>{pendingTableActionProfile.database}</dd></div>
-              <div>
-                <dt>SQL</dt>
-                <dd>{pendingTableAction.action === "drop" ? "DROP TABLE" : "TRUNCATE TABLE"}</dd>
-              </div>
-            </dl>
-            {tableActionError ? (
-              <p className="destructive-dialog__error" role="alert">{tableActionError}</p>
-            ) : null}
-            <footer>
-              <button
-                autoFocus
-                className="button button--secondary"
-                disabled={executingTableAction}
-                onClick={handleCancelTableAction}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="button button--danger"
-                disabled={executingTableAction}
-                onClick={() => void handleConfirmTableAction()}
-                type="button"
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                {executingTableAction
-                  ? "正在执行…"
-                  : pendingTableAction.action === "drop" ? "永久删除表" : "清空全部数据"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {deleteCandidate ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !deletingConnectionId) {
-              handleCancelDeleteConnection();
-            }
-          }}
-        >
-          <section
-            aria-describedby="delete-connection-description"
-            aria-labelledby="delete-connection-title"
-            aria-modal="true"
-            className="destructive-dialog"
-            role="alertdialog"
-          >
-            <header>
-              <span className="destructive-dialog__icon" aria-hidden="true">
-                <AlertTriangle size={18} />
-              </span>
-              <span>
-                <span className="eyebrow">PERMANENT ACTION</span>
-                <h2 id="delete-connection-title">删除“{deleteCandidate.name}”？</h2>
-              </span>
-            </header>
-            <p id="delete-connection-description">
-              将永久删除连接配置、加密凭据和查询历史
-              {deleteCandidateWorkspaceCount > 0
-                ? `，并关闭 ${deleteCandidateWorkspaceCount} 个相关工作区`
-                : ""}
-              。未提交的表修改无法恢复。
-            </p>
-            <dl>
-              <div><dt>类型</dt><dd>{deleteCandidate.engine === "my_sql" ? "MySQL" : "Redis"}</dd></div>
-              <div><dt>地址</dt><dd>{deleteCandidate.host}:{deleteCandidate.port}</dd></div>
-            </dl>
-            {deleteBlockedByRunningQuery ? (
-              <p className="destructive-dialog__warning" role="status">
-                此连接仍有查询运行。请先取消或等待查询完成。
-              </p>
-            ) : null}
-            {connectionDeletionError ? (
-              <p className="destructive-dialog__error" role="alert">{connectionDeletionError}</p>
-            ) : null}
-            <footer>
-              <button
-                autoFocus
-                className="button button--secondary"
-                disabled={Boolean(deletingConnectionId)}
-                onClick={() => {
-                  handleCancelDeleteConnection();
-                }}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="button button--danger"
-                disabled={Boolean(deletingConnectionId) || deleteBlockedByRunningQuery}
-                onClick={() => void handleConfirmDeleteConnection()}
-                type="button"
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                {deletingConnectionId ? "正在删除…" : deleteCandidate.environment === "production" ? "永久删除生产连接" : "永久删除连接"}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {pendingCloseTable ? (
-        <div
-          className="destructive-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              cancelPendingTableClose();
-            }
-          }}
-        >
-          <section
-            aria-describedby="close-dirty-table-description"
-            aria-labelledby="close-dirty-table-title"
-            aria-modal="true"
-            className="destructive-dialog"
-            role="alertdialog"
-          >
-            <header>
-              <span className="destructive-dialog__icon" aria-hidden="true">
-                <AlertTriangle size={18} />
-              </span>
-              <span>
-                <span className="eyebrow">UNCOMMITTED CHANGES</span>
-                <h2 id="close-dirty-table-title">关闭“{pendingCloseTable.tableName}”？</h2>
-              </span>
-            </header>
-            <p id="close-dirty-table-description">
-              此表工作区包含尚未提交的 DML 或 DDL。关闭后，本地变更集将无法恢复。
-            </p>
-            <footer>
-              <button
-                autoFocus
-                className="button button--secondary"
-                onClick={cancelPendingTableClose}
-                type="button"
-              >
-                继续编辑
-              </button>
-              <button
-                className="button button--danger"
-                onClick={() => {
-                  const tabId = pendingCloseTable.id;
-                  setPendingCloseTableId(null);
-                  closeTableImmediately(tabId);
-                }}
-                type="button"
-              >
-                放弃修改并关闭
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {deletionNotice ? <p className="app-toast" role="status">{deletionNotice}</p> : null}
-      {connectionActionError && !renameCandidate ? <p className="app-toast app-toast--error" role="alert">{connectionActionError}</p> : null}
+      <RenameConnectionDialog
+        error={toasts.error.message}
+        key={renameCandidate?.id ?? "none"}
+        onCancel={handleCancelRenameConnection}
+        onConfirm={(name) => void handleConfirmRenameConnection(name)}
+        profile={renameCandidate}
+        saving={renamingConnectionId !== null}
+      />
+      <CreateDatabaseDialog
+        creating={databaseOperations.creating}
+        error={databaseOperations.createError}
+        key={`create-${databaseOperations.createTarget?.id ?? "none"}`}
+        onCancel={databaseOperations.cancelCreate}
+        onConfirm={(request) => void databaseOperations.confirmCreate(request)}
+        profile={databaseOperations.createTarget}
+      />
+      <DropDatabaseDialog
+        database={databaseOperations.dropTargetDatabase}
+        dropping={databaseOperations.dropping}
+        error={databaseOperations.dropError}
+        key={`drop-${databaseOperations.dropTarget?.id ?? "none"}-${databaseOperations.dropTargetDatabase ?? ""}`}
+        onCancel={databaseOperations.cancelDrop}
+        onConfirm={() => void databaseOperations.confirmDrop()}
+        profile={databaseOperations.dropTarget}
+      />
+      <TableNameActionDialog
+        action={pendingTableNameAction?.action ?? null}
+        error={tableNameActionError}
+        executing={executingTableNameAction}
+        hasDirtyWorkspace={pendingTableNameActionHasDirtyWorkspace}
+        key={`table-name-${pendingTableNameAction?.action ?? "none"}-${pendingTableNameAction?.tableName ?? ""}`}
+        onCancel={handleCancelTableNameAction}
+        onConfirm={(request) => void handleConfirmTableNameAction(request)}
+        profile={pendingTableNameActionProfile}
+        tableName={pendingTableNameAction?.tableName ?? null}
+      />
+      <TableDdlPreviewDialog
+        onClose={tableUtilityActions.closeDdlPreview}
+        onCopy={(sql, message) => void tableUtilityActions.copyText(sql, message)}
+        preview={tableUtilityActions.ddlPreview}
+      />
+      <TableDestructiveActionDialog
+        action={pendingTableAction?.action ?? null}
+        error={tableActionError}
+        executing={executingTableAction}
+        hasDirtyWorkspace={pendingTableActionHasDirtyWorkspace}
+        onCancel={handleCancelTableAction}
+        onConfirm={() => void handleConfirmTableAction()}
+        profile={pendingTableActionProfile}
+        tableName={pendingTableAction?.tableName ?? null}
+      />
+      <DeleteConnectionDialog
+        blockedByRunningQuery={deleteBlockedByRunningQuery}
+        deleting={deletingConnectionId !== null}
+        error={connectionDeletionError}
+        onCancel={handleCancelDeleteConnection}
+        onConfirm={() => void handleConfirmDeleteConnection()}
+        profile={deleteCandidate}
+        workspaceCount={deleteCandidateWorkspaceCount}
+      />
+      <DiscardTableChangesDialog
+        onCancel={cancelPendingTableClose}
+        onDiscard={() => {
+          const tabId = pendingCloseTable?.id;
+          setPendingCloseTableId(null);
+          if (tabId) {
+            closeTableImmediately(tabId);
+          }
+        }}
+        tableName={pendingCloseTable?.tableName ?? null}
+      />
+      {toasts.notice.message ? <p className="app-toast" role="status">{toasts.notice.message}</p> : null}
+      {toasts.error.message && !renameCandidate ? <p className="app-toast app-toast--error" role="alert">{toasts.error.message}</p> : null}
     </div>
   );
 }

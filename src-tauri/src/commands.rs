@@ -1,9 +1,11 @@
 use crate::state::AppState;
 use chrono::Utc;
 use pipa_core::{
-    AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult, ConnectionProfile,
-    DatabaseAdapter, Engine, QueryEvent, QueryRequest, RecordQueryHistoryInput,
-    SaveConnectionInput,
+    build_alter_table_comment_statement, build_create_database_plan, build_table_ddl_plan,
+    build_table_filter_clause, AppError, AppErrorCode, ApplyTableMutationsInput,
+    ApplyTableMutationsResult, ConnectionProfile, CreateDatabasePlan, DatabaseAdapter, Engine,
+    QueryEvent, QueryRequest, RecordQueryHistoryInput, SaveConnectionInput, TableColumnDefinition,
+    TableDdlPlan, TableFilterClause, TableFilterColumn, TableFilterCondition,
 };
 use pipa_store::{
     CommonSql as StoredCommonSql, QueryHistoryEntry, SqlFolder as StoredSqlFolder,
@@ -273,6 +275,58 @@ pub(crate) async fn run_query(
     on_event: Channel<QueryEvent>,
 ) -> Result<Uuid, AppError> {
     run_query_inner(&state, request, on_event).await
+}
+
+/// Builds the `CREATE DATABASE` statement the frontend may execute.
+///
+/// The schema name is free user text, so it is validated and quoted here rather than in the UI, and
+/// the character set and collation are emitted from a closed allowlist instead of the request.
+#[tauri::command]
+pub(crate) fn build_create_database(
+    database_name: String,
+    charset: Option<String>,
+    collation: Option<String>,
+) -> CreateDatabasePlan {
+    build_create_database_plan(&database_name, charset.as_deref(), collation.as_deref())
+}
+
+/// Compiles visual structure edits into the MySQL DDL the frontend may execute.
+///
+/// DDL cannot use bound parameters — identifiers and type declarations are SQL structure — so this
+/// is where the identifier escaping and the closed type allowlist are enforced. The frontend keeps a
+/// copy for live previewing only; the statements executed against the server come from here.
+///
+/// This is pure computation with no connection access, so it needs no state and no `async`.
+#[tauri::command]
+pub(crate) fn build_table_ddl(
+    database: String,
+    table: String,
+    original_columns: Vec<TableColumnDefinition>,
+    draft_columns: Vec<TableColumnDefinition>,
+) -> TableDdlPlan {
+    build_table_ddl_plan(&database, &table, &original_columns, &draft_columns)
+}
+
+/// Builds the table-comment DDL with the comment encoded as a literal.
+#[tauri::command]
+pub(crate) fn build_table_comment_ddl(database: String, table: String, comment: String) -> String {
+    build_alter_table_comment_statement(&database, &table, &comment)
+}
+
+/// Compiles quick-filter conditions into the one MySQL `WHERE` clause the frontend may execute.
+///
+/// The frontend keeps a local copy of these rules to render validation feedback while the user
+/// types, but that copy never reaches the database. Column names are re-authorized against the
+/// supplied schema here, operators arrive as a closed enum, and every operand is re-encoded as a
+/// literal, so user text cannot alter SQL structure even when the UI layer is wrong or bypassed.
+///
+/// This is pure computation with no connection access, so it needs no state and no `async`.
+#[tauri::command]
+pub(crate) fn build_filter_clause(
+    conditions: Vec<TableFilterCondition>,
+    schema: Vec<TableFilterColumn>,
+) -> TableFilterClause {
+    build_table_filter_clause(&conditions, &schema)
 }
 
 /// Applies one reviewed MySQL table change set through a parameterized backend transaction.

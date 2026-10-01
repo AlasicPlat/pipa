@@ -30,3 +30,8 @@
 
 - `RUSTSEC-2026-0221`：已在 `Cargo.lock` 中将 `event-listener` 从 5.4.1 更新到修复后的 5.4.2。
 - 当前 macOS 依赖图已使用修复后的 `quick-xml 0.41`；只有 Linux Wayland 构建链仍保留 0.39.4。
+
+## 2026-10-01 发布审查中已解决
+
+- `RUSTSEC-2026-0285`：将 `rustls` 从 0.23.41 更新到修复后的 0.23.45，纠正 TLS 1.3 握手消息跨加密级别被错误接受的问题。
+- `GHSA-p98j-92pf-mc4p`：将 Monaco 间接依赖的 `dompurify` 从 3.4.13 更新到修复后的 3.4.16。

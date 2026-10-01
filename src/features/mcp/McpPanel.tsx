@@ -6,6 +6,8 @@ import type { SqlRisk } from "../../bindings/SqlRisk";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isTauri } from "@tauri-apps/api/core";
 import { useMcpState } from "./useMcpState";
+import { loadMcpPanelWide, persistMcpPanelWide } from "./mcpPanelLayout";
+import { summarizeSqlForReview } from "./sqlReview";
 import type { McpActivityEntry, PendingSqlProposal } from "./types";
 import "./mcp.css";
 
@@ -77,7 +79,7 @@ function formatActivityTime(iso: string): string {
  */
 export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const mcp = useMcpState(open);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(loadMcpPanelWide);
   const [targetsExpanded, setTargetsExpanded] = useState(true);
   const [expandedActivityIds, setExpandedActivityIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -87,6 +89,7 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const pendingSectionRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
     if (!open) {
@@ -104,11 +107,21 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
     return () => document.removeEventListener("keydown", handleEscape, true);
   }, [onClose, open]);
 
-  // Move focus into the dialog so keyboard users are not left behind in the workspace.
+  /*
+   * Move focus into the dialog so keyboard users are not left behind in the workspace. When
+   * approvals are waiting they are why the console was opened, so focus lands on the queue instead
+   * of the close button — on the region, never on 确认执行, so a stray Enter cannot approve
+   * destructive SQL.
+   */
   useEffect(() => {
-    if (open) {
-      window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    if (!open) {
+      return;
     }
+    const handle = window.requestAnimationFrame(() => {
+      const target = pendingSectionRef.current ?? closeButtonRef.current;
+      target?.focus();
+    });
+    return () => window.cancelAnimationFrame(handle);
   }, [open]);
 
   const mysqlProfiles = useMemo(
@@ -229,7 +242,11 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
           <button
             aria-label={expanded ? "收缩 MCP 控制台" : "展开 MCP 控制台"}
             aria-pressed={expanded}
-            onClick={() => setExpanded((current) => !current)}
+            onClick={() => {
+              const next = !expanded;
+              setExpanded(next);
+              persistMcpPanelWide(next);
+            }}
             title={expanded ? "切换为紧凑面板" : "切换为宽屏面板"}
             type="button"
           >
@@ -542,11 +559,17 @@ export function McpPanel({ open, onClose, profiles }: McpPanelProps) {
           {pending.length === 0 ? (
             <p className="mcp-panel__hint">MCP 提出的 DML/DDL 会显示在这里，确认后才会执行。</p>
           ) : (
-            <ul className="mcp-panel__list">
+            <ul
+              aria-label={`待确认 SQL，共 ${pending.length} 条`}
+              className="mcp-panel__list"
+              ref={pendingSectionRef}
+              tabIndex={-1}
+            >
               {pending.map((proposal) => (
                 <ProposalCard
                   busy={mcp.busy}
                   key={proposal.id}
+                  onCopy={(label, value) => void copyText(label, value)}
                   onDismiss={() => void mcp.dismissProposal(proposal.id)}
                   onExecute={() => void mcp.executeProposal(proposal.id)}
                   profiles={mysqlProfiles}
@@ -642,15 +665,38 @@ interface ProposalCardProps {
   proposal: PendingSqlProposal;
   profiles: ConnectionProfile[];
   busy: boolean;
+  onCopy: (label: string, value: string) => void;
   onExecute: () => void;
   onDismiss: () => void;
 }
 
-function ProposalCard({ proposal, profiles, busy, onExecute, onDismiss }: ProposalCardProps) {
+/**
+ * Renders one pending proposal as a self-contained review unit.
+ *
+ * The statement is the only part that scrolls: its identity header and its actions stay pinned, so
+ * approving a 400-line migration never requires scrolling to find the button, and the reviewer can
+ * always see which connection — and whether it is production — they are about to approve against.
+ * @param props - Proposal data, connection labels, and the approval callbacks.
+ * @returns A list item for the pending-approval queue.
+ */
+function ProposalCard({
+  busy,
+  onCopy,
+  onDismiss,
+  onExecute,
+  profiles,
+  proposal,
+}: ProposalCardProps) {
+  const [expanded, setExpanded] = useState(loadMcpPanelWide);
   const profile = profiles.find((item) => item.id === proposal.connectionId);
   const production = profile?.environment === "production";
+  const summary = useMemo(() => summarizeSqlForReview(proposal.sql), [proposal.sql]);
+  const collapsed = summary.collapsible && !expanded;
+  const sqlId = `mcp-proposal-sql-${proposal.id}`;
   return (
-    <li className={`mcp-panel__proposal${production ? " mcp-panel__proposal--production" : ""}`}>
+    <li
+      className={`mcp-panel__proposal${production ? " mcp-panel__proposal--production" : ""}`}
+    >
       <div className="mcp-panel__proposal-meta">
         <span className={`mcp-panel__risk mcp-panel__risk--${proposal.risk}`}>
           {RISK_LABELS[proposal.risk]}
@@ -658,8 +704,53 @@ function ProposalCard({ proposal, profiles, busy, onExecute, onDismiss }: Propos
         <strong>{profile?.name ?? proposal.connectionId}</strong>
         {production ? <span className="mcp-panel__prod">生产</span> : null}
         <small>{proposal.sourceTool}</small>
+        <span className="mcp-panel__proposal-metrics">
+          {summary.statementCount > 1 ? (
+            <span className="mcp-panel__proposal-multi">
+              {summary.statementCount} 条语句
+            </span>
+          ) : null}
+          <span>{summary.lineCount} 行 · {summary.charCount} 字符</span>
+        </span>
+        <span className="mcp-panel__proposal-tools">
+          {summary.collapsible ? (
+            <button
+              aria-controls={sqlId}
+              aria-expanded={expanded}
+              className="button"
+              onClick={() => setExpanded((current) => !current)}
+              type="button"
+            >
+              {expanded ? "折叠" : `展开全部 ${summary.lineCount} 行`}
+            </button>
+          ) : null}
+          <button
+            aria-label="复制 SQL"
+            className="button"
+            onClick={() => onCopy(" SQL", proposal.sql)}
+            title="复制完整 SQL"
+            type="button"
+          >
+            <Copy size={14} aria-hidden="true" />
+          </button>
+        </span>
       </div>
-      <pre>{proposal.sql}</pre>
+      <pre
+        className={`mcp-panel__proposal-sql${collapsed ? " is-collapsed" : ""}`}
+        id={sqlId}
+        tabIndex={0}
+      >
+        {collapsed ? summary.previewText : proposal.sql}
+      </pre>
+      {collapsed ? (
+        <button
+          className="mcp-panel__proposal-more"
+          onClick={() => setExpanded(true)}
+          type="button"
+        >
+          还有 {summary.hiddenLineCount} 行未显示，展开全部
+        </button>
+      ) : null}
       <div className="mcp-panel__proposal-actions">
         <button className="button button--primary" disabled={busy} onClick={onExecute} type="button">
           确认执行
@@ -667,6 +758,11 @@ function ProposalCard({ proposal, profiles, busy, onExecute, onDismiss }: Propos
         <button className="button" disabled={busy} onClick={onDismiss} type="button">
           忽略
         </button>
+        {production ? (
+          <small className="mcp-panel__proposal-caution">
+            目标是生产环境，执行后不可撤销。
+          </small>
+        ) : null}
       </div>
     </li>
   );

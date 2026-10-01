@@ -420,6 +420,71 @@ describe("table SQL generation", () => {
     expect(isStructureColumnEditable({ ...NAME_COLUMN, type: "enum('a','b')" })).toBe(false);
   });
 
+  it("matches the backend DDL generator", () => {
+    /*
+     * These are the exact statements asserted by the Rust tests in `pipa-core::table_ddl`. The
+     * backend owns the executed DDL and this module only previews it, so a divergence here means the
+     * preview would disagree with what actually runs. Keep both lists in step.
+     */
+    const editable = {
+      sourceName: "title",
+      name: "title",
+      type: "varchar(50)",
+      nullable: true,
+      defaultValue: null,
+      defaultExpression: false,
+      comment: "",
+      primary: false,
+      extra: "",
+      characterSet: "utf8mb4",
+      collation: "utf8mb4_0900_ai_ci",
+      generationExpression: "",
+    };
+
+    // A hostile identifier stays inside one quoted token.
+    expect(buildDdlStatements("shop", "orders", [], [
+      { ...editable, sourceName: null, name: "a` , DROP TABLE users; -- " },
+    ])[0]).toContain("ADD COLUMN `a`` , DROP TABLE users; -- `");
+
+    // Drops precede adds so a reused name cannot collide.
+    const dropThenAdd = buildDdlStatements(
+      "shop",
+      "orders",
+      [{ ...editable, sourceName: "old", name: "old" }, editable],
+      [editable, { ...editable, sourceName: null, name: "old" }],
+    );
+    expect(dropThenAdd[0]).toBe("ALTER TABLE `shop`.`orders` DROP COLUMN `old`;");
+    expect(dropThenAdd[1]).toContain("ADD COLUMN `old`");
+
+    // An unchanged column yields nothing; a real edit yields CHANGE.
+    expect(buildDdlStatements("shop", "orders", [editable], [editable])).toEqual([]);
+    expect(buildDdlStatements("shop", "orders", [editable], [
+      { ...editable, nullable: false, comment: "标题" },
+    ])).toEqual([
+      "ALTER TABLE `shop`.`orders` CHANGE COLUMN `title` `title` varchar(50) "
+      + "CHARACTER SET `utf8mb4` COLLATE `utf8mb4_0900_ai_ci` NOT NULL COMMENT '标题';",
+    ]);
+
+    // Defaults and EXTRA clauses round-trip as the editor displayed them.
+    expect(buildDdlStatements("shop", "orders", [], [{
+      ...editable,
+      sourceName: null,
+      name: "created_at",
+      type: "datetime",
+      defaultValue: "CURRENT_TIMESTAMP",
+      defaultExpression: true,
+      extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+      characterSet: null,
+      collation: null,
+    }])).toEqual([
+      "ALTER TABLE `shop`.`orders` ADD COLUMN `created_at` datetime NULL "
+      + "DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;",
+    ]);
+
+    expect(buildAlterTableCommentStatement("sh`op", "ord`ers", "it's fine"))
+      .toBe("ALTER TABLE `sh``op`.`ord``ers` COMMENT = 'it''s fine';");
+  });
+
   it("round-trips visual type parts without changing untouched COLUMN_TYPE strings", () => {
     for (const sample of [
       "bigint unsigned",
@@ -609,6 +674,74 @@ describe("table quick filter", () => {
       condition({ id: "a", operator: "=", value: "ok" }),
       condition({ id: "b", columnName: "id", operator: "=", value: "oops" }),
     ], FILTER_SCHEMA)).toEqual({ where: "", errors: ["id 需要数值"], activeCount: 0 });
+  });
+
+  it("matches the backend clause compiler", () => {
+    /*
+     * These are the exact clauses asserted by the Rust tests in `pipa-core::table_filter`. The
+     * backend owns the executed clause and this module only pre-checks, so any divergence here
+     * means the local preview would disagree with what actually runs. Keep both lists in step.
+     */
+    const cases: { conditions: TableFilterCondition[]; where: string }[] = [
+      {
+        conditions: [condition({ columnName: "id", operator: ">=", value: "18446744073709551615" })],
+        where: " WHERE `id` >= 18446744073709551615",
+      },
+      {
+        conditions: [condition({ operator: "=", value: "O'Reilly" })],
+        where: " WHERE `name` = 'O''Reilly'",
+      },
+      {
+        conditions: [condition({ operator: "=", value: "x' OR 1=1 -- " })],
+        where: " WHERE `name` = 'x'' OR 1=1 -- '",
+      },
+      {
+        conditions: [condition({ operator: "CONTAINS", value: "50%_a" })],
+        where: " WHERE `name` LIKE '%50\\\\%\\\\_a%' ESCAPE '\\\\'",
+      },
+      {
+        conditions: [condition({ operator: "LIKE", value: "ab%" })],
+        where: " WHERE `name` LIKE 'ab%'",
+      },
+      {
+        conditions: [condition({ columnName: "id", operator: "IN", value: "1, 2 ,3" })],
+        where: " WHERE `id` IN (1, 2, 3)",
+      },
+      {
+        conditions: [condition({ operator: "IN", value: "a\\,b,c" })],
+        where: " WHERE `name` IN ('a,b', 'c')",
+      },
+      {
+        conditions: [condition({ columnName: "id", operator: "BETWEEN", value: "1,10" })],
+        where: " WHERE `id` BETWEEN 1 AND 10",
+      },
+      {
+        conditions: [condition({ operator: "IS NULL", value: "ignored" })],
+        where: " WHERE `name` IS NULL",
+      },
+      {
+        conditions: [
+          condition({ id: "a", columnName: "id", operator: ">", value: "1" }),
+          condition({ id: "b", operator: "=", value: "x", conjunction: "OR" }),
+          condition({ id: "c", columnName: "id", operator: "<", value: "9", conjunction: "AND" }),
+        ],
+        where: " WHERE (`id` > 1 OR `name` = 'x') AND `id` < 9",
+      },
+    ];
+    for (const { conditions, where } of cases) {
+      expect(buildTableFilterClause(conditions, FILTER_SCHEMA).where).toBe(where);
+    }
+
+    // Error text must match too: it is shown to the user from either side.
+    expect(buildTableFilterClause([
+      condition({ columnName: "dropped", value: "x" }),
+    ], FILTER_SCHEMA).errors).toEqual(["字段 dropped 不在当前表结构中"]);
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "CONTAINS", value: "1" }),
+    ], FILTER_SCHEMA).errors).toEqual(["id（bigint unsigned）不支持该比较符"]);
+    expect(buildTableFilterClause([
+      condition({ columnName: "id", operator: "BETWEEN", value: "1" }),
+    ], FILTER_SCHEMA).errors).toEqual(["id 的 BETWEEN 需要用逗号分隔的两个值"]);
   });
 
   it("offers ordered operators for numbers and pattern operators for text only", () => {

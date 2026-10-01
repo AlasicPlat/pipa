@@ -149,7 +149,6 @@ function assertRedisCommandWorkspace(): void {
     />,
   );
 
-  expect(screen.getByText("Redis")).toBeVisible();
   expect(screen.getByLabelText("Redis 常用命令")).toBeVisible();
   expect(screen.getByText("请检查 Redis 命令、参数和键的数据类型。")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Hash" }));

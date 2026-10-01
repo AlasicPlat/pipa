@@ -2,8 +2,8 @@ use crate::adapter::{create_pool, map_connection_error, map_query_error};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bigdecimal::BigDecimal;
 use pipa_core::{
-    AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult, ConnectionProfile,
-    Engine, TableMutation, TableMutationField, TableMutationValue,
+    quote_identifier, AppError, AppErrorCode, ApplyTableMutationsInput, ApplyTableMutationsResult,
+    ConnectionProfile, Engine, TableMutation, TableMutationField, TableMutationValue,
 };
 use secrecy::{ExposeSecret, SecretString};
 use sqlx_core::{query_builder::QueryBuilder, row::Row};
@@ -392,11 +392,6 @@ fn validate_fields(fields: &[TableMutationField], allow_empty: bool) -> Result<(
 /// Produces a fully quoted MySQL database-table target from validated identifiers.
 fn quoted_target(database: &str, table: &str) -> String {
     format!("{}.{}", quote_identifier(database), quote_identifier(table))
-}
-
-/// Escapes one MySQL identifier by doubling embedded backticks.
-fn quote_identifier(identifier: &str) -> String {
-    format!("`{}`", identifier.replace('`', "``"))
 }
 
 /// Builds a stable validation error without including cell contents.

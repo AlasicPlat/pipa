@@ -900,7 +900,7 @@ function ConnectionDrawer({
   }
 
   return (
-    <div className="connection-drawer is-expanded">
+    <div className={`connection-drawer connection-drawer--${profile.engine} is-expanded`}>
       {isRedis ? (
         <div
           className="connection-drawer__body"

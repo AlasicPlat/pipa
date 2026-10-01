@@ -1,76 +1,139 @@
+/*
+ * Design tokens.
+ *
+ * Two rules govern how these are used, and the whole visual language depends on them:
+ *
+ * 1. ENCLOSURE BUDGET. Inside one scrolling region, only its outermost element may draw a full
+ *    `border`. Depth below that is expressed with whitespace, a step in surface tone, or a 3px
+ *    --accent-bar. Full borders are otherwise reserved for two cases: an overlay that floats over
+ *    unrelated content, and an interactive control (button, input, checkbox). A section heading is
+ *    a heading plus a --divider, never a card.
+ *
+ * 2. TOKEN ONLY. No literal px radius, no literal px font size, no literal hex colour, and no
+ *    literal px height for a control. Spacing uses --space-*. If a value is missing here, add it
+ *    here rather than inlining it.
+ */
+
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Surfaces - cool instrument neutrals */
-  --surface-canvas: #f4f5f7;
+  /*
+   * Surfaces — a deep-blue instrument palette. Every neutral carries a blue undertone so the
+   * chrome reads as one material rather than grey boxes holding blue accents. Ordered here from
+   * recessed to raised; that order is the only thing that conveys depth once the borders are gone,
+   * so keep the steps perceptible.
+   */
+  --surface-inset: #dde4ef;
+  --surface-muted: #e3e9f2;
+  --surface-canvas: #eaeff6;
+  --surface-toolbar: #f1f4f9;
+  --surface-raised: #f8fafc;
   --surface-panel: #ffffff;
-  --surface-muted: #eef0f3;
-  --surface-raised: #f8f9fb;
-  --surface-toolbar: #f1f3f6;
-  --surface-hover: #e8ebf0;
-  --surface-selected: #ebe4d8;
-  --surface-inset: #f6f7f9;
+  --surface-hover: #dae2ef;
+  --surface-selected: #d3e0f5;
 
-  /* Text */
-  --text-primary: #1a1d21;
-  --text-secondary: #5c6570;
-  --text-tertiary: #8a929c;
+  /* Text — blue-tinted neutrals rather than pure grey, for the same reason as the surfaces. */
+  --text-primary: #141a24;
+  --text-secondary: #4d5a6e;
+  --text-tertiary: #556479;
   --text-inverse: #ffffff;
+  --text-on-accent: #ffffff;
 
   /*
-   * Borders & focus. Dividers are deliberately low-contrast: they should imply structure
-   * rather than draw a cage around every region. --border-strong stays legible because it
-   * carries meaning (drag handles, active edges), and --focus-ring is never softened.
+   * Borders & focus. Dividers are deliberately low-contrast: they imply structure rather than
+   * draw a cage around every region. --border-strong stays legible because it carries meaning
+   * (drag handles, active edges, overlay edges), and --focus-ring is never softened.
    */
-  --border-grid: #eef0f4;
-  --border-subtle: #e3e7ed;
-  --border-strong: #c4ccd6;
-  --focus-ring: #c47a1a;
+  --border-grid: #e6eaf2;
+  --border-subtle: #dbe2ec;
+  --border-strong: #b4c0d2;
+  --focus-ring: #1f6feb;
 
-  /* Brand - loquat amber (identity only) */
-  --brand: #c47a1a;
-  --brand-strong: #9a5c0d;
-  --brand-soft: color-mix(in srgb, var(--brand) 12%, var(--surface-panel));
-  --brand-glow: color-mix(in srgb, var(--brand) 18%, transparent);
+  /* Brand — deep azure. Identity, focus, and primary action only. */
+  --brand: #1f5fbf;
+  --brand-strong: #17488f;
+  --brand-solid: var(--brand);
+  --brand-solid-hover: var(--brand-strong);
+  --brand-soft: color-mix(in srgb, var(--brand) 10%, var(--surface-panel));
+  --brand-glow: color-mix(in srgb, var(--brand) 16%, transparent);
 
-  /* Engine accents */
-  --accent-mysql: #2f7aa3;
-  --accent-postgresql: #356f9c;
-  --accent-mongodb: #3d9145;
-  --accent-redis: #c94b42;
+  /*
+   * Engine accents. MySQL is teal rather than blue: with an azure brand, a blue engine accent
+   * could not be told apart from a focus ring or a primary button. Teal is also closer to the
+   * real MySQL mark. PostgreSQL leans indigo to stay clear of both.
+   */
+  --accent-mysql: #0f7a8c;
+  --accent-postgresql: #3f4f9e;
+  --accent-mongodb: #2f8a45;
+  --accent-redis: #c0392b;
 
-  /* Status - distinct from brand / engine accents */
-  --status-success: #2f8f5b;
-  --status-warning: #d0891a;
+  /* Status — distinct from brand and engine accents. */
+  --status-success: #1f8a58;
+  --status-warning: #b5741a;
   --status-danger: #c0392b;
 
-  /* Elevation - wider, softer falloff so panels lift off the canvas without a hard edge. */
-  --shadow-xs: 0 1px 3px color-mix(in srgb, #121417 5%, transparent);
-  --shadow-sm: 0 8px 24px color-mix(in srgb, #121417 7%, transparent);
-  --shadow-md: 0 18px 48px color-mix(in srgb, #121417 10%, transparent);
-  --shadow-lg: 0 30px 80px color-mix(in srgb, #121417 13%, transparent);
-  --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 30%, transparent);
-  /* A faint bevel. At 72% white this read as a crisp mechanical seam on every toolbar. */
-  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 34%, transparent);
+  /*
+   * Elevation. Shadows are navy-tinted, not black: a neutral black shadow over a blue surface
+   * reads as dirt. --shadow-ambient is the shared shadow colour so every layer agrees.
+   */
+  --shadow-ambient: #0b1524;
+  --shadow-xs: 0 1px 3px color-mix(in srgb, var(--shadow-ambient) 7%, transparent);
+  --shadow-sm: 0 8px 24px color-mix(in srgb, var(--shadow-ambient) 9%, transparent);
+  --shadow-md: 0 18px 48px color-mix(in srgb, var(--shadow-ambient) 12%, transparent);
+  --shadow-lg: 0 30px 80px color-mix(in srgb, var(--shadow-ambient) 15%, transparent);
+  --shadow-overlay: 0 24px 70px color-mix(in srgb, var(--shadow-ambient) 26%, transparent);
 
-  /* Radius - one rounded language; nothing in the UI should look square-cornered. */
+  /*
+   * Scrim behind a modal. One token so every overlay dims by the same amount; they previously
+   * ranged from 20% to 52% black, which made stacked overlays look unrelated.
+   */
+  --scrim: color-mix(in srgb, var(--shadow-ambient) 46%, transparent);
+  --scrim-blur: blur(4px) saturate(94%);
+
+  /*
+   * A faint top bevel on toolbars. Kept very low: at 34% white it read as a crisp mechanical seam
+   * on every band, which is exactly the "too many frames" effect this palette is removing.
+   */
+  --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 22%, transparent);
+
+  /*
+   * Structure primitives. --divider replaces a full border wherever one region simply ends and
+   * the next begins; --accent-bar is the 3px left edge that marks identity or severity without
+   * enclosing anything.
+   */
+  --divider: 1px solid var(--border-subtle);
+  --divider-grid: 1px solid var(--border-grid);
+  --accent-bar-width: 3px;
+
+  /* Radius — one rounded language; nothing in the UI should look square-cornered. */
   --radius-xs: 5px;
   --radius-sm: 8px;
   --radius-md: 11px;
   --radius-lg: 14px;
   --radius-xl: 18px;
-
-  /* Spacing */
-  --space-1: 8px;
-  --space-2: 12px;
-  --space-3: 16px;
-  --space-4: 24px;
+  --radius-pill: 999px;
 
   /*
-   * Type scale. Aligned to the macOS control font (13px) so dense instrument
-   * chrome stays legible. Never go below --text-xs for user-facing copy;
-   * --text-2xs is reserved for uppercase eyebrow labels and kbd hints.
+   * Spacing. A 4px base so dense instrument chrome can still land on the scale; anything below
+   * --space-1 is optical alignment inside a control, not layout.
+   */
+  --space-px: 2px;
+  --space-0: 4px;
+  --space-1: 6px;
+  --space-2: 8px;
+  --space-3: 10px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 44px;
+
+  /*
+   * Type scale. Aligned to the macOS control font (13px) so dense instrument chrome stays
+   * legible. Never go below --text-xs for user-facing copy; --text-2xs is reserved for uppercase
+   * eyebrow labels and kbd hints.
    */
   --text-2xs: 10px;
   --text-xs: 11px;
@@ -82,13 +145,25 @@
   --text-2xl: 23px;
 
   /*
-   * Control heights. 28px is the smallest comfortable pointer target for
-   * secondary chrome; primary rows and buttons use --control-h-md or larger.
+   * Control heights. Four steps, and every control must use one of them — the previous 22
+   * distinct pixel heights meant no two header bands ever lined up.
    */
   --control-h-xs: 24px;
   --control-h-sm: 28px;
   --control-h-md: 32px;
   --control-h-lg: 36px;
+
+  /*
+   * Band heights. The horizontal chrome strips: tab strips and toolbars use --band-h-sm, a
+   * region's title bar uses --band-h-md, and a window-level header uses --band-h-lg.
+   */
+  --band-h-sm: 36px;
+  --band-h-md: 44px;
+  --band-h-lg: 56px;
+
+  /* Tree rows in the connection navigator. */
+  --tree-row-height: 28px;
+  --tree-row-radius: var(--radius-sm);
 
   /* Layout - overridable at runtime by the sidebar resizer */
   --rail-width: 58px;
@@ -103,6 +178,7 @@
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --duration-slow: 260ms;
+  --duration-stagger: 40ms;
 
   /* Type */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Noto Sans SC", sans-serif;
@@ -110,86 +186,77 @@
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif;
 }
 
+/*
+ * Dark theme — a true navy rather than a neutral near-black, so the two themes read as the same
+ * product. Only the values that differ are restated; everything structural (radius, spacing, type,
+ * heights, motion) is inherited from the block above.
+ */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-canvas: #121417;
-  --surface-panel: #1a1d21;
-  --surface-muted: #22262c;
-  --surface-raised: #1e2228;
-  --surface-toolbar: #181b20;
-  --surface-hover: #2a2f37;
-  --surface-selected: #3a3228;
-  --surface-inset: #0e1013;
+  /*
+   * Steps are ~3 CIELAB L* apart. With the enclosure borders gone, this ladder is the only thing
+   * expressing depth, so the separation is tuned perceptually rather than by even hex increments —
+   * equal hex steps near black are almost invisible.
+   */
+  --surface-inset: #080d16;
+  --surface-canvas: #0d1320;
+  --surface-toolbar: #131b2a;
+  --surface-panel: #182134;
+  --surface-raised: #1e293e;
+  --surface-muted: #243048;
+  --surface-hover: #2d3b57;
+  --surface-selected: #1e3a63;
 
-  --text-primary: #e8eaed;
-  --text-secondary: #a8b0ba;
-  --text-tertiary: #7a8490;
+  --text-primary: #e6ebf4;
+  --text-secondary: #a3b0c4;
+  --text-tertiary: #9aa8bd;
   --text-inverse: #ffffff;
+  --text-on-accent: #080d16;
 
-  --border-grid: #24282e;
-  --border-subtle: #2b3038;
-  --border-strong: #454e5a;
-  --focus-ring: #e0a04a;
+  --border-grid: #1e2737;
+  --border-subtle: #273245;
+  --border-strong: #3d4c66;
+  --focus-ring: #5c9dff;
 
-  --brand: #e0a04a;
-  --brand-strong: #f0bd6b;
-  --brand-soft: color-mix(in srgb, var(--brand) 14%, var(--surface-panel));
-  --brand-glow: color-mix(in srgb, var(--brand) 20%, transparent);
+  --brand: #3d82e8;
+  --brand-strong: #6aa3f5;
+  --brand-solid: #2864b6;
+  --brand-solid-hover: #2d70cc;
+  --brand-soft: color-mix(in srgb, var(--brand) 16%, var(--surface-panel));
+  --brand-glow: color-mix(in srgb, var(--brand) 22%, transparent);
 
-  --accent-mysql: #67a6cf;
-  --accent-postgresql: #6e9fcb;
-  --accent-mongodb: #62b46c;
-  --accent-redis: #e06b63;
+  --accent-mysql: #35b3c4;
+  --accent-postgresql: #8b9bf0;
+  --accent-mongodb: #56c06b;
+  --accent-redis: #e8736a;
 
-  --status-success: #4db883;
-  --status-warning: #e8b04a;
-  --status-danger: #e2554f;
+  --status-success: #45c489;
+  --status-warning: #e0a44e;
+  --status-danger: #e8635c;
 
-  --shadow-xs: 0 1px 3px color-mix(in srgb, #000000 32%, transparent);
-  --shadow-sm: 0 8px 22px color-mix(in srgb, #000000 36%, transparent);
-  --shadow-md: 0 18px 44px color-mix(in srgb, #000000 44%, transparent);
-  --shadow-lg: 0 30px 80px color-mix(in srgb, #000000 50%, transparent);
-  --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 52%, transparent);
+  /* Deeper and more saturated: the same opacity over a dark navy would be invisible. */
+  --shadow-ambient: #02060d;
+  --shadow-xs: 0 1px 3px color-mix(in srgb, var(--shadow-ambient) 40%, transparent);
+  --shadow-sm: 0 8px 22px color-mix(in srgb, var(--shadow-ambient) 46%, transparent);
+  --shadow-md: 0 18px 44px color-mix(in srgb, var(--shadow-ambient) 54%, transparent);
+  --shadow-lg: 0 30px 80px color-mix(in srgb, var(--shadow-ambient) 60%, transparent);
+  --shadow-overlay: 0 24px 70px color-mix(in srgb, var(--shadow-ambient) 66%, transparent);
+  --scrim: color-mix(in srgb, var(--shadow-ambient) 62%, transparent);
   --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
 }
 
-/* Preserve the system preference before the startup script has resolved it. */
+/*
+ * First-paint fallback only. `initializeThemePreference()` in src/main.tsx sets data-theme
+ * synchronously before React renders, so this block does not need the whole dark palette — just
+ * enough that the window does not flash light while the module script is being fetched. Keeping it
+ * minimal avoids a third copy of every colour drifting out of sync with the block above.
+ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --surface-canvas: #121417;
-    --surface-panel: #1a1d21;
-    --surface-muted: #22262c;
-    --surface-raised: #1e2228;
-    --surface-toolbar: #181b20;
-    --surface-hover: #2a2f37;
-    --surface-selected: #3a3228;
-    --surface-inset: #0e1013;
-    --text-primary: #e8eaed;
-    --text-secondary: #a8b0ba;
-    --text-tertiary: #7a8490;
-    --text-inverse: #ffffff;
-    --border-grid: #24282e;
-    --border-subtle: #2b3038;
-    --border-strong: #454e5a;
-    --focus-ring: #e0a04a;
-    --brand: #e0a04a;
-    --brand-strong: #f0bd6b;
-    --brand-soft: color-mix(in srgb, var(--brand) 14%, var(--surface-panel));
-    --brand-glow: color-mix(in srgb, var(--brand) 20%, transparent);
-    --accent-mysql: #67a6cf;
-    --accent-postgresql: #6e9fcb;
-    --accent-mongodb: #62b46c;
-    --accent-redis: #e06b63;
-    --status-success: #4db883;
-    --status-warning: #e8b04a;
-    --status-danger: #e2554f;
-    --shadow-xs: 0 1px 3px color-mix(in srgb, #000000 32%, transparent);
-    --shadow-sm: 0 8px 22px color-mix(in srgb, #000000 36%, transparent);
-    --shadow-md: 0 18px 44px color-mix(in srgb, #000000 44%, transparent);
-    --shadow-lg: 0 30px 80px color-mix(in srgb, #000000 50%, transparent);
-    --shadow-overlay: 0 30px 90px color-mix(in srgb, #000000 52%, transparent);
-    --shadow-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
+    --surface-canvas: #0d1320;
+    --surface-panel: #182134;
+    --text-primary: #e6ebf4;
   }
 }

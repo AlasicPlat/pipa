@@ -1,7 +1,7 @@
 {
   "name": "pipa",
   "private": true,
-  "version": "0.2.20",
+  "version": "0.2.21",
   "author": "Alasic333 <129958248+AlasicPlat@users.noreply.github.com>",
   "license": "Apache-2.0",
   "homepage": "https://github.com/AlasicPlat/pipa#readme",
@@ -31,7 +31,8 @@
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
     "test:watch": "NODE_OPTIONS=--no-experimental-webstorage vitest",
     "tauri": "tauri",
-    "check": "pnpm test && pnpm build && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings"
+    "check": "pnpm test && pnpm build && pnpm design:check && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+    "design:check": "node scripts/check-design-tokens.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "4.7.0",

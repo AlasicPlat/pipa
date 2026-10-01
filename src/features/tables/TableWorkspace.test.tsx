@@ -4,14 +4,32 @@ import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
 import { resetAllShortcutBindings, updateShortcutBinding } from "../commands/shortcutRegistry";
 import type { QuerySessionState } from "../query/useQuerySession";
 import { TableWorkspace } from "./TableWorkspace";
+import { buildAlterTableCommentStatement, buildDdlStatements, buildTableFilterClause } from "./tableSql";
 
 const applyTableMutationsMock = vi.hoisted(() => vi.fn(async () => ({
   appliedMutations: 1,
   affectedRows: 1,
 })));
 
+/*
+ * The backend now compiles the executed clause. The mock delegates to the frontend implementation
+ * of the same rules rather than returning a canned clause, so these tests still assert that a real
+ * clause is built from the typed conditions.
+ */
+const buildFilterClauseMock = vi.hoisted(() => vi.fn());
+
+/*
+ * The backend now rebuilds the DDL before it executes. These mocks delegate to the frontend
+ * implementation of the same rules, so the tests still assert on real generated statements.
+ */
+const buildTableDdlMock = vi.hoisted(() => vi.fn());
+const buildTableCommentDdlMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../../lib/tauriClient", () => ({
   applyTableMutations: applyTableMutationsMock,
+  buildFilterClause: buildFilterClauseMock,
+  buildTableDdl: buildTableDdlMock,
+  buildTableCommentDdl: buildTableCommentDdlMock,
 }));
 
 const sessionMocks = vi.hoisted(() => {
@@ -363,7 +381,10 @@ async function assertDdlDirtyStateAndSaveShortcut(): Promise<void> {
 
   const workspace = screen.getByRole("region", { name: "orders 表工作区" });
   fireEvent.keyDown(workspace, { key: "s", ctrlKey: true });
-  expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(expect.stringContaining("ALTER TABLE `shop`.`orders`"));
+  // The executed DDL is rebuilt by the backend, so it arrives asynchronously.
+  await waitFor(() => expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(
+    expect.stringContaining("ALTER TABLE `shop`.`orders`"),
+  ));
 
   fireEvent.click(screen.getByRole("button", { name: "撤销全部" }));
   await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
@@ -390,7 +411,7 @@ async function assertCommentDdlUsesQuotedString(): Promise<void> {
   expect(screen.getByLabelText("待执行 DDL")).toHaveValue(expectedDdl);
 
   fireEvent.click(screen.getByRole("button", { name: "执行 1 条 DDL" }));
-  expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(expectedDdl);
+  await waitFor(() => expect(sessionMocks.sessions[6].run).toHaveBeenCalledWith(expectedDdl));
 }
 
 /** Verifies page reads are primary-key ordered and refresh cannot replace a dirty row snapshot. */
@@ -599,7 +620,9 @@ async function assertFilteredEmptyState(): Promise<void> {
     fireEvent.change(screen.getByLabelText("第 1 个条件的值"), { target: { value: "missing" } });
     fireEvent.click(screen.getByRole("button", { name: /提交筛选/ }));
 
-    const emptyState = screen.getByText("没有符合筛选条件的数据").closest<HTMLElement>("[role='row']");
+    // The clause is compiled by the backend now, so the filtered state appears asynchronously.
+    const emptyState = (await screen.findByText("没有符合筛选条件的数据"))
+      .closest<HTMLElement>("[role='row']");
     expect(emptyState).not.toBeNull();
     expect(emptyState).toHaveTextContent("WHERE name 等于 missing");
 
@@ -656,6 +679,18 @@ describe("TableWorkspace", () => {
     }
     applyTableMutationsMock.mockReset();
     applyTableMutationsMock.mockResolvedValue({ appliedMutations: 1, affectedRows: 1 });
+    // Delegating to the real rules keeps these tests honest about the clause that gets executed.
+    buildFilterClauseMock.mockReset();
+    buildFilterClauseMock.mockImplementation(async (conditions, schema) =>
+      buildTableFilterClause(conditions, schema as never));
+    buildTableDdlMock.mockReset();
+    buildTableDdlMock.mockImplementation(async (database, table, original, draft) => ({
+      statements: buildDdlStatements(database, table, original, draft),
+      errors: [],
+    }));
+    buildTableCommentDdlMock.mockReset();
+    buildTableCommentDdlMock.mockImplementation(async (database, table, comment) =>
+      buildAlterTableCommentStatement(database, table, comment));
   });
   afterEach(() => {
     cleanup();
