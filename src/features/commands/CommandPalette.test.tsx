@@ -188,6 +188,67 @@ function assertTableContextActions(): void {
 
 describe("CommandPalette", () => {
   afterEach(cleanup);
+  it("contains keyboard focus and dismisses from the connection filter", () => {
+    const onClose = vi.fn();
+    render(<CommandPalette items={ITEMS} onClose={onClose} onSelect={vi.fn()} open />);
+    const search = screen.getByRole("combobox", { name: /搜索连接/ });
+    const filter = screen.getByRole("combobox", { name: "按连接过滤" });
+    fireEvent.keyDown(search, { key: "Tab", shiftKey: true });
+    expect(filter).toHaveFocus();
+    fireEvent.keyDown(filter, { key: "Tab" });
+    expect(search).toHaveFocus();
+    filter.focus();
+    fireEvent.keyDown(filter, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+  it("contains keyboard focus even without a connection filter", () => {
+    render(<CommandPalette items={[ITEMS[0]]} onClose={vi.fn()} onSelect={vi.fn()} open />);
+    const search = screen.getByRole("combobox", { name: /搜索连接/ });
+    const close = screen.getByRole("button", { name: "关闭命令面板" });
+    fireEvent.keyDown(search, { key: "Tab", shiftKey: true });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(search).toHaveFocus();
+  });
+  it("scrolls keyboard selections without moving results under the pointer and can clear search", () => {
+    render(<CommandPalette items={ITEMS} onClose={vi.fn()} onSelect={vi.fn()} open />);
+    const search = screen.getByRole("combobox", { name: /搜索连接/ });
+    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    scroll.mockClear();
+    fireEvent.mouseEnter(screen.getByRole("option", { name: /customer_orders/ }));
+    expect(scroll).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(scroll.mock.instances).toEqual([screen.getByRole("option", { name: /^连接\s*生产主库/u })]);
+
+    fireEvent.change(search, { target: { value: "不存在" } });
+    expect(screen.getByText("0 个结果")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(ITEMS.length);
+  });
+  it("closes a table menu before closing the palette", () => {
+    const onClose = vi.fn();
+    render(<CommandPalette items={ITEMS} onClose={onClose} onSelect={vi.fn()} onRequestTableAction={vi.fn()} open />);
+    fireEvent.contextMenu(screen.getByRole("option", { name: /customer_orders/ }));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "复制表名" }), { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    const search = screen.getByRole("combobox", { name: /搜索连接/ });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+  it("does not execute or dismiss commands while an IME is composing", () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette items={ITEMS} onClose={onClose} onSelect={onSelect} open />);
+    const search = screen.getByRole("combobox", { name: /搜索连接/ });
+    fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(search, { key: "Escape", isComposing: true });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it("scores fuzzy matches", assertFuzzyScoring);
   it("ranks results stably", assertStableRanking);
   it("renders an accessible searchable modal", assertAccessibleSearch);

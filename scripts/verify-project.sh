@@ -41,4 +41,5 @@ pnpm bindings:format
 git diff --exit-code -- src/bindings
 cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/audit-rust.sh
-pnpm tauri build --debug
+# 本地只校验调试安装包；更新包签名使用发布工作流中的私钥。
+pnpm tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'

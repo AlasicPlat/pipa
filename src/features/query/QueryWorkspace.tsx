@@ -169,15 +169,6 @@ function redisCommandNeedsProductionConfirmation(command: string): boolean {
   return !REDIS_READ_ONLY_COMMANDS.has(commandName);
 }
 
-/**
- * Returns the compact environment label shared with the query's immutable context strip.
- * @param environment - Stored connection environment.
- * @returns A short Chinese environment label.
- * Side effects: none.
- */
-function environmentLabel(environment: ConnectionProfile["environment"]): string {
-  return { production: "生产", development: "开发", unspecified: "未指定" }[environment];
-}
 
 /**
  * Maps a safe error category and retryability into one concise recovery action.
@@ -668,28 +659,18 @@ export function QueryWorkspace({
       aria-label={`${profile.name} 查询工作区`}
       style={{ "--editor-split": `${editorSplit}%` } as CSSProperties}
     >
-      <header className="query-context">
-        <span className="query-context__engine">{isRedis ? "Redis" : "MySQL"}</span>
-        <strong>{profile.name}</strong>
-        <span className="query-context__target">
-          {profile.host}:{profile.port} · {profile.database ?? "未指定数据库"}
-        </span>
-        <span className={`environment-badge environment-badge--${profile.environment}`}>
-          {environmentLabel(profile.environment)}
-        </span>
-        {persistenceError ? (
-          <span className="workspace-save-error" role="status">
-            未保存到本地
-            <button onClick={handleRetryPersistence} type="button">
-              重试
-            </button>
-          </span>
-        ) : null}
-      </header>
 
       <div className={`query-editor-panel${isRedis ? " query-editor-panel--redis" : ""}`}>
         <div className="query-toolbar">
           <span className="query-toolbar__title">{tab.title}</span>
+          {persistenceError ? (
+            <span className="workspace-save-error" role="status">
+              未保存到本地
+              <button onClick={handleRetryPersistence} type="button">
+                重试
+              </button>
+            </span>
+          ) : null}
           <span className="query-toolbar__actions">
             <button
               className="query-library-button"

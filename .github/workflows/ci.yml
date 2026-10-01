@@ -74,6 +74,8 @@ jobs:
         run: |
           pnpm test
           pnpm build
+      - name: 校验设计 token 与包围框预算
+        run: pnpm design:check
 
       - name: 校验 Rust 格式
         run: cargo fmt --all -- --check

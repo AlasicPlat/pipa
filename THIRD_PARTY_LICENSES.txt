@@ -712,7 +712,7 @@ Cargo:rsa@0.10.0-rc.18 (LICENSE-APACHE)
 Cargo:rustc_version@0.4.1 (LICENSE-APACHE)
 Cargo:rustix@1.1.4 (LICENSE-APACHE)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-APACHE)
-Cargo:rustls@0.23.41 (LICENSE-APACHE)
+Cargo:rustls@0.23.45 (LICENSE-APACHE)
 Cargo:scopeguard@1.2.0 (LICENSE-APACHE)
 Cargo:security-framework-sys@2.17.0 (LICENSE-APACHE)
 Cargo:security-framework@3.7.0 (LICENSE-APACHE)
@@ -8689,7 +8689,7 @@ THE SOFTWARE.
 ================================================================================
 Cargo:hyper-rustls@0.27.9 (LICENSE-ISC)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-ISC)
-Cargo:rustls@0.23.41 (LICENSE-ISC)
+Cargo:rustls@0.23.45 (LICENSE-ISC)
 --------------------------------------------------------------------------------
 ISC License (ISC)
 Copyright (c) 2016, Joseph Birr-Pixton <jpixton@gmail.com>
@@ -8710,7 +8710,7 @@ THIS SOFTWARE.
 ================================================================================
 Cargo:hyper-rustls@0.27.9 (LICENSE-MIT)
 Cargo:rustls-native-certs@0.8.4 (LICENSE-MIT)
-Cargo:rustls@0.23.41 (LICENSE-MIT)
+Cargo:rustls@0.23.45 (LICENSE-MIT)
 --------------------------------------------------------------------------------
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
 
@@ -13713,7 +13713,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Cargo:rustls-webpki@0.103.13 (LICENSE)
+Cargo:rustls-webpki@0.103.15 (LICENSE)
 --------------------------------------------------------------------------------
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:

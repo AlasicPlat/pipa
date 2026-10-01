@@ -22,7 +22,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEve
 import type { AppError } from "../../bindings/AppError";
 import type { CellValue } from "../../bindings/CellValue";
 import type { ConnectionProfile } from "../../bindings/ConnectionProfile";
-import { applyTableMutations } from "../../lib/tauriClient";
+import type { TableFilterClause } from "../../bindings/TableFilterClause";
+import { applyTableMutations, buildFilterClause, buildTableCommentDdl, buildTableDdl } from "../../lib/tauriClient";
 import { getShortcutKeyLabels, matchesShortcut, useShortcutSettings } from "../commands/shortcutRegistry";
 import { isSystemDatabase } from "../connections/mysqlDatabases";
 import { useQuerySession } from "../query/useQuerySession";
@@ -262,6 +263,16 @@ export function TableWorkspace({
   const [dataSearch, setDataSearch] = useState("");
   const [filterConditions, setFilterConditions] = useState<TableFilterCondition[]>([]);
   const [appliedFilterWhere, setAppliedFilterWhere] = useState("");
+  /*
+   * Populated only when the backend rejects a clause the local pre-check accepted, or when the
+   * command itself fails. It is shown alongside the draft errors in the filter bar.
+   */
+  const [filterError, setFilterError] = useState<string | null>(null);
+  /*
+   * Populated when the backend refuses to build the structure DDL, or when the command fails. The
+   * locally previewed statements are only a preview, so a backend refusal must surface here.
+   */
+  const [ddlBackendError, setDdlBackendError] = useState<string | null>(null);
   const [appliedFilterSummary, setAppliedFilterSummary] = useState("");
   const [appliedFilterCount, setAppliedFilterCount] = useState(0);
   const [filterExpanded, setFilterExpanded] = useState(false);
@@ -507,6 +518,14 @@ export function TableWorkspace({
       .filter((error): error is string => Boolean(error));
     return errors.map((error) => `${column.name || "未命名字段"}：${error}`);
   }), [draftColumns, schema]);
+  /*
+   * The local checks run on every keystroke; a backend refusal is appended so both kinds of failure
+   * appear in the one place the structure view already shows errors.
+   */
+  const ddlErrors = useMemo(
+    () => (ddlBackendError ? [...ddlValidationErrors, ddlBackendError] : ddlValidationErrors),
+    [ddlValidationErrors, ddlBackendError],
+  );
   const dmlPlan = useMemo(
     () => buildTableMutationPlan({
       database,
@@ -533,6 +552,15 @@ export function TableWorkspace({
   const draftFilterClause = useMemo(
     () => buildTableFilterClause(filterConditions, schema),
     [filterConditions, schema],
+  );
+  /*
+   * The draft pre-check runs locally on every keystroke, so typing stays synchronous and never
+   * waits on IPC. A backend rejection is appended so the user sees both kinds of failure in one
+   * place.
+   */
+  const filterErrors = useMemo(
+    () => (filterError ? [...draftFilterClause.errors, filterError] : draftFilterClause.errors),
+    [draftFilterClause.errors, filterError],
   );
   const draftFilterSummary = useMemo(() => describeTableFilter(filterConditions), [filterConditions]);
   const filterDirty = draftFilterClause.where !== appliedFilterWhere;
@@ -565,6 +593,11 @@ export function TableWorkspace({
   useEffect(() => {
     setDraftTableComment(null);
   }, [rawDdl]);
+
+  // A backend refusal must not outlive the edits that caused it.
+  useEffect(() => {
+    setDdlBackendError(null);
+  }, [draftColumns, tableComment]);
 
   useEffect(() => {
     /** Updates the active column width while its header edge is dragged. */
@@ -845,17 +878,39 @@ export function TableWorkspace({
     };
   }
 
-  /** Applies the draft quick filter, resetting to the first page of the filtered result. */
-  function applyQuickFilter(): void {
+  /**
+   * Applies the draft quick filter, resetting to the first page of the filtered result.
+   *
+   * The clause that reaches the database is compiled by the backend rather than reused from
+   * `draftFilterClause`. The local draft drives typing feedback only; the backend re-authorizes
+   * every column against the live schema and re-encodes every operand, so a wrong or bypassed UI
+   * layer cannot inject SQL structure through the filter bar.
+   */
+  async function applyQuickFilter(): Promise<void> {
     // Bailing while a page is in flight keeps the applied clause consistent with the visible rows.
     if (hasDmlChanges || dataSession.state.running || draftFilterClause.errors.length > 0) {
       return;
     }
-    setAppliedFilterWhere(draftFilterClause.where);
+    const filterColumns = schema.map((column) => ({ name: column.name, type: column.type }));
+    let clause: TableFilterClause;
+    try {
+      clause = await buildFilterClause(filterConditions, filterColumns);
+    } catch {
+      setFilterError("无法生成筛选条件，请重试。");
+      return;
+    }
+    // The backend is authoritative: if it rejects a condition the local pre-check accepted, the
+    // filter is not applied and the reason is shown instead.
+    if (clause.errors.length > 0) {
+      setFilterError(clause.errors.join("；"));
+      return;
+    }
+    setFilterError(null);
+    setAppliedFilterWhere(clause.where);
     setAppliedFilterSummary(draftFilterSummary);
-    setAppliedFilterCount(draftFilterClause.activeCount);
-    void countSession.run(countSql(draftFilterClause.where));
-    loadPage(1n, pageSize, schema, false, draftFilterClause.where);
+    setAppliedFilterCount(clause.activeCount);
+    void countSession.run(countSql(clause.where));
+    loadPage(1n, pageSize, schema, false, clause.where);
   }
 
   /** Clears every condition and reloads the unfiltered first page. */
@@ -864,6 +919,7 @@ export function TableWorkspace({
       return;
     }
     setFilterConditions([]);
+    setFilterError(null);
     setAppliedFilterWhere("");
     setAppliedFilterSummary("");
     setAppliedFilterCount(0);
@@ -995,13 +1051,13 @@ export function TableWorkspace({
       return;
     }
     if (activeView !== "data" && ddlStatements.length > 0 && ddlValidationErrors.length === 0) {
-      commit("ddl");
+      void commit("ddl");
     } else if (activeView === "data" && dmlStatements.length > 0 && dmlPlan.errors.length === 0) {
-      commit("dml");
+      void commit("dml");
     } else if (dmlStatements.length > 0 && dmlPlan.errors.length === 0 && ddlStatements.length === 0) {
-      commit("dml");
+      void commit("dml");
     } else if (ddlStatements.length > 0 && dmlStatements.length === 0) {
-      commit("ddl");
+      void commit("ddl");
     }
   }
 
@@ -1044,7 +1100,7 @@ export function TableWorkspace({
   }
 
   /** Executes reviewed DDL or a typed parameterized DML transaction after production confirmation. */
-  function commit(kind: MutationKind): void {
+  async function commit(kind: MutationKind): Promise<void> {
     if (readOnlyReason) {
       return;
     }
@@ -1064,8 +1120,33 @@ export function TableWorkspace({
     }
     setPendingProductionAction(null);
     if (kind === "ddl") {
+      /*
+       * The previewed statements are rebuilt by the backend before execution. DDL cannot use bound
+       * parameters, so this is the boundary where identifier escaping and the type allowlist are
+       * enforced; the locally previewed text is never what reaches the server.
+       */
+      let executable: string[];
+      try {
+        const plan = await buildTableDdl(database, tableName, schema, draftColumns);
+        if (plan.errors.length > 0) {
+          setDdlBackendError(plan.errors.join("；"));
+          return;
+        }
+        executable = [...plan.statements];
+        if (tableCommentDirty) {
+          executable.push(await buildTableCommentDdl(database, tableName, tableComment));
+        }
+      } catch {
+        setDdlBackendError("无法生成结构变更语句，请重试。");
+        return;
+      }
+      if (executable.length === 0) {
+        setDdlBackendError("结构变更没有生成任何可执行语句。");
+        return;
+      }
+      setDdlBackendError(null);
       mutationKindRef.current = kind;
-      void mutationSession.run(statements.join("\n"));
+      void mutationSession.run(executable.join("\n"));
       return;
     }
 
@@ -1096,6 +1177,7 @@ export function TableWorkspace({
     setDraftColumns(schema.map((column) => ({ ...column })));
     setDraftTableComment(null);
     setPendingProductionAction(null);
+    setDdlBackendError(null);
   }
 
   /** Moves focus and selection between view tabs per the WAI-ARIA tabs pattern. */
@@ -1134,14 +1216,6 @@ export function TableWorkspace({
 
   return (
     <section className="table-workspace" aria-label={`${tableName} 表工作区`} onKeyDown={handleWorkspaceKeyDown}>
-      <header className="query-context">
-        <span className="query-context__engine">MySQL</span>
-        <strong>{profile.name}</strong>
-        <span className="query-context__target">{database}.{tableName}</span>
-        <span className={`environment-badge environment-badge--${profile.environment}`}>
-          {{ production: "生产", development: "开发", unspecified: "未指定" }[profile.environment]}
-        </span>
-      </header>
       <div className="table-view-nav">
         <span className="table-view-nav__tabs" role="tablist" aria-label="表视图" aria-orientation="horizontal">
           {TABLE_VIEW_TABS.map((tab, index) => {
@@ -1214,7 +1288,7 @@ export function TableWorkspace({
                 <button disabled={Boolean(readOnlyReason) || selectedRows.size === 0 || primaryColumns.length === 0} onClick={deleteSelectedRows} type="button"><Trash2 size={13} aria-hidden="true" />删除选中</button>
                 <button disabled={Boolean(readOnlyReason) || dataSession.state.columns.length === 0} onClick={addInsertedRow} type="button"><Plus size={13} aria-hidden="true" />新增行</button>
                 <button disabled={!hasDmlChanges} onClick={discardDmlChanges} type="button">撤销全部</button>
-                <button className="table-commit" disabled={Boolean(readOnlyReason) || dmlStatements.length === 0 || dmlPlan.errors.length > 0 || ddlStatements.length > 0 || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("dml")} title={readOnlyReason ?? (ddlStatements.length > 0 ? "请先提交或撤销表结构变更" : `提交当前数据变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{dmlMutationRunning ? "提交中…" : pendingProductionAction === "dml" ? "确认在生产环境提交" : `提交 ${dmlChangeCount} 项`}</button>
+                <button className="table-commit" disabled={Boolean(readOnlyReason) || dmlStatements.length === 0 || dmlPlan.errors.length > 0 || ddlStatements.length > 0 || mutationSession.state.running || dmlMutationRunning} onClick={() => void commit("dml")} title={readOnlyReason ?? (ddlStatements.length > 0 ? "请先提交或撤销表结构变更" : `提交当前数据变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{dmlMutationRunning ? "提交中…" : pendingProductionAction === "dml" ? "确认在生产环境提交" : `提交 ${dmlChangeCount} 项`}</button>
               </span>
             </header>
             <TableFilterBar
@@ -1226,11 +1300,15 @@ export function TableWorkspace({
               dirty={filterDirty}
               disabled={hasDmlChanges || dataSession.state.running}
               disabledReason={hasDmlChanges ? "请先提交或撤销当前数据变更" : "正在读取数据…"}
-              errors={draftFilterClause.errors}
+              errors={filterErrors}
               expanded={filterExpanded}
-              onApply={applyQuickFilter}
+              onApply={() => void applyQuickFilter()}
               onClear={clearQuickFilter}
-              onConditionsChange={setFilterConditions}
+              onConditionsChange={(conditions) => {
+                // A stale backend rejection must not outlive the conditions that caused it.
+                setFilterError(null);
+                setFilterConditions(conditions);
+              }}
               onExpandedChange={setFilterExpanded}
             />
             {dataSession.state.running && dataSession.state.rows.length === 0 ? <p className="table-state">正在读取表数据…</p> : dataSession.state.error ? <p className="table-state table-state--error">无法读取表数据：{dataSession.state.error.message}</p> : (
@@ -1423,7 +1501,7 @@ export function TableWorkspace({
               <span className="table-editor-toolbar__actions">
                 <button disabled={Boolean(readOnlyReason)} onClick={addDraftColumn} type="button"><Plus size={13} aria-hidden="true" />新增字段</button>
                 <button disabled={ddlStatements.length === 0} onClick={discardDdlChanges} type="button">撤销全部</button>
-                <button className="table-commit" disabled={Boolean(readOnlyReason) || ddlStatements.length === 0 || ddlValidationErrors.length > 0 || hasDmlChanges || mutationSession.state.running || dmlMutationRunning} onClick={() => commit("ddl")} title={readOnlyReason ?? (hasDmlChanges ? "请先提交或撤销数据变更" : `提交当前结构变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{pendingProductionAction === "ddl" ? "确认在生产环境执行" : `执行 ${ddlStatements.length} 条 DDL`}</button>
+                <button className="table-commit" disabled={Boolean(readOnlyReason) || ddlStatements.length === 0 || ddlValidationErrors.length > 0 || hasDmlChanges || mutationSession.state.running || dmlMutationRunning} onClick={() => void commit("ddl")} title={readOnlyReason ?? (hasDmlChanges ? "请先提交或撤销数据变更" : `提交当前结构变更（${getShortcutKeyLabels(shortcuts.bindings.saveTable).join(" + ")}）`)} type="button"><Save size={13} aria-hidden="true" />{pendingProductionAction === "ddl" ? "确认在生产环境执行" : `执行 ${ddlStatements.length} 条 DDL`}</button>
               </span>
             </header>
             <div className="structure-editor__scroll">
@@ -1637,7 +1715,7 @@ export function TableWorkspace({
                 )}
               </section>
             </div>
-            {ddlValidationErrors.length > 0 ? <p className="table-state table-state--error" role="alert">{`结构变更中有 ${ddlValidationErrors.length} 个错误：${ddlValidationErrors.join("；")}`}</p> : null}
+            {ddlErrors.length > 0 ? <p className="table-state table-state--error" role="alert">{`结构变更中有 ${ddlErrors.length} 个错误：${ddlErrors.join("；")}`}</p> : null}
             {ddlStatements.length > 0 ? <SqlPreview title="待执行 DDL" sql={ddlStatements.join("\n")} /> : null}
             {editingComment ? (
               <div
@@ -1719,7 +1797,7 @@ export function TableWorkspace({
               setPendingProductionAction(null);
               setDraftTableComment(value);
             }}
-            onCommitComment={() => commit("ddl")}
+            onCommitComment={() => void commit("ddl")}
             onDiscardComment={() => {
               setDraftTableComment(null);
               setPendingProductionAction(null);

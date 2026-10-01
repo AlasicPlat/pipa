@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Command, CornerDownLeft, Database, PanelsTopLeft, Search, Table2, X } from "lucide-react";
 import {
   TableActionMenu,
   tableTargetKey,
@@ -58,6 +59,8 @@ const TYPE_LABELS: Record<CommandPaletteItemType, string> = {
   table: "数据表",
   workspace: "工作区",
 };
+
+const TYPE_ICONS = { command: Command, connection: Database, table: Table2, workspace: PanelsTopLeft };
 
 /** Normalizes human-entered search text while preserving Unicode characters such as table names in Chinese. */
 function normalizeSearchText(value: string): string {
@@ -206,6 +209,8 @@ export function CommandPalette({
   const headingId = useId();
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeOptionRef = useRef<HTMLButtonElement>(null);
+  const scrollActiveOptionRef = useRef(false);
   const tableContextMenuItemRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [connectionFilter, setConnectionFilter] = useState("");
@@ -240,6 +245,14 @@ export function CommandPalette({
   }, [activeIndex, displayedItems.length]);
 
   useEffect(() => {
+    // Pointer hover must not scroll the list underneath the pointer.
+    if (open && scrollActiveOptionRef.current) {
+      activeOptionRef.current?.scrollIntoView({ block: "nearest" });
+      scrollActiveOptionRef.current = false;
+    }
+  }, [activeItem, connectionFilter, open, query]);
+
+  useEffect(() => {
     if (!tableContextMenu) {
       return;
     }
@@ -258,24 +271,9 @@ export function CommandPalette({
       }
     }
 
-    /**
-     * Closes the table menu with Escape and returns focus to palette search.
-     * @param event - Document-level keyboard event.
-     * @returns Nothing (`void`).
-     * Side effects: clears the local menu and schedules search focus restoration.
-     */
-    function handleKeyDown(event: globalThis.KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setTableContextMenu(null);
-        window.requestAnimationFrame(() => inputRef.current?.focus());
-      }
-    }
-
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [tableContextMenu]);
 
@@ -323,6 +321,7 @@ export function CommandPalette({
 
   /** Handles all palette navigation while keeping keyboard focus in the search field. */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing) return;
     if (
       (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
       && activeItem?.type === "table"
@@ -332,14 +331,10 @@ export function CommandPalette({
       openTableContextMenu(activeItem, bounds?.left ?? 8, bounds?.bottom ?? 8);
       return;
     }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       if (displayedItems.length === 0) return;
+      scrollActiveOptionRef.current = true;
       const direction = event.key === "ArrowDown" ? 1 : -1;
       setActiveIndex((currentIndex) => (currentIndex + direction + displayedItems.length) % displayedItems.length);
       return;
@@ -350,10 +345,40 @@ export function CommandPalette({
     }
   };
 
+  /** Keeps Tab inside the palette and lets Escape dismiss the topmost surface first. */
+  function handleDialogKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (tableContextMenu) {
+        setTableContextMenu(null);
+        inputRef.current?.focus();
+      } else {
+        onClose();
+      }
+    }
+    if (event.key !== "Tab") return;
+    const scope = tableContextMenu
+      ? event.currentTarget.querySelector(".command-palette-context-menu")!
+      : event.currentTarget;
+    const controls = Array.from(scope.querySelectorAll<HTMLElement>("input, select, button"))
+      .filter((element) => element.tabIndex >= 0 && !element.matches(":disabled"));
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   if (!open) return null;
 
   return (
-    <div className="command-palette-backdrop" onMouseDown={onClose}>
+    <div className="command-palette-backdrop" onKeyDown={handleDialogKeyDown} onMouseDown={onClose}>
       <section
         aria-labelledby={headingId}
         aria-modal="true"
@@ -362,8 +387,8 @@ export function CommandPalette({
         role="dialog"
       >
         <h2 className="sr-only" id={headingId}>快速打开</h2>
-        <label className="command-palette__search">
-          <span aria-hidden="true" className="command-palette__search-icon">⌕</span>
+        <div className="command-palette__search">
+          <Search size={20} aria-hidden="true" className="command-palette__search-icon" />
           <input
             aria-activedescendant={activeItem ? `${listboxId}-${activeItem.id}` : undefined}
             aria-autocomplete="list"
@@ -374,6 +399,7 @@ export function CommandPalette({
             onChange={(event) => {
               setQuery(event.target.value);
               setActiveIndex(0);
+              scrollActiveOptionRef.current = true;
             }}
             onKeyDown={handleKeyDown}
             placeholder="快速打开连接、表或执行命令…"
@@ -383,8 +409,27 @@ export function CommandPalette({
             type="search"
             value={query}
           />
-          <kbd>Esc</kbd>
-        </label>
+          <div className="command-palette__search-actions">
+            {query ? (
+              <button
+                aria-label="清空搜索"
+                className="command-palette__clear"
+                onClick={() => {
+                  setQuery("");
+                  setActiveIndex(0);
+                  scrollActiveOptionRef.current = true;
+                  inputRef.current?.focus();
+                }}
+                type="button"
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            ) : null}
+            <button aria-label="关闭命令面板" className="command-palette__dismiss" onClick={onClose} type="button">
+              <kbd>Esc</kbd>
+            </button>
+          </div>
+        </div>
 
         {connectionItems.length > 0 ? (
           <label className="command-palette__connection-filter">
@@ -394,6 +439,7 @@ export function CommandPalette({
               onChange={(event) => {
                 setConnectionFilter(event.target.value);
                 setActiveIndex(0);
+                scrollActiveOptionRef.current = true;
               }}
               value={connectionFilter}
             >
@@ -414,6 +460,7 @@ export function CommandPalette({
               {group.items.map((item) => {
                 const itemIndex = displayedItems.indexOf(item);
                 const isActive = itemIndex === activeIndex;
+                const ItemIcon = TYPE_ICONS[item.type];
                 return (
                   <button
                     aria-selected={isActive}
@@ -430,16 +477,20 @@ export function CommandPalette({
                       openTableContextMenu(item, event.clientX, event.clientY);
                     }}
                     onMouseEnter={() => setActiveIndex(itemIndex)}
+                    ref={isActive ? activeOptionRef : undefined}
                     role="option"
                     tabIndex={-1}
                     type="button"
                   >
-                    <span className="command-palette__option-type">{TYPE_LABELS[item.type]}</span>
+                    <span className="command-palette__option-type">
+                      <ItemIcon size={15} aria-hidden="true" />
+                      {TYPE_LABELS[item.type]}
+                    </span>
                     <span className="command-palette__option-copy">
                       <strong>{item.label}</strong>
                       {item.detail ? <small>{item.detail}</small> : null}
                     </span>
-                    <span aria-hidden="true" className="command-palette__enter-hint">↵</span>
+                    <CornerDownLeft size={15} aria-hidden="true" className="command-palette__enter-hint" />
                   </button>
                 );
               })}
@@ -453,10 +504,13 @@ export function CommandPalette({
           ) : null}
         </div>
 
-        <footer className="command-palette__footer" aria-hidden="true">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 移动</span>
-          <span><kbd>↵</kbd> 打开</span>
-          <span><kbd>Esc</kbd> 关闭</span>
+        <footer className="command-palette__footer">
+          <span className="command-palette__count" aria-live="polite" aria-atomic="true">
+            {displayedItems.length} 个结果
+          </span>
+          <span aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> 移动</span>
+          <span aria-hidden="true"><kbd>↵</kbd> 打开</span>
+          <span aria-hidden="true"><kbd>Esc</kbd> 关闭</span>
         </footer>
       </section>
       {tableContextMenu ? (

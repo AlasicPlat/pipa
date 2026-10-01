@@ -1,9 +1,15 @@
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type { ConnectionProfile } from "../bindings/ConnectionProfile";
+import type { CreateDatabasePlan } from "../bindings/CreateDatabasePlan";
 import type { ApplyTableMutationsInput } from "../bindings/ApplyTableMutationsInput";
 import type { ApplyTableMutationsResult } from "../bindings/ApplyTableMutationsResult";
 import type { RecordQueryHistoryInput } from "../bindings/RecordQueryHistoryInput";
 import type { SaveConnectionInput } from "../bindings/SaveConnectionInput";
+import type { TableColumnDefinition } from "../bindings/TableColumnDefinition";
+import type { TableDdlPlan } from "../bindings/TableDdlPlan";
+import type { TableFilterClause } from "../bindings/TableFilterClause";
+import type { TableFilterColumn } from "../bindings/TableFilterColumn";
+import type { TableFilterCondition } from "../bindings/TableFilterCondition";
 import type {
   BinlogImportEvent,
   BinlogOperation,
@@ -39,6 +45,79 @@ export interface WorkspaceTabPayload {
  */
 export function setExecuteQueryAccelerator(accelerator: string): Promise<void> {
   return invoke<void>("set_execute_query_accelerator", { accelerator });
+}
+
+/**
+ * Compiles quick-filter conditions into the authoritative MySQL `WHERE` clause.
+ * @param conditions - Ordered conditions from the filter bar.
+ * @param schema - Live column names and types that authorize every condition.
+ * @returns A promise containing the clause, its validation errors, and the active count.
+ * Side effects: invokes the Tauri `build_filter_clause` command.
+ */
+export function buildFilterClause(
+  conditions: readonly TableFilterCondition[],
+  schema: readonly TableFilterColumn[],
+): Promise<TableFilterClause> {
+  return invoke<TableFilterClause>("build_filter_clause", { conditions, schema });
+}
+
+/**
+ * Builds the authoritative `CREATE DATABASE` statement for one schema name.
+ * @param databaseName - Raw name typed by the user; validated and quoted by the backend.
+ * @param charset - Requested character set, or null for the server default.
+ * @param collation - Requested collation; ignored unless it belongs to the chosen character set.
+ * @returns A promise containing the statement, or the reason the name was refused.
+ * Side effects: invokes the Tauri `build_create_database` command.
+ */
+export function buildCreateDatabase(
+  databaseName: string,
+  charset: string | null,
+  collation: string | null,
+): Promise<CreateDatabasePlan> {
+  return invoke<CreateDatabasePlan>("build_create_database", {
+    databaseName,
+    charset,
+    collation,
+  });
+}
+
+/**
+ * Compiles visual structure edits into the authoritative MySQL DDL statements.
+ * @param database - Schema name.
+ * @param table - Table name.
+ * @param originalColumns - Schema as loaded from the server.
+ * @param draftColumns - User-edited schema.
+ * @returns A promise containing ordered statements and any validation errors.
+ * Side effects: invokes the Tauri `build_table_ddl` command.
+ */
+export function buildTableDdl(
+  database: string,
+  table: string,
+  originalColumns: readonly TableColumnDefinition[],
+  draftColumns: readonly TableColumnDefinition[],
+): Promise<TableDdlPlan> {
+  return invoke<TableDdlPlan>("build_table_ddl", {
+    database,
+    table,
+    originalColumns,
+    draftColumns,
+  });
+}
+
+/**
+ * Builds the table-comment DDL with the comment encoded as a MySQL literal.
+ * @param database - Schema name.
+ * @param table - Table name.
+ * @param comment - New table comment; an empty string clears it.
+ * @returns A promise containing one `ALTER TABLE` statement.
+ * Side effects: invokes the Tauri `build_table_comment_ddl` command.
+ */
+export function buildTableCommentDdl(
+  database: string,
+  table: string,
+  comment: string,
+): Promise<string> {
+  return invoke<string>("build_table_comment_ddl", { database, table, comment });
 }
 
 /**

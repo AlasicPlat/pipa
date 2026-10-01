@@ -54,24 +54,45 @@ vi.mock("../features/binlog/BinlogWorkspace", () => ({
   BinlogWorkspace: () => <section aria-label="Binlog 分析工作区">Binlog integration fixture</section>,
 }));
 
-vi.mock("../lib/tauriClient", () => ({
-  deleteConnection: vi.fn(),
-  listWorkspaceWindowLabels: vi.fn(),
-  listConnections: vi.fn(),
-  loadWorkspace: vi.fn(),
-  mcpGetSnapshot: vi.fn(),
-  recordQueryHistory: vi.fn(),
-  reconnectConnection: vi.fn(),
-  renameConnection: vi.fn(),
-  saveMySqlConnection: vi.fn(),
-  saveRedisConnection: vi.fn(),
-  saveWorkspace: vi.fn(),
-  setExecuteQueryAccelerator: vi.fn(),
-  testMySqlConnection: vi.fn(),
-  testRedisConnection: vi.fn(),
-  transferWorkspaceTab: vi.fn(),
-  updateConnectionProfile: vi.fn(),
-}));
+vi.mock("../lib/tauriClient", async () => {
+  // Delegates to the frontend rules so the asserted statement is still a real one.
+  const tableSql = await import("../features/tables/tableSql");
+  return {
+    buildCreateDatabase: vi.fn(async (
+      databaseName: string,
+      charset: string | null,
+      collation: string | null,
+    ) => {
+      const error = tableSql.databaseNameValidationError(databaseName);
+      return error
+        ? { statement: "", error }
+        : {
+            statement: tableSql.buildCreateDatabaseStatement(
+              databaseName.trim(),
+              charset,
+              collation,
+            ),
+            error: null,
+          };
+    }),
+    deleteConnection: vi.fn(),
+    listWorkspaceWindowLabels: vi.fn(),
+    listConnections: vi.fn(),
+    loadWorkspace: vi.fn(),
+    mcpGetSnapshot: vi.fn(),
+    recordQueryHistory: vi.fn(),
+    reconnectConnection: vi.fn(),
+    renameConnection: vi.fn(),
+    saveMySqlConnection: vi.fn(),
+    saveRedisConnection: vi.fn(),
+    saveWorkspace: vi.fn(),
+    setExecuteQueryAccelerator: vi.fn(),
+    testMySqlConnection: vi.fn(),
+    testRedisConnection: vi.fn(),
+    transferWorkspaceTab: vi.fn(),
+    updateConnectionProfile: vi.fn(),
+  };
+});
 
 const clipboardState = vi.hoisted(() => ({ writeText: vi.fn() }));
 const querySessionFixture = vi.hoisted(() => ({
@@ -493,6 +514,43 @@ async function assertTableNameShortcuts(): Promise<void> {
     DEVELOPMENT_PROFILE.id,
     "INSERT INTO `pipa_dev`.`inventory_copy` SELECT * FROM `pipa_dev`.`inventory`;",
   ));
+}
+
+/**
+ * 验证对话框自带的草稿预填与 Escape 关闭行为。
+ *
+ * 这些行为属于对话框组件自身：改名从当前表名起草、复制从 `<name>_copy` 起草，且空闲时 Escape
+ * 关闭而不执行任何语句。上面的用例会覆写输入值，因此不会发现预填失效。
+ * 参数：无。
+ * @returns 断言结束后 resolve 的 promise。
+ * 副作用：渲染应用并派发键盘与指针事件。
+ */
+async function assertDialogDraftsAndEscapeDismissal(): Promise<void> {
+  querySessionFixture.rows = [[
+    { kind: "text", value: "inventory" },
+    { kind: "text", value: "BASE TABLE" },
+  ]];
+  render(<App />);
+  await findConnectionPicker();
+  const table = await screen.findByRole("treeitem", { name: "inventory" });
+
+  // A rename starts from the existing name.
+  fireEvent.contextMenu(table);
+  fireEvent.click(screen.getByRole("menuitem", { name: "重命名表…" }));
+  expect(screen.getByRole("textbox", { name: "新表名" })).toHaveValue("inventory");
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "新表名" })).toBeNull());
+  expect(executeQueryOnce).not.toHaveBeenCalledWith(
+    DEVELOPMENT_PROFILE.id,
+    expect.stringContaining("RENAME TABLE"),
+  );
+
+  // A duplicate starts from "<name>_copy" so the destination is never the source.
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name: "inventory" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "复制表…" }));
+  expect(screen.getByRole("textbox", { name: "复制为" })).toHaveValue("inventory_copy");
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "复制为" })).toBeNull());
 }
 
 /** Verifies copy, pin, DDL preview/copy, and export shortcuts execute through shared app services. */
@@ -1305,6 +1363,7 @@ function registerAppTests(): void {
   it("deletes a connection only after context-menu confirmation", assertConfirmedConnectionDeletion);
   it("confirms destructive table shortcuts before executing SQL", assertConfirmedTableDestructiveActions);
   it("renames and duplicates tables from shared shortcuts", assertTableNameShortcuts);
+  it("prefills dialog drafts and dismisses them with Escape", assertDialogDraftsAndEscapeDismissal);
   it("copies, pins, previews, and exports table metadata", assertTableMetadataAndExportShortcuts);
   it("opens a table shortcut in a native window", assertTableNewWindowShortcut);
   it("cycles and closes shared workspace tabs with conventional shortcuts", assertWorkspaceTabShortcuts);

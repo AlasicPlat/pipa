@@ -389,6 +389,55 @@ function assertEscapeClosesTabMenu(): void {
 
 describe("WorkspaceTabs", () => {
   afterEach(cleanup);
+  it("navigates across tab kinds and keeps the selected tab in view", () => {
+    const actions = {
+      onCloseQuery: vi.fn(), onCloseTable: vi.fn(), onCloseUtility: vi.fn(),
+      onCreateQuery: vi.fn(), onSelectQuery: vi.fn(), onSelectTable: vi.fn(), onSelectUtility: vi.fn(),
+    };
+    const props = {
+      ...actions,
+      activeQueryTabId: QUERY_TAB.id,
+      activeTableTabId: null,
+      activeUtilityTabId: null,
+      busyQueryTabId: QUERY_TAB.id,
+      dirtyTableTabIds: new Set<string>(),
+      newQueryConnectionName: "本地开发",
+      queryTabs: [QUERY_TAB], tableTabs: [TABLE_TAB], utilityTabs: [UTILITY_TAB],
+    };
+    const { rerender } = render(<WorkspaceTabs {...props} />);
+    const [query, table, utility] = screen.getAllByRole("tab");
+    expect(query.tabIndex).toBe(0);
+    expect(table.tabIndex).toBe(-1);
+    expect(utility.tabIndex).toBe(-1);
+    expect(table).toHaveAttribute("aria-controls", `workspace-panel-${encodeURIComponent(TABLE_TAB.id)}`);
+
+    fireEvent.keyDown(query, { key: "ArrowRight" });
+    expect(table).toHaveFocus();
+    expect(actions.onSelectTable).toHaveBeenCalledWith(TABLE_TAB.id);
+    fireEvent.keyDown(table, { key: "End" });
+    expect(utility).toHaveFocus();
+    expect(actions.onSelectUtility).toHaveBeenCalledWith(UTILITY_TAB.id);
+    fireEvent.keyDown(utility, { key: "ArrowRight" });
+    expect(query).toHaveFocus();
+    fireEvent.keyDown(query, { key: "ArrowLeft" });
+    expect(utility).toHaveFocus();
+    fireEvent.keyDown(utility, { key: "Home" });
+    expect(query).toHaveFocus();
+
+    actions.onSelectTable.mockClear();
+    fireEvent.keyDown(query, { key: "ArrowRight", altKey: true });
+    expect(actions.onSelectTable).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button", { name: "关闭表 orders" }), { key: "ArrowRight" });
+    expect(query).toHaveFocus();
+
+    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    scroll.mockClear();
+    rerender(<WorkspaceTabs {...props} activeUtilityTabId={UTILITY_TAB.id} />);
+    expect(scroll.mock.instances).toEqual([utility]);
+    expect(query.tabIndex).toBe(-1);
+    expect(utility.tabIndex).toBe(0);
+    expect(screen.getByRole("button", { name: "关闭 查询 1" })).toBeDisabled();
+  });
   it("shares query and table workspace actions", assertSharedWorkspaceActions);
   it("allows utility switching while a query is busy", assertBusyQueryAllowsUtilitySwitching);
   it("requests detachment when a safe tab is dragged outside", assertDraggingOutsideRequestsDetach);

@@ -6,6 +6,10 @@ import { EMPTY_MCP_SNAPSHOT } from "./types";
 
 const mocks = vi.hoisted(() => ({
   setConnectionScope: vi.fn(),
+  dismissProposal: vi.fn(),
+  executeProposal: vi.fn(),
+  /** Overridden per test to vary the proposal under review. */
+  proposalSql: { current: "UPDATE users SET name = 'x'" },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -36,7 +40,7 @@ vi.mock("./useMcpState", () => ({
         {
           id: "proposal-1",
           connectionId: "conn-1",
-          sql: "UPDATE users SET name = 'x'",
+          sql: mocks.proposalSql.current,
           risk: "write_data",
           sourceTool: "propose_sql",
           createdAt: new Date().toISOString(),
@@ -65,8 +69,8 @@ vi.mock("./useMcpState", () => ({
     setPort: vi.fn(),
     setConnectionScope: mocks.setConnectionScope,
     regenerateToken: vi.fn(),
-    executeProposal: vi.fn(),
-    dismissProposal: vi.fn(),
+    executeProposal: mocks.executeProposal,
+    dismissProposal: mocks.dismissProposal,
     runManualSql: vi.fn(),
   }),
 }));
@@ -94,6 +98,8 @@ const REDIS_PROFILE: ConnectionProfile = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  mocks.proposalSql.current = "UPDATE users SET name = 'x'";
+  window.localStorage.clear();
 });
 
 describe("McpPanel", () => {
@@ -243,6 +249,87 @@ describe("McpPanel", () => {
     expect(
       screen.getByText(/未限定范围时，MCP 可以访问全部 1 个已保存连接/),
     ).toBeVisible();
+  });
+
+  it("keeps a long proposal collapsed until the reviewer opens it", () => {
+    const migration = Array.from({ length: 30 }, (_, index) => `UPDATE t SET c = ${index};`);
+    mocks.proposalSql.current = migration.join("\n");
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    // The metrics state the size before the reviewer commits to reading it.
+    expect(screen.getByText(`30 行 · ${mocks.proposalSql.current.length} 字符`)).toBeVisible();
+    expect(screen.getByText("30 条语句")).toBeVisible();
+    const expand = screen.getByRole("button", { name: "展开全部 30 行" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText(/还有 18 行未显示/)).toBeVisible();
+    // Collapsed, only the preview is rendered.
+    expect(screen.queryByText(/UPDATE t SET c = 29;/)).not.toBeInTheDocument();
+
+    fireEvent.click(expand);
+
+    expect(screen.getByRole("button", { name: "折叠" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/UPDATE t SET c = 29;/)).toBeVisible();
+    expect(screen.queryByText(/还有 18 行未显示/)).not.toBeInTheDocument();
+  });
+
+  it("lands focus on the approval queue when one is waiting", async () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    const queue = await screen.findByRole("list", { name: "待确认 SQL，共 1 条" });
+    // rAF-deferred focus, so wait for it rather than asserting synchronously.
+    await vi.waitFor(() => expect(queue).toHaveFocus());
+    // Never the destructive action itself.
+    expect(screen.getByRole("button", { name: "确认执行" })).not.toHaveFocus();
+  });
+
+  it("offers no expand control for a proposal that already fits", () => {
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    expect(screen.queryByRole("button", { name: /展开全部/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 行 · 27 字符")).toBeVisible();
+    expect(screen.queryByText(/条语句/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the approval controls reachable and warns about production", () => {
+    mocks.proposalSql.current = Array.from({ length: 40 }, () => "SELECT 1;").join("\n");
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    // Both actions and the production caution live outside the scrolling statement.
+    const execute = screen.getByRole("button", { name: "确认执行" });
+    expect(execute).toBeEnabled();
+    expect(screen.getByText("目标是生产环境，执行后不可撤销。")).toBeVisible();
+
+    fireEvent.click(execute);
+    expect(mocks.executeProposal).toHaveBeenCalledWith("proposal-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "忽略" }));
+    expect(mocks.dismissProposal).toHaveBeenCalledWith("proposal-1");
+  });
+
+  it("copies the full statement even while it is collapsed", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mocks.proposalSql.current = Array.from({ length: 20 }, (_, i) => `SELECT ${i};`).join("\n");
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制 SQL" }));
+
+    await screen.findByText("已复制 SQL");
+    expect(writeText).toHaveBeenCalledWith(mocks.proposalSql.current);
+  });
+
+  it("reopens in the layout the reviewer last chose", () => {
+    const first = render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开 MCP 控制台" }));
+    expect(screen.getByRole("dialog")).toHaveClass("mcp-panel--expanded");
+    first.unmount();
+
+    render(<McpPanel onClose={() => undefined} open profiles={[PROFILE]} />);
+
+    expect(screen.getByRole("dialog")).toHaveClass("mcp-panel--expanded");
   });
 
   it("adds another MCP target without replacing the existing selection", () => {

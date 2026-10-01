@@ -234,6 +234,50 @@ async function assertPreStartedFailureSkipsHistory(): Promise<void> {
   expect(recordQueryHistory).not.toHaveBeenCalled();
 }
 
+/**
+ * Verifies streamed batches are coalesced into one state update without losing or reordering rows.
+ * Parameters: none.
+ * @returns A promise that resolves after the assertions run.
+ * Side effects: renders the hook and drives a mocked event channel across animation frames.
+ */
+async function assertBatchesCoalesceIntoOneUpdate(): Promise<void> {
+  vi.mocked(invoke).mockResolvedValue("query-1");
+  const hook = renderHook(() => useQuerySession("connection-1", { recordHistory: false }));
+
+  await act(async () => hook.result.current.run("select streamed"));
+  const queryId = hook.result.current.state.queryId;
+  const channel = channelState.instances[0];
+
+  // Three batches inside one frame must not produce three separate renders.
+  act(() => {
+    channel.onmessage({ type: "started", queryId });
+    channel.onmessage({ type: "batch", queryId, rows: [[{ kind: "integer", value: "1" }]] });
+    channel.onmessage({ type: "batch", queryId, rows: [[{ kind: "integer", value: "2" }]] });
+  });
+  expect(hook.result.current.state.rows).toEqual([]);
+
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+  });
+  expect(hook.result.current.state.rows).toEqual([
+    [{ kind: "integer", value: "1" }],
+    [{ kind: "integer", value: "2" }],
+  ]);
+
+  // A terminal event must flush still-buffered rows before it lands.
+  act(() => {
+    channel.onmessage({ type: "batch", queryId, rows: [[{ kind: "integer", value: "3" }]] });
+    channel.onmessage({ type: "completed", queryId, affectedRows: 0 });
+  });
+  expect(hook.result.current.state).toMatchObject({ running: false, affectedRows: 0 });
+  expect(hook.result.current.state.rows).toEqual([
+    [{ kind: "integer", value: "1" }],
+    [{ kind: "integer", value: "2" }],
+    [{ kind: "integer", value: "3" }],
+  ]);
+  hook.unmount();
+}
+
 /** Registers reducer and hook contract tests. */
 function registerQuerySessionTests(): void {
   beforeEach(() => {
@@ -245,6 +289,7 @@ function registerQuerySessionTests(): void {
   it("subscribes before invoke and cancels once per run", assertChannelAndCancellationContract);
   it("records matching Started history once and ignores stale duplicates", assertStartedOnlyHistoryContract);
   it("does not record history before Started", assertPreStartedFailureSkipsHistory);
+  it("coalesces streamed batches into one update", assertBatchesCoalesceIntoOneUpdate);
 }
 
 describe("querySession", registerQuerySessionTests);

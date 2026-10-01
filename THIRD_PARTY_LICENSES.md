@@ -341,8 +341,8 @@
 | Cargo | rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 |
 | Cargo | rustls-platform-verifier-android | 0.1.1 | MIT OR Apache-2.0 |
 | Cargo | rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 |
-| Cargo | rustls-webpki | 0.103.13 | ISC |
-| Cargo | rustls | 0.23.41 | Apache-2.0 OR ISC OR MIT |
+| Cargo | rustls-webpki | 0.103.15 | ISC |
+| Cargo | rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT |
 | Cargo | rustversion | 1.0.23 | MIT OR Apache-2.0 |
 | Cargo | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
 | Cargo | same-file | 1.0.6 | Unlicense/MIT |

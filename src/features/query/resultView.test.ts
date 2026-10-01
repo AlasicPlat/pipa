@@ -29,8 +29,25 @@ describe("resultView", () => {
       search: "app",
       sort: { columnIndex: 0, direction: "asc" },
     });
-    expect(view.map((row) => row.sourceIndex)).toEqual([1]);
-    expect(view[0]?.cells[1]).toEqual({ kind: "text", value: "apple" });
+    expect(view.rows.map((row) => row.sourceIndex)).toEqual([1]);
+    expect(view.rows[0]?.cells[1]).toEqual({ kind: "text", value: "apple" });
+  });
+
+  it("counts matching cells in the same pass that filters", () => {
+    // "a" appears in banana (3), apple (1), carrot (1); the integer columns do not match.
+    const all = buildResultView(ROWS, { search: "a", sort: null });
+    expect(all.rows).toHaveLength(3);
+    expect(all.matchCount).toBe(3);
+
+    // A needle matching one row reports only that row's matching cells.
+    const single = buildResultView(ROWS, { search: "apple", sort: null });
+    expect(single.rows).toHaveLength(1);
+    expect(single.matchCount).toBe(1);
+
+    // No search means no counting work and every row stays visible.
+    const unfiltered = buildResultView(ROWS, { search: "   ", sort: null });
+    expect(unfiltered.rows).toHaveLength(3);
+    expect(unfiltered.matchCount).toBe(0);
   });
 
   it("cycles column sort states", () => {

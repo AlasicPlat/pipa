@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { useCallback, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { AppError } from "../../bindings/AppError";
 import type { QueryColumn } from "../../bindings/QueryColumn";
 import type { QueryEvent } from "../../bindings/QueryEvent";
@@ -170,6 +170,52 @@ export function useQuerySession(
   const activeQueryIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
   const historyRecordedQueryIdRef = useRef<string | null>(null);
+  /*
+   * Rows arrive in 256-row batches, and dispatching each one separately re-rendered the grid
+   * hundreds of times per large result while copying the whole accumulated array each time. Rows
+   * are buffered here and merged into one dispatch per animation frame instead, which keeps
+   * scrolling and typing responsive while a long query streams in.
+   */
+  const pendingRowsRef = useRef<{ queryId: string; rows: CellValue[][] } | null>(null);
+  const flushHandleRef = useRef<number | null>(null);
+
+  /**
+   * Cancels any scheduled row flush without discarding the buffered rows.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: clears the pending animation-frame callback.
+   */
+  const cancelScheduledFlush = useCallback((): void => {
+    if (flushHandleRef.current !== null) {
+      cancelAnimationFrame(flushHandleRef.current);
+      flushHandleRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Dispatches every buffered row for its owning query as one batch event.
+   * Parameters: none.
+   * @returns Nothing (`void`).
+   * Side effects: empties the row buffer and updates session state when rows are pending.
+   */
+  const flushPendingRows = useCallback((): void => {
+    cancelScheduledFlush();
+    const pending = pendingRowsRef.current;
+    pendingRowsRef.current = null;
+    if (!pending || pending.rows.length === 0) {
+      return;
+    }
+    dispatch({
+      type: "event",
+      event: { type: "batch", queryId: pending.queryId, rows: pending.rows },
+    });
+  }, [cancelScheduledFlush]);
+
+  // A late flush after unmount would dispatch into a discarded reducer.
+  useEffect(() => () => {
+    cancelScheduledFlush();
+    pendingRowsRef.current = null;
+  }, [cancelScheduledFlush]);
 
   /**
    * Starts engine-native text only when this workspace has no active execution.
@@ -189,10 +235,31 @@ export function useQuerySession(
       activeQueryIdRef.current = queryId;
       cancelRequestedRef.current = false;
       historyRecordedQueryIdRef.current = null;
+      cancelScheduledFlush();
+      pendingRowsRef.current = null;
       dispatch({ type: "begin", queryId, connectionId, sql });
 
       // Assigning first prevents fast backend events from racing the invoke promise.
       onEvent.onmessage = (event) => {
+        if (event.type === "batch") {
+          // Buffer rows and coalesce them, so one frame renders one batch no matter the row rate.
+          const pending = pendingRowsRef.current;
+          if (pending && pending.queryId === event.queryId) {
+            pending.rows.push(...event.rows);
+          } else {
+            pendingRowsRef.current = { queryId: event.queryId, rows: [...event.rows] };
+          }
+          if (flushHandleRef.current === null) {
+            flushHandleRef.current = requestAnimationFrame(() => {
+              flushHandleRef.current = null;
+              flushPendingRows();
+            });
+          }
+          return;
+        }
+
+        // Every other event is ordered against the rows before it, so pending rows land first.
+        flushPendingRows();
         dispatch({ type: "event", event });
         if (
           event.type === "started" &&
@@ -227,7 +294,7 @@ export function useQuerySession(
         }
       }
     },
-    [connectionId, database, recordHistoryEnabled],
+    [connectionId, database, recordHistoryEnabled, cancelScheduledFlush, flushPendingRows],
   );
 
   /**
@@ -243,6 +310,7 @@ export function useQuerySession(
     }
 
     cancelRequestedRef.current = true;
+    flushPendingRows();
     dispatch({ type: "cancel-requested", queryId });
     try {
       await invoke<void>("cancel_query", { queryId });
@@ -250,7 +318,7 @@ export function useQuerySession(
       // A rejected cancellation does not fabricate a terminal event; the original run may finish.
       console.error("Pipa cancel_query invocation failed", { queryId, error: toAppError(error) });
     }
-  }, []);
+  }, [flushPendingRows]);
 
   return { state, run, cancel };
 }
