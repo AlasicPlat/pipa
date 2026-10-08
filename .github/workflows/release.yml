@@ -4,18 +4,27 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已合入 main 的版本标签；手动发布仅生成未公证测试版
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
-    # 仅允许首次创建的新标签发布，避免历史整理时更新旧标签后重复上传资产。
-    if: ${{ github.event.created }}
+    # 正式版只接受新标签；未公证测试版只能从 main 手动触发。
+    if: ${{ github.event.created || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
     name: 构建 ${{ matrix.asset_arch }}
     runs-on: macos-latest
     timeout-minutes: 75
@@ -37,9 +46,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - name: 验证标签属于 main
-        run: git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"
+        run: |
+          tag_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$(git rev-parse HEAD)" = "$tag_commit"
+          git merge-base --is-ancestor "$tag_commit" "origin/main"
+
+      - name: 拒绝覆盖已发布版本或混用发布渠道
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREVIEW: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases" |
+            jq -e --arg tag "$RELEASE_TAG" --argjson preview "$PREVIEW" \
+              '[.[][] | select(.tag_name == $tag)] | all(.draft and (.prerelease == $preview))'
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -52,9 +75,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: 安装 Rust stable 与 macOS 目标
+      - name: 安装 Rust 1.98.1 与 macOS 目标
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
+          toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: 恢复 Rust 构建缓存
@@ -66,10 +90,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: 校验发布版本来源
-        run: pnpm release:check-version
+        run: GITHUB_REF_NAME="$RELEASE_TAG" pnpm release:check-version
 
       - name: 测试前端
         run: pnpm test
+
+      - name: 关闭测试版更新归档
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/pipa-preview.json"
 
       - name: 构建、签名并上传草稿 Release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
@@ -78,23 +106,26 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_ID: ${{ github.event_name != 'workflow_dispatch' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ github.event_name != 'workflow_dispatch' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.event_name != 'workflow_dispatch' && secrets.APPLE_TEAM_ID || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name != 'workflow_dispatch' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name != 'workflow_dispatch' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Pipa ${{ github.ref_name }}
-          releaseBody: 自动生成的已签名 macOS 发布包。发布前请核对资产并补充面向用户的更新说明。
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Pipa ${{ env.RELEASE_TAG }}${{ github.event_name == 'workflow_dispatch' && '（未公证测试版）' || '' }}
+          releaseBody: ${{ github.event_name == 'workflow_dispatch' && '此测试版保留 Developer ID 签名，但未经 Apple 公证。仅供手动下载安装，不进入稳定版自动更新。发布前请核验两个架构的 DMG 并补充安装提示。' || '自动生成的已签名 macOS 发布包。发布前请核对资产并补充面向用户的更新说明。' }}
           releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+          # Tauri 按变量是否存在判断公证凭据，空字符串仍会触发公证。
+          tauriScript: ${{ github.event_name == 'workflow_dispatch' && 'env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm tauri' || '' }}
+          args: --target ${{ matrix.target }} ${{ github.event_name == 'workflow_dispatch' && format('--bundles dmg --config {0}/pipa-preview.json', runner.temp) || '' }}
           releaseAssetNamePattern: Pipa-macOS-${{ matrix.asset_arch }}[ext]
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
+          uploadUpdaterJson: ${{ github.event_name != 'workflow_dispatch' }}
+          uploadUpdaterSignatures: ${{ github.event_name != 'workflow_dispatch' }}
 
       - name: 公证并替换 DMG
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -121,4 +152,4 @@ jobs:
 
           release_dmg="Pipa-macOS-${{ matrix.asset_arch }}.dmg"
           cp "$dmg_path" "$release_dmg"
-          gh release upload "$GITHUB_REF_NAME" "$release_dmg" --clobber
+          gh release upload "$RELEASE_TAG" "$release_dmg" --clobber

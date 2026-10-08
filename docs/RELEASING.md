@@ -64,6 +64,22 @@ https://github.com/AlasicPlat/pipa/releases/latest/download/latest.json
 
 不要删除或替换已发布标签。如果某个版本存在问题，应发布更高的补丁版本，确保 updater 签名、Git 历史和用户安装始终可审计。
 
+## 未公证测试版
+
+Apple Developer 会员或协议失效时，可以在维护者明确选择后发布未公证测试版。前提是现有 Developer ID 证书仍可签名。此渠道只提供手动安装的 DMG，不生成 updater 归档、签名或 `latest.json`，也不能替代正式版。
+
+从 `main` 手动触发发布工作流，指定已合入 `main`、版本号一致且尚未公开发布的标签：
+
+```bash
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
+
+工作流保留 Developer ID 签名，跳过 Apple 公证，并创建标为 Pre-release 的草稿。两个架构均构建成功后，下载 DMG，核对应用版本和架构，验证 DMG 与应用的代码签名。此渠道预期不能通过公证及 Gatekeeper 检查，不应将其误报为通过。
+
+发布说明必须标注“未公证测试版”，提供两个架构的下载说明，并链接 [Apple 的手动允许打开说明](https://support.apple.com/zh-cn/102445)。发布草稿时保留 Pre-release 标记且设置 `--latest=false`；发布后确认 `/releases/latest` 和稳定更新端点仍指向原正式版。不得覆盖已公开发布的版本，也不得把未公证包混入正式版草稿。
+
+CI 与发布构建固定使用 Rust 1.98.1，以避开 Rust 1.99 Clippy 对 `async-trait` 宏的已知误报（[rust-clippy#17529](https://github.com/rust-lang/rust-clippy/issues/17529)）。升级时应同时更新两个工作流并重新验证。
+
 ## 轮换 updater 密钥
 
 丢失 updater 私钥会导致现有客户端无法接受后续更新。如果怀疑密钥泄露，应停止发布、保留证据，并发布一个正常经过 Apple 签名的过渡版本，使其应用配置信任替换后的公钥。无法安装过渡版本的用户必须手动更新。请在发布说明和 `SECURITY.md` 中记录密钥轮换。
