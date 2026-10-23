@@ -348,6 +348,7 @@
  */
 .mcp-panel__section--pending .mcp-panel__list {
   overflow: auto;
+  overscroll-behavior: contain;
   max-height: min(560px, 62vh);
   padding-right: var(--space-px);
 }
@@ -668,6 +669,15 @@
 .mcp-panel__proposal {
   position: relative;
   display: flex;
+  /*
+   * A card keeps its content height, it does not divide the queue's. The queue is a
+   * height-capped flex column, and `overflow: hidden` below zeroes a flex item's automatic
+   * minimum size, so without this the 42nd pending proposal shrank every card to ~13px:
+   * the rows overlapped, 确认执行 was clipped out of the card, and because nothing overflowed
+   * the cap there was no scrollbar to reach it with. Shrinking is what has to be refused here;
+   * the statement block inside is separately bounded and scrolls on its own.
+   */
+  flex-shrink: 0;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
@@ -800,6 +810,7 @@
 /* A log row, not a card. Expansion and failure are shown by tone and the left bar. */
 .mcp-panel__activity-item {
   position: relative;
+  flex-shrink: 0;
   overflow: hidden;
   border-radius: var(--radius-sm);
   padding-left: var(--accent-bar-width);
