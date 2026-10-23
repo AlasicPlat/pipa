@@ -13,7 +13,6 @@
 | Cargo | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 |
 | Cargo | android_system_properties | 0.1.5 | MIT/Apache-2.0 |
 | Cargo | anyhow | 1.0.103 | MIT OR Apache-2.0 |
-| Cargo | arbitrary | 1.4.2 | MIT OR Apache-2.0 |
 | Cargo | arboard | 3.6.1 | MIT OR Apache-2.0 |
 | Cargo | async-trait | 0.1.89 | MIT OR Apache-2.0 |
 | Cargo | atk-sys | 0.18.2 | MIT |
@@ -82,14 +81,13 @@
 | Cargo | cssparser | 0.36.0 | MPL-2.0 |
 | Cargo | ctor-proc-macro | 0.0.7 | Apache-2.0 OR MIT |
 | Cargo | ctor | 0.8.0 | Apache-2.0 OR MIT |
-| Cargo | ctutils | 0.4.2 | Apache-2.0 OR MIT |
+| Cargo | ctutils | 0.4.4 | Apache-2.0 OR MIT |
 | Cargo | darling_core | 0.23.0 | MIT |
 | Cargo | darling_macro | 0.23.0 | MIT |
 | Cargo | darling | 0.23.0 | MIT |
 | Cargo | dbus | 0.9.12 | Apache-2.0/MIT |
 | Cargo | der | 0.8.1 | Apache-2.0 OR MIT |
 | Cargo | deranged | 0.5.8 | MIT OR Apache-2.0 |
-| Cargo | derive_arbitrary | 1.4.2 | MIT OR Apache-2.0 |
 | Cargo | derive_more-impl | 2.1.1 | MIT |
 | Cargo | derive_more | 2.1.1 | MIT |
 | Cargo | digest | 0.10.7 | MIT OR Apache-2.0 |
@@ -341,8 +339,8 @@
 | Cargo | rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 |
 | Cargo | rustls-platform-verifier-android | 0.1.1 | MIT OR Apache-2.0 |
 | Cargo | rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 |
-| Cargo | rustls-webpki | 0.103.15 | ISC |
-| Cargo | rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT |
+| Cargo | rustls-webpki | 0.103.16 | ISC |
+| Cargo | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | Cargo | rustversion | 1.0.23 | MIT OR Apache-2.0 |
 | Cargo | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
 | Cargo | same-file | 1.0.6 | Unlicense/MIT |
@@ -508,7 +506,7 @@
 | Cargo | web-sys | 0.3.103 | MIT OR Apache-2.0 |
 | Cargo | webkit2gtk-sys | 2.0.2 | MIT |
 | Cargo | webkit2gtk | 2.0.2 | MIT |
-| Cargo | webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 |
+| Cargo | webpki-root-certs | 1.0.10 | CDLA-Permissive-2.0 |
 | Cargo | webview2-com-macros | 0.8.1 | MIT |
 | Cargo | webview2-com-sys | 0.38.2 | MIT |
 | Cargo | webview2-com | 0.38.2 | MIT |
@@ -589,7 +587,6 @@
 | Cargo | zerotrie | 0.2.4 | Unicode-3.0 |
 | Cargo | zerovec-derive | 0.11.3 | Unicode-3.0 |
 | Cargo | zerovec | 0.11.6 | Unicode-3.0 |
-| Cargo | zip | 4.6.1 | MIT |
 | Cargo | zmij | 1.0.21 | MIT |
 | Cargo | zstd-safe | 7.2.4 | MIT OR Apache-2.0 |
 | Cargo | zstd-sys | 2.0.16+zstd.1.5.7 | MIT/Apache-2.0 |
@@ -606,7 +603,7 @@
 | npm | @tauri-apps/plugin-process | 2.3.1 | MIT OR Apache-2.0 |
 | npm | @tauri-apps/plugin-updater | 2.10.1 | MIT OR Apache-2.0 |
 | npm | @types/trusted-types | 2.0.7 | MIT |
-| npm | dompurify | 3.4.16 | (MPL-2.0 OR Apache-2.0) |
+| npm | dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) |
 | npm | lucide-react | 1.24.0 | ISC |
 | npm | marked | 14.0.0 | MIT |
 | npm | monaco-editor | 0.56.0 | MIT |

@@ -33,7 +33,8 @@ tauri-build = "2.6.3"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
+# macOS archives do not use zip; other platforms' compressed updates need a safe zip dependency first.
+tauri-plugin-updater = { version = "2.10.1", default-features = false, features = ["rustls-tls"] }
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
