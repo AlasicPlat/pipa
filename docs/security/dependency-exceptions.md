@@ -35,3 +35,14 @@
 
 - `RUSTSEC-2026-0285`：将 `rustls` 从 0.23.41 更新到修复后的 0.23.45，纠正 TLS 1.3 握手消息跨加密级别被错误接受的问题。
 - `GHSA-p98j-92pf-mc4p`：将 Monaco 间接依赖的 `dompurify` 从 3.4.13 更新到修复后的 3.4.16。
+
+## 2026-10-23 依赖审查中已解决
+
+- `GHSA-cg2g-xh64-v4q7`、`GHSA-mrv2-3pqr-j5jr`、`GHSA-c6gr-qvv4-5v3f`：将 Monaco 间接依赖的 `dompurify` 从 3.4.16 更新到 3.4.17。
+- `RUSTSEC-2026-0346`、`RUSTSEC-2026-0347`、`RUSTSEC-2026-0348`、`RUSTSEC-2026-0349`：将 `rustls` 从 0.23.45 更新到 0.23.46。
+- `RUSTSEC-2026-0385`：将 `ctutils` 从 0.4.2 更新到 0.4.4。
+- `RUSTSEC-2026-0382`：将 `rustls-webpki` 从 0.103.15 更新到 0.103.16。
+- `RUSTSEC-2026-0383`：将 `webpki-root-certs` 从 1.0.9 更新到 1.0.10。
+- `RUSTSEC-2026-0367`、`RUSTSEC-2026-0368`、`RUSTSEC-2026-0369`：关闭 Tauri updater 的可选 `zip` 功能，从锁文件移除 `zip 4.6.1`。已发布的 updater 仍约束 `zip 4`，无法直接升级到修复后的 `zip 9`。当前只发布 macOS，更新包使用不依赖此功能的 tar/gzip 路径；`rustls-tls`、更新签名验证和 macOS 安装流程均保留。未来支持 Windows ZIP 或 Linux 压缩 AppImage 更新包前，必须采用安全的归档依赖并重新验证这些平台。
+
+本次没有增加审计忽略项；上方已有例外及其复核期限不变。
